@@ -235,8 +235,8 @@ module BugBunny
 
         retries = 0
         begin
-          built_queue = rabbit.channel.queue(new_queue.name, new_queue.options)
-        rescue
+          built_queue = rabbit.channel.queue(new_queue.name.to_s, new_queue.options)
+        rescue StandardError
           if (retries += 1) <= 3
             sleep 0.5
             retry

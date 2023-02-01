@@ -1,15 +1,5 @@
 module BugBunny
   class Exception
-    ServiceClasses = [
-      Exception::NeedSignature,
-      Exception::InvalidSignature,
-      Exception::ServiceError,
-      Exception::GatewayError,
-      Exception::RetryWithoutError
-    ]
-
-    # Exceptions from ActiveRecord::StatementInvalid
-    PG_EXCEPTIONS_TO_EXIT = %w[PG::ConnectionBad PG::UnableToSend].freeze
 
     class ServiceError < StandardError
       def to_s
@@ -55,6 +45,17 @@ module BugBunny
       def backtrace
         []
       end
-    end 
+    end
+
+    ServiceClasses = [
+      Exception::NeedSignature,
+      Exception::InvalidSignature,
+      Exception::ServiceError,
+      Exception::GatewayError,
+      Exception::RetryWithoutError
+    ]
+
+    # Exceptions from ActiveRecord::StatementInvalid
+    PG_EXCEPTIONS_TO_EXIT = %w[PG::ConnectionBad PG::UnableToSend].freeze
   end
 end

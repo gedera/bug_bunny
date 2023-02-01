@@ -31,9 +31,9 @@ module BugBunny
       @body           = deserialize_body(opts[:body] || opts[:response] || {})
       @errors         = opts[:errors]
       @status         = opts[:status] || :success
-      @service_name   = opts[:service_name] || Config.service_name
+      @service_name   = opts[:service_name]
       @service_action = opts[:service_action] # Deberiamos raisear si esto no viene...
-      @version        = opts[:version] || Config.version
+      @version        = opts[:version]
       @signature      = opts[:signature] || nil
       @reply_to       = opts[:reply_to]
       @exception      = opts[:exception]
@@ -65,28 +65,23 @@ module BugBunny
       self
     end
 
-    # def signed?
-    #   signature.present?
-    # end
+    def signed?
+      signature.present?
+    end
 
-    # def sign!(key)
-    #   self.signature = ::WisproUtils::Security.sign_message(key, body.to_json)
-    # end
+    def sign!(key)
+      self.signature = ::BugBunny::Security.sign_message(key, body.to_json)
+    end
 
-    # def invalid_signature?(key)
-    #   !valid_signature?(key)
-    # end
+    def invalid_signature?(key)
+      !valid_signature?(key)
+    end
 
-    # def valid_signature?(key)
-    #   return false if signature.blank?
+    def valid_signature?(key)
+      return if signature.blank?
 
-    #   ::WisproUtils::Security.check_sign(
-    #     key,
-    #     signature,
-    #     # { que_bien: 'tu_prima' }.to_json
-    #     body.to_json
-    #   )
-    # end
+      ::BugBunny::Security.check_sign(key, signature, body.to_json)
+    end
 
     def formatted
       resp = {
@@ -130,13 +125,13 @@ module BugBunny
       to_json # Asegurarse de que siempre se llame al "formatted"
     end
 
-    alias original_to_h to_h
-
     def to_h
       formatted
     rescue StandardError
       original_to_h
     end
+
+    alias :original_to_h :to_h
 
     def success?
       status.to_sym == :success

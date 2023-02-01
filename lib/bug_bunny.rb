@@ -10,6 +10,7 @@ require_relative "bug_bunny/parse_message"
 require_relative "bug_bunny/queue"
 require_relative "bug_bunny/rabbit"
 require_relative "bug_bunny/response"
+require_relative "bug_bunny/security"
 
 module BugBunny
 end
