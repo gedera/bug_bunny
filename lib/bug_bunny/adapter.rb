@@ -9,8 +9,6 @@ module BugBunny
     COMUNICATION_ERROR  = :comunication_error
     CONSUMER_COUNT_ZERO = :consumer_count_zero
 
-    SCOPE_TRANSLATION = %i[adapter]
-
     PG_EXCEPTIONS_TO_EXIT = %w[PG::ConnectionBad PG::UnableToSend].freeze
 
     attr_accessor :consumer,
@@ -112,10 +110,7 @@ module BugBunny
           # ::Session.extra_context[:message] = message.body
 
           logger.info("#{queue.name}-Received Request: (#{message.service_action})")
-
           logger.debug("#{queue.name}-Received Request: (#{message})")
-          (I18n.locale = message.locale) rescue nil
-
           logger.debug("Message will be yield")
           logger.debug("Block given?  #{block_given?}")
           yield(message) if block_given?
@@ -262,7 +257,7 @@ module BugBunny
       if comunication_result.success?
         consume_result || comunication_result
       else
-        comunication_result.response = I18n.t(comunication_result.response, scope: SCOPE_TRANSLATION)
+        comunication_result.response = comunication_result.response.to_s
         comunication_result
       end
     end
@@ -271,7 +266,7 @@ module BugBunny
       if communication_response.success?
         consume_response || communication_response
       else
-        communication_response.response = I18n.t(communication_response.response, scope: SCOPE_TRANSLATION)
+        communication_response.response = communication_response.response.to_s
         communication_response
       end
     end
@@ -349,7 +344,7 @@ module BugBunny
         )
       rescue ::BugBunny::Exception::ComunicationRabbitError => e
         (service_adapter ||= nil).try(:close_connection!)
-        return ::BugBunny::Response.new(status: false, response: I18n.t(e.message, scope: [:adapter]))
+        return ::BugBunny::Response.new(status: false, response: e.message)
       end
 
       service_adapter.publish_and_consume!(message_to_publish, sync_queue, check_consumers_count: true)
