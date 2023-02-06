@@ -12,8 +12,6 @@ module BugBunny
     TIMEOUT       = :timeout
     BOMBA         = :bomba
 
-    SCOPE_TRANSLATION = %i[adapter]
-
     attr_accessor :correlation_id,
                   :body,
                   :signature,
@@ -23,8 +21,7 @@ module BugBunny
                   :service_action,
                   :version,
                   :reply_to,
-                  :exception,
-                  :locale
+                  :exception
 
     def initialize(opts = {})
       @correlation_id = opts[:correlation_id] || SecureRandom.uuid
@@ -37,7 +34,6 @@ module BugBunny
       @signature      = opts[:signature]
       @reply_to       = opts[:reply_to]
       @exception      = opts[:exception]
-      @locale         = (opts[:locale] || I18n.locale || :es)
     end
 
     def server_not_found!
@@ -157,10 +153,10 @@ module BugBunny
       Helpers.utc_values_to_local(body)
     end
 
-    def critical_response
-      ::BugBunny::ParserMessage.humanize_error(errors, :adapter)
-    rescue StandarError
-      [I18n.t(:general_error, scope: :adapter)]
-    end
+    # def critical_response
+    #   ::BugBunny::ParserMessage.humanize_error(errors, :adapter)
+    # rescue StandarError
+    #   [:general_error]
+    # end
   end
 end
