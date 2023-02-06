@@ -6,6 +6,7 @@ module BugBunny
     TIMEOUT             = 3
     BOMBA               = :bomba
     PUBLISH_TIMEOUT     = :publish_timeout
+    CONSUMER_TIMEOUT    = :consumer_timeout
     COMUNICATION_ERROR  = :comunication_error
     CONSUMER_COUNT_ZERO = :consumer_count_zero
 
@@ -53,12 +54,13 @@ module BugBunny
 
         self.communication_response = ::BugBunny::Response.new(status: true)
       end
-    rescue Timeout::Error, StandardError => e
-      logger.debug("Rabbit Identifier: #{rabbit.try(:identifier)}")
+    rescue Timeout::Error => e
       logger.error(e)
-
       close_connection!
-
+      self.communication_response = ::BugBunny::Response.new(status: false, response: PUBLISH_TIMEOUT, exception: e)
+    rescue StandardError => e
+      logger.error(e)
+      close_connection!
       self.communication_response = ::BugBunny::Response.new(status: false, response: BOMBA, exception: e)
     end
 
@@ -87,7 +89,7 @@ module BugBunny
         # Session.correlation_id = metadata.correlation_id
         # Session.queue_name = queue.name
 
-        unless (ActiveRecord::Base.connection_pool.with_connection(&:active?) rescue false)
+        unless defined?(ActiveRecord) && ActiveRecord::Base.connection_pool.with_connection(&:active?)
           logger.error('[PG] PG connection down')
           exit 7
         end
@@ -116,7 +118,9 @@ module BugBunny
             Timeout.timeout(5) do
               rabbit.channel.ack delivery_info.delivery_tag if delivery_info[:consumer].manual_acknowledgement?
             end
-          rescue Timeout::Error, ::StandardError => e
+          rescue Timeout::Error => e
+            logger.debug("Rabbit Identifier: #{rabbit.try(:identifier)} can not check manual_ack #{e.to_s}")
+          rescue ::StandardError => e
             logger.debug("Rabbit Identifier: #{rabbit.try(:identifier)} can not check manual_ack #{e.to_s}")
           end
 
@@ -160,7 +164,17 @@ module BugBunny
           rescue Bunny::NotAllowedError => e
             logger.debug("NOT ALLOWED #{e.to_s}")
             break
-          rescue Timeout::Error, StandardError => e
+          rescue Timeout::Error => e
+            if queue.rabbit_queue.channel.status == :closed || queue.rabbit_queue.channel.connection.status == :closed
+              logger.debug("Channel or connection closed")
+              break
+            end
+
+            sleep time_to_wait
+            logger.debug("Rabbit Identifier: #{rabbit.try(:identifier)}")
+            logger.error(e)
+            retry
+          rescue StandardError => e
             if queue.rabbit_queue.channel.status == :closed || queue.rabbit_queue.channel.connection.status == :closed
               logger.debug("Channel or connection closed")
               break
@@ -173,10 +187,14 @@ module BugBunny
           end
         end
       end
-    rescue Timeout::Error, StandardError => e
+    rescue Timeout::Error => e
       logger.debug("Rabbit Identifier: #{rabbit.try(:identifier)}")
       logger.error(e)
-
+      close_connection!
+      ::BugBunny::Response.new(status: false, response: CONSUMER_TIMEOUT, exception: e)
+    rescue StandardError => e
+      logger.debug("Rabbit Identifier: #{rabbit.try(:identifier)}")
+      logger.error(e)
       close_connection!
       ::BugBunny::Response.new(status: false, response: BOMBA, exception: e)
     end
@@ -268,11 +286,11 @@ module BugBunny
     end
 
     def status
-      rabbit.try(:status) rescue nil
+      rabbit.try(:status)
     end
 
     def close_connection!
-      rabbit.try(:close) rescue nil
+      rabbit.try(:close)
     end
 
     def check_pg_exception!(exception)
