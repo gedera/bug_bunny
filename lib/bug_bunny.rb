@@ -12,5 +12,10 @@ require_relative "bug_bunny/response"
 require_relative "bug_bunny/security"
 require_relative "bug_bunny/helpers"
 
+if defined? ::Rails::Railtie
+  ## Rails only files
+  require 'bug_bunny/railtie'
+end
+
 module BugBunny
 end

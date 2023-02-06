@@ -1,8 +1,40 @@
 # BugBunny
 
-TODO: Delete this and the text below, and describe your gem
+This gem simplify use of bunny gem. You can use 2 types of comunitaction, sync and async, Only is necessary define one `Adapter` to publish messages and `Consumer` to consume messages.
 
-Welcome to your new gem! In this directory, you'll find the files you need to be able to package up your Ruby library into a gem. Put your Ruby code in the file `lib/bug_bunny`. To experiment with that code, run `bin/console` for an interactive prompt.
+# Example
+
+```
+# Adapter Code
+class TestAdapter < ::BugBunny::Adapter
+  def self.publish_and_consume
+    service_adapter = TestAdapter.new
+    sync_queue = service_adapter.build_queue(:queue_test, durable: true, exclusive: false, auto_delete: false)
+
+    message = ::BugBunny::Message.new(service_action: :test_action, body: { msg: 'test message' })
+
+    service_adapter.publish_and_consume!(message, sync_queue, check_consumers_count: false)
+
+    service_adapter.close_connection! # ensure the adapter is close
+
+    service_adapter.make_response
+  end
+end
+
+# Controller Code
+class TestController < ::BugBunny::Controller
+  ##############################################################################
+  # SYNC SERVICE ACTIONS
+  ##############################################################################
+  def self.test_action(message)
+    puts 'sleeping 5 seconds...'
+    sleep 5
+    { status: :success, body: message.body }
+  end
+end
+```
+
+
 
 ## Installation
 
