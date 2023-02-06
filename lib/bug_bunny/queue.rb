@@ -4,10 +4,10 @@ module BugBunny
 
     def initialize(attrs={})
       # "Real" queue  opts
-      @name        = attrs[:name] || 'undefined'
-      @auto_delete = attrs[:auto_delete] || true
-      @durable     = attrs[:durable] || false
-      @exclusive   = attrs[:exclusive] || false
+      @name        = attrs.fetch(:name, 'undefined')
+      @auto_delete = attrs.fetch(:auto_delete, true)
+      @durable     = attrs.fetch(:durable, false)
+      @exclusive   = attrs.fetch(:exclusive, false)
     end
 
     def options

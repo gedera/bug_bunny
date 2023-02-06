@@ -34,7 +34,7 @@ module BugBunny
       @service_name   = opts[:service_name]
       @service_action = opts[:service_action] # Deberiamos raisear si esto no viene...
       @version        = opts[:version]
-      @signature      = opts[:signature] || nil
+      @signature      = opts[:signature]
       @reply_to       = opts[:reply_to]
       @exception      = opts[:exception]
       @locale         = (opts[:locale] || I18n.locale || :es)
@@ -149,13 +149,13 @@ module BugBunny
       Message.new({ version: version, correlation_id: correlation_id, service_action: service_action }.merge(params))
     end
 
-    # def serialize_body
-    #   Helpers.datetime_values_to_utc(body)
-    # end
+    def serialize_body
+      Helpers.datetime_values_to_utc(body)
+    end
 
-    # def deserialize_body(body)
-    #   Helpers.utc_values_to_local(body)
-    # end
+    def deserialize_body(body)
+      Helpers.utc_values_to_local(body)
+    end
 
     def critical_response
       ::BugBunny::ParserMessage.humanize_error(errors, :adapter)

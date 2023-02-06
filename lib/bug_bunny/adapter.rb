@@ -95,11 +95,7 @@ module BugBunny
         end
 
         begin
-          message = ::BugBunny::Message.new(
-            correlation_id: metadata.correlation_id,
-            reply_to:       metadata.reply_to,
-            **payload # mandemos lo que venga y adentro decidimos
-          )
+          message = ::BugBunny::Message.new(correlation_id: metadata.correlation_id, reply_to: metadata.reply_to, **payload)
 
           # Default sentry info
           # ::Session.request_id = message.correlation_id rescue nil
@@ -115,7 +111,6 @@ module BugBunny
 
           logger.debug("#{queue.name}-Received Request: (#{message})")
           (I18n.locale = message.locale) rescue nil
-
           logger.debug("Message will be yield")
           logger.debug("Block given?  #{block_given?}")
           yield(message) if block_given?
@@ -231,7 +226,7 @@ module BugBunny
       new_queue = ::BugBunny::Queue.new(opts.merge(name: name))
 
       if init
-        logger.debug("Building rabbit new_queue: #{name} status: #{rabbit.status}")
+        logger.debug("Building rabbit new_queue: #{name} status: #{rabbit.status} queue_options: #{new_queue.options}")
 
         retries = 0
         begin
