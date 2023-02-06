@@ -86,7 +86,6 @@ module BugBunny
         status:         status,
         service_name:   service_name,
         service_action: service_action,
-        locale:         locale,
         signature:      signature,
         errors:         errors,
         body:           serialize_body
