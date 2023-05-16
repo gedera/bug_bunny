@@ -66,7 +66,7 @@ module BugBunny
                   ::Session.extra_context ||= {}
                   ::Session.extra_context[:message] = message.body
                   # para que cada servicio setee valores de session segun sus necesidades
-                  try(:set_sentry_context, message)
+                  adapter.try(:set_sentry_context, message)
                 end
 
                 response = nil
