@@ -107,7 +107,6 @@ module BugBunny
           # )
           # ::Session.extra_context[:message] = message.body
 
-          # definir este metodo en el adapter del servicio para setear el contexto del sentry a gusto
           logger.info("#{queue.name}-Received Request: (#{message.service_action})")
           logger.debug("#{queue.name}-Received Request: (#{message})")
           logger.debug("Message will be yield")
