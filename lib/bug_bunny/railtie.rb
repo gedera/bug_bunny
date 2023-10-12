@@ -33,89 +33,97 @@ module BugBunny
 
           queue_name = { sync: adapter_class::ROUTING_KEY_SYNC_REQUEST, async: adapter_class::ROUTING_KEY_ASYNC_REQUEST }[mode]
 
-          loop do
+          begin
+            adapter = adapter_class.new
+
+            queue = adapter.build_queue(queue_name, adapter_class::QUEUES_PROPS[queue_name])
+
+            msg = "Building queue #{queue_name} => #{adapter_class::QUEUES_PROPS[queue_name]}"
+
+            if defined?(Rails)
+              Rails.logger.info(msg)
+            else
+              puts msg
+            end
+
+            if mode == :async
+              adapter.build_queue(
+                adapter_class::ROUTING_KEY_ASYNC_RESPONSE,
+                adapter_class::QUEUES_PROPS[adapter_class::ROUTING_KEY_ASYNC_RESPONSE]
+              )
+            end
+          rescue ::BugBunny::Exception::ComunicationRabbitError => e
+            if defined?(Rails)
+              Rails.logger.error(e)
+            else
+              puts e.message
+            end
+
+            (adapter ||= nil).try(:close_connection!) # ensure the adapter is close
+            sleep 5
+            retry
+          end
+
+          adapter.consume!(queue) do |message|
             begin
-              adapter = adapter_class.new
+              if options[:session]
+                ::Session.request_id = message.correlation_id rescue nil
+                ::Session.tags_context ||= {}
 
-              queue = adapter.build_queue(queue_name, adapter_class::QUEUES_PROPS[queue_name])
-
-              if mode == :async
-                adapter.build_queue(
-                  adapter_class::ROUTING_KEY_ASYNC_RESPONSE,
-                  adapter_class::QUEUES_PROPS[adapter_class::ROUTING_KEY_ASYNC_RESPONSE]
-                )
+                ::Session.extra_context ||= {}
+                ::Session.extra_context[:message] = message.body
               end
-            rescue ::BugBunny::Exception::ComunicationRabbitError => e
+
+              response = nil
+
+              if defined?(Rails)
+                Rails.logger.debug("Msg received: action: #{message.service_action}, msg: #{message.body}")
+              else
+                puts "Msg received: action: #{message.service_action}, msg: #{message.body}"
+              end
+              response = "#{options[:adapter]}Controller".constantize.exec_action(message)
+            rescue StandardError => e
+              adapter.check_pg_exception!(e)
+
               if defined?(Rails)
                 Rails.logger.error(e)
               else
                 puts e.message
               end
 
-              (adapter ||= nil).try(:close_connection!) # ensure the adapter is close
-              sleep 5
-              retry
+              @exception = e
             end
 
-            adapter.consume!(queue) do |message|
+            if message.reply_to
+              Session.reply_to_queue = message.reply_to if options[:session]
               begin
-                if options[:session]
-                  ::Session.request_id = message.correlation_id rescue nil
-                  ::Session.tags_context ||= {}
-
-                  ::Session.extra_context ||= {}
-                  ::Session.extra_context[:message] = message.body
+                msg = message.build_message
+                if @exception
+                  msg.body = (response&.key?(:body)) ? response[:body] : { id: message.body[:id] }
+                  msg.exception = @exception
+                else
+                  msg.body = response[:body]
+                  msg.status = response[:status] if response.key?(:status)
                 end
 
-                response = nil
-
-                Timeout.timeout(5.minutes) do
-                  if defined?(Rails)
-                    Rails.logger.debug("Msg received: action: #{message.service_action}, msg: #{message.body}")
-                  else
-                    puts "Msg received: action: #{message.service_action}, msg: #{message.body}"
-                  end
-                  response = "#{options[:adapter]}Controller".constantize.exec_action(message)
-                end
-              rescue Timeout::Error => e
-                puts("[OLT_VSOL_SERVICE][TIMEOUT][CONSUMER] #{e.to_s})")
-                @exception = e
+                queue = adapter.build_queue(message.reply_to, initialize: false)
+                adapter.publish!(msg, queue)
+                @exception = nil if @exception
               rescue StandardError => e
-                adapter.check_pg_exception!(e)
                 if defined?(Rails)
                   Rails.logger.error(e)
                 else
                   puts e.message
                 end
-                @exception = e
               end
-
-              if message.reply_to
-                Session.reply_to_queue = message.reply_to if options[:session]
-                begin
-                  msg = message.build_message
-                  if @exception
-                    msg.body = (response&.key?(:body)) ? response[:body] : { id: message.body[:id] }
-                    msg.exception = @exception
-                    @exception = nil
-                  else
-                    msg.body = response[:body]
-                    msg.status = response[:status] if response.key?(:status)
-                  end
-
-                  queue = adapter.build_queue(message.reply_to, initialize: false)
-                  adapter.publish!(msg, queue)
-                rescue => e
-                  if defined?(Rails)
-                    Rails.logger.error(e)
-                  else
-                    puts e.message
-                  end
-                end
-              end
-              Session.clean! if options[:session]
             end
-            sleep 5
+            Session.clean! if options[:session]
+          end
+        rescue StandardError => e
+          if defined?(Rails)
+            Rails.logger.error(e)
+          else
+            puts e.message
           end
         end
       end
