@@ -21,11 +21,7 @@ module BugBunny
 
           o.parse!(args)
 
-          if defined?(Rails)
-            Rails.logger.info("Initializing #{options}")
-          else
-            puts "Initializing #{options}"
-          end
+          Rails.logger.info("[BUG_BUNNY][CONSUMER] Initializing #{options}")
 
           adapter_class = options[:adapter].constantize
 
@@ -38,30 +34,19 @@ module BugBunny
 
             queue = adapter.build_queue(queue_name, adapter_class::QUEUES_PROPS[queue_name])
 
-            msg = "Building queue #{queue_name} => #{adapter_class::QUEUES_PROPS[queue_name]}"
+            msg = "[BUG_BUNNY][CONSUMER] Building queue #{queue_name} => #{adapter_class::QUEUES_PROPS[queue_name]}"
 
-            if defined?(Rails)
-              Rails.logger.info(msg)
-            else
-              puts msg
-            end
+            Rails.logger.info(msg)
 
             if mode == :async
-              adapter.build_queue(
-                adapter_class::ROUTING_KEY_ASYNC_RESPONSE,
-                adapter_class::QUEUES_PROPS[adapter_class::ROUTING_KEY_ASYNC_RESPONSE]
-              )
+              msg = "[BUG_BUNNY][CONSUMER] Building queue async response #{adapter_class::ROUTING_KEY_ASYNC_RESPONSE} => #{adapter_class::QUEUES_PROPS[adapter_class::ROUTING_KEY_ASYNC_RESPONSE]}"
+              Rails.logger.debug(msg)
+              adapter.build_queue(adapter_class::ROUTING_KEY_ASYNC_RESPONSE, adapter_class::QUEUES_PROPS[adapter_class::ROUTING_KEY_ASYNC_RESPONSE])
             end
-          rescue ::BugBunny::Exception::ComunicationRabbitError => e
-            if defined?(Rails)
-              Rails.logger.error(e)
-            else
-              puts e.message
-            end
+          rescue StandardError => e
+            Rails.logger.error(e)
 
-            (adapter ||= nil).try(:close_connection!) # ensure the adapter is close
-            sleep 5
-            retry
+            exit 0
           end
 
           adapter.consume!(queue) do |message|
@@ -76,30 +61,23 @@ module BugBunny
 
               response = nil
 
-              if defined?(Rails)
-                Rails.logger.debug("Msg received: action: #{message.service_action}, msg: #{message.body}")
-              else
-                puts "Msg received: action: #{message.service_action}, msg: #{message.body}"
-              end
+              Rails.logger.debug("[BUG_BUNNY][CONSUMER][MSG_RECEIVED] ACTION: #{message.service_action}, MESSAGE: #{message.body}")
               response = "#{options[:adapter]}Controller".constantize.exec_action(message)
             rescue StandardError => e
-              adapter.check_pg_exception!(e)
-
-              if defined?(Rails)
-                Rails.logger.error(e)
-              else
-                puts e.message
-              end
-
+              Rails.logger.debug("[BUG_BUNNY][CONSUMER][MSG_RECEIVED] ENTRO AL RESCUE DEL CONSUMER")
+              Rails.logger.error(e)
               @exception = e
             end
 
             if message.reply_to
               Session.reply_to_queue = message.reply_to if options[:session]
+              retries = 3
+
               begin
                 msg = message.build_message
+
                 if @exception
-                  msg.body = (response&.key?(:body)) ? response[:body] : { id: message.body[:id] }
+                  msg.body = response&.key?(:body) ? response[:body] : { id: message.body[:id] }
                   msg.exception = @exception
                 else
                   msg.body = response[:body]
@@ -107,24 +85,32 @@ module BugBunny
                 end
 
                 queue = adapter.build_queue(message.reply_to, initialize: false)
+
+                Rails.logger.debug("[BUG_BUNNY][CONSUMER] Reply to #{message.reply_to} with #{msg}")
+
                 adapter.publish!(msg, queue)
-                @exception = nil if @exception
               rescue StandardError => e
-                if defined?(Rails)
-                  Rails.logger.error(e)
-                else
-                  puts e.message
+                if e.instance_of?(::BugBunny::Exception::ComunicationRabbitError) && retries.positive?
+                  retries -= 1
+
+                  retry
                 end
+
+                Rails.logger.debug("[BUG_BUNNY][CONSUMER][MSG_RECEIVED] ENTRO AL RESCUE DEL REPLY TO")
+                Rails.logger.error(e)
+                Rails.logger.debug("[BUG_BUNNY][CONSUMER][MSG_RECEIVED] EXIT")
+
+                exit 0
               end
             end
             Session.clean! if options[:session]
           end
         rescue StandardError => e
-          if defined?(Rails)
-            Rails.logger.error(e)
-          else
-            puts e.message
-          end
+          Rails.logger.debug("[BUG_BUNNY][CONSUMER][MSG_RECEIVED] ENTRO EN EL RESCUE GENERAL")
+          Rails.logger.error(e)
+          Rails.logger.debug("[BUG_BUNNY][CONSUMER][MSG_RECEIVED] EXIT")
+
+          exit 0
         end
       end
     end
