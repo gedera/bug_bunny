@@ -89,10 +89,10 @@ module BugBunny
         # Session.correlation_id = metadata.correlation_id
         # Session.queue_name = queue.name
 
-        unless defined?(ActiveRecord) && ActiveRecord::Base.connection_pool.with_connection(&:active?)
-          logger.error('[PG] PG connection down')
-          exit 7
-        end
+        # unless defined?(ActiveRecord) && ActiveRecord::Base.connection_pool.with_connection(&:active?)
+        #   logger.error('[PG] PG connection down')
+        #   exit 7
+        # end
 
         begin
           message = ::BugBunny::Message.new(correlation_id: metadata.correlation_id, reply_to: metadata.reply_to, **payload)
