@@ -17,10 +17,9 @@ module BugBunny
                   :logger,
                   :time_to_wait,
                   :communication_response,
-                  :service_message,
-                  :consume_response
+                  :service_message
 
-    def initialize
+    def initialize(attrs = {})
       @logger = Logger.new('./log/bug_bunny.log', 'monthly')
       @communication_response = ::BugBunny::Response.new status: false
       @time_to_wait = 2
@@ -278,7 +277,7 @@ module BugBunny
 
     def make_response
       if communication_response.success?
-        consume_response || communication_response
+        service_message || communication_response
       else
         communication_response.response = communication_response.response.to_s
         communication_response
@@ -343,42 +342,6 @@ module BugBunny
 
       close_connection!
       raise Exception::ComunicationRabbitError.new(COMUNICATION_ERROR, e.backtrace)
-    end
-
-    def self.health_check(request: nil)
-      message_to_publish = ::BugBunny::Message.new(service_action: self::SERVICE_HEALTH_CHECK, body: {})
-
-      request ||= self::ROUTING_KEY_SYNC_REQUEST
-
-      begin
-        service_adapter = new
-        sync_queue = service_adapter.build_queue(
-          request,
-          self::QUEUES_PROPS[self::ROUTING_KEY_SYNC_REQUEST]
-        )
-      rescue ::BugBunny::Exception::ComunicationRabbitError => e
-        (service_adapter ||= nil).try(:close_connection!)
-        return ::BugBunny::Response.new(status: false, response: e.message)
-      end
-
-      service_adapter.publish_and_consume!(message_to_publish, sync_queue, check_consumers_count: true)
-
-      service_adapter.close_connection! # ensure the adapter is close
-
-      if service_adapter.communication_response.success?
-        msg = service_adapter.service_message
-
-        result = case msg.status
-                 when 'success'
-                   { status: true }
-                 when 'error', 'critical'
-                   { status: false }
-                 end
-
-        service_adapter.consume_response = ::BugBunny::Response.new(result)
-      end
-
-      service_adapter.make_response
     end
   end
 end
