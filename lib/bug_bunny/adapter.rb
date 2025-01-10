@@ -29,8 +29,7 @@ module BugBunny
     def publish!(message, publish_queue, opts = {})
       Timeout::timeout(TIMEOUT) do
         if opts[:check_consumers_count] && publish_queue.check_consumers.zero?
-          self.communication_response = ::BugBunny::Response.new(status: false, response: CONSUMER_COUNT_ZERO)
-          return
+          raise(::BugBunny::ComunicationError, 'queue_without_consumer')
         end
 
         publish_opts = { routing_key: publish_queue.name,
@@ -52,15 +51,21 @@ module BugBunny
         rabbit.channel.wait_for_confirms if rabbit.confirm_select
 
         self.communication_response = ::BugBunny::Response.new(status: true)
+      rescue Timeout::Error => e
+        logger.error(e)
+        close_connection!
+        self.communication_response = ::BugBunny::Response.new(status: false, response: PUBLISH_TIMEOUT, exception: e)
+      rescue StandardError => e
+        logger.error(e)
+        close_connection!
+        self.communication_response = ::BugBunny::Response.new(status: false, response: BOMBA, exception: e)
       end
-    rescue Timeout::Error => e
-      logger.error(e)
+
       close_connection!
-      self.communication_response = ::BugBunny::Response.new(status: false, response: PUBLISH_TIMEOUT, exception: e)
-    rescue StandardError => e
-      logger.error(e)
-      close_connection!
-      self.communication_response = ::BugBunny::Response.new(status: false, response: BOMBA, exception: e)
+
+      raise(::BugBunny::StandardError, make_response.exception.message) if make_response.status.to_sym == :critical
+
+      make_response
     end
 
     def consume!(queue, thread: false, manual_ack: true, exclusive: false, block: true, opts: {})
@@ -204,66 +209,81 @@ module BugBunny
       retries = 0
       begin
         publish!(publish_message, sync_queue, opts.merge(reply_to: reply_queue.name))
-      rescue
+      rescue StandardError => e
         if (retries += 1) <= 3
           sleep 0.5
           retry
         end
 
         close_connection!
-        raise
+        logger.debug("CANT PARSE RESPONSE IN CONSUMER: MENSAGE: #{publish_message}, ERROR: #{e.message}")
+        raise(::BugBunny::ComunicationError, e.message)
       end
 
-      return communication_response unless communication_response.success?
+      return make_response unless communication_response.success?
 
+      # TODO: Ver de sacar este thread, me da la sensacion que esta al re mil pedo.
       t = Thread.new do
         retries = 0
+
         begin
           consume!(reply_queue, thread: Thread.current, exclusive: true) do |msg|
             yield(msg) if block_given?
           end
-        rescue
+        rescue StandardError => e
           if (retries += 1) <= 3
             sleep 0.5
             retry
           end
-          raise
+          logger.debug("CANT PARSE RESPONSE IN CONSUMER: MENSAGE: #{msg} ERROR: #{e.message}")
+          raise(::BugBunny::StandardError, e.message)
         end
       end
       t.join
-      communication_response
+
+      close_connection!
+
+      raise(::BugBunny::StandardError, make_response.exception.message) if make_response.status.to_sym == :critical
+
+      make_response
     end
 
     def build_queue(name, opts = {})
       init = opts.key?(:initialize) ? opts[:initialize] : true
       new_queue = ::BugBunny::Queue.new(opts.merge(name: name))
 
-      if init
-        logger.debug("Building rabbit new_queue: #{name} status: #{rabbit.status} queue_options: #{new_queue.options}")
+      logger.debug("Building rabbit new_queue: #{name} status: #{rabbit.status} queue_options: #{new_queue.options} Rabbit Identifier: #{rabbit.try(:identifier)}")
 
+      return new_queue unless init
+
+      begin
         retries = 0
-        begin
-          built_queue = rabbit.channel.queue(new_queue.name.to_s, new_queue.options)
-        rescue StandardError
-          if (retries += 1) <= 3
-            sleep 0.5
-            retry
-          end
-          raise
+
+        new_queue.rabbit_queue = rabbit.channel.queue(new_queue.name.to_s, new_queue.options)
+        new_queue.name = new_queue.rabbit_queue.name
+      rescue Timeout::Error => e
+        if retries >= 3
+          logger.error(e)
+          close_connection!
+          raise(::BugBunny::ComunicationError, e.message, e.backtrace)
         end
 
-        new_queue.rabbit_queue = built_queue
-        new_queue.name = new_queue.rabbit_queue.name
+        retries += 1
+        sleep 0.5
+        retry
+      rescue StandardError => e
+        if retries >= 3
+          logger.error(e)
+          close_connection!
+          raise(::BugBunny::ComunicationError, e.message, e.backtrace)
+        end
+
+        retries += 1
+        sleep 0.5
+        retry
       end
 
       new_queue
-    rescue Timeout::Error, StandardError => e
-      logger.debug("Rabbit Identifier: #{rabbit.try(:identifier)}")
-      logger.debug("Status adapter created: #{rabbit.status}")
-      logger.error(e)
-
-      close_connection!
-      raise Exception::ComunicationRabbitError.new(COMUNICATION_ERROR, e.backtrace)
     end
 
     def self.make_response(comunication_result, consume_result = nil)
