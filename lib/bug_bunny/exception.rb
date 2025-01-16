@@ -1,6 +1,8 @@
+class BugBunny::ComunicationError < StandardError; end
+class BugBunny::StandardError < StandardError; end
+
 module BugBunny
   class Exception
-
     class ServiceError < StandardError
       def to_s
         :service_error

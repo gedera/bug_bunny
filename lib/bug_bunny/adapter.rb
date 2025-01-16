@@ -7,8 +7,9 @@ module BugBunny
     BOMBA               = :bomba
     PUBLISH_TIMEOUT     = :publish_timeout
     CONSUMER_TIMEOUT    = :consumer_timeout
-    COMUNICATION_ERROR  = :comunication_error
-    CONSUMER_COUNT_ZERO = :consumer_count_zero
+
+    ACTION_TEST_SYNC = :test_sync # Only publish message
+    ACTION_TEST_ASYNC = :test_async # Publish message and wait for response
 
     PG_EXCEPTIONS_TO_EXIT = %w[PG::ConnectionBad PG::UnableToSend].freeze
 
@@ -17,25 +18,21 @@ module BugBunny
                   :logger,
                   :time_to_wait,
                   :communication_response,
-                  :service_message
+                  :service_message,
+                  :name_queue
 
-    def initialize(attrs = {})
-      @logger = Logger.new('./log/bug_bunny.log', 'monthly')
+    def initialize(_attrs = {})
       @communication_response = ::BugBunny::Response.new status: false
-      @time_to_wait = 2
       create_adapter_with_rabbit
     end
 
     def publish!(message, publish_queue, opts = {})
-      Timeout::timeout(TIMEOUT) do
+      Timeout.timeout(TIMEOUT) do
         if opts[:check_consumers_count] && publish_queue.check_consumers.zero?
           raise(::BugBunny::ComunicationError, 'queue_without_consumer')
         end
 
-        publish_opts = { routing_key: publish_queue.name,
-                         persistent: opts[:persistent],
-                         correlation_id: message.correlation_id }
-
+        publish_opts = { routing_key: publish_queue.name, persistent: opts[:persistent], correlation_id: message.correlation_id }
         publish_opts[:reply_to] = opts[:reply_to] if opts[:reply_to]
 
         # Esta es la idea en el caso que nos pongamos mas mañosos y queramos cambiar las exchange a la hora de publicar.
@@ -45,27 +42,27 @@ module BugBunny
         #               exchange
         #             end
         # _exchange.publish(message.to_json, publish_opts)
-        logger.debug("#{publish_queue.name}-Send Request: (#{message})")
+        BugBunny.config[:logger].debug('#####################################################################')
+        BugBunny.config[:logger].debug('                 PUBLISH MESSAGE!!!                                  ')
+        BugBunny.config[:logger].debug('#####################################################################')
+        BugBunny.config[:logger].debug("PUBLISH OPTIONS: #{publish_opts}")
+        BugBunny.config[:logger].debug("MESSAGE TO SEND: #{message}")
 
         rabbit.exchange.publish(message.to_json, publish_opts)
         rabbit.channel.wait_for_confirms if rabbit.confirm_select
+        close_connection!
 
         self.communication_response = ::BugBunny::Response.new(status: true)
+        make_response
       rescue Timeout::Error => e
-        logger.error(e)
+        BugBunny.config[:logger].error(e)
         close_connection!
-        self.communication_response = ::BugBunny::Response.new(status: false, response: PUBLISH_TIMEOUT, exception: e)
+        raise(::BugBunny::ComunicationError, 'timeout')
       rescue StandardError => e
-        logger.error(e)
+        BugBunny.config[:logger].error(e)
         close_connection!
-        self.communication_response = ::BugBunny::Response.new(status: false, response: BOMBA, exception: e)
+        raise ::BugBunny::StandardError, e.message
       end
-
-      close_connection!
-
-      raise(::BugBunny::StandardError, make_response.exception.message) if make_response.status.to_sym == :critical
-
-      make_response
     end
 
     def consume!(queue, thread: false, manual_ack: true, exclusive: false, block: true, opts: {})
@@ -204,7 +201,7 @@ module BugBunny
     end
 
     def publish_and_consume!(publish_message, sync_queue, opts={})
-      reply_queue = build_queue('', initialize: true, exclusive: true, durable: false, auto_delete: true)
+      reply_queue = build_queue('', exclusive: true, durable: false, auto_delete: true)
 
       retries = 0
       begin
@@ -248,13 +245,21 @@ module BugBunny
       make_response
     end
 
-    def build_queue(name, opts = {})
-      init = opts.key?(:initialize) ? opts[:initialize] : true
-      new_queue = ::BugBunny::Queue.new(opts.merge(name: name))
+    # Props:
+    #   durable: true
+    #   auto_delete: false
+    #   exclusive: false
+    def build_queue(name, props: {})
+      props ||= BugBunny.config[:default_props]
+      new_queue = ::BugBunny::Queue.new(props.merge(name: name))
 
-      logger.debug("Building rabbit new_queue: #{name} status: #{rabbit.status} queue_options: #{new_queue.options} Rabbit Identifier: #{rabbit.try(:identifier)}")
-
-      return new_queue unless init
+      BugBunny.config[:logger].debug('#####################################################################')
+      BugBunny.config[:logger].debug('                  BUILDING QUEUE!!!                                  ')
+      BugBunny.config[:logger].debug('#####################################################################')
+      BugBunny.config[:logger].debug("RABBIT IDENTIFIER: #{rabbit.try(:identifier)}")
+      BugBunny.config[:logger].debug("INITIALIZING QUEUE: #{name}")
+      BugBunny.config[:logger].debug("STATUS QUEUE: #{rabbit.status}")
+      BugBunny.config[:logger].debug("OPTIONS QUEUE: #{new_queue.options}")
 
       begin
         retries = 0
@@ -262,8 +267,8 @@ module BugBunny
         new_queue.rabbit_queue = rabbit.channel.queue(new_queue.name.to_s, new_queue.options)
         new_queue.name = new_queue.rabbit_queue.name
       rescue Timeout::Error => e
-        if retries >= 3
-          logger.error(e)
+        if retries >= BugBunny.config[:retry]
+          BugBunny.config[:logger].error(e)
           close_connection!
           raise(::BugBunny::ComunicationError, e.message, e.backtrace)
         end
@@ -272,8 +277,8 @@ module BugBunny
         sleep 0.5
         retry
       rescue StandardError => e
-        if retries >= 3
-          logger.error(e)
+        if retries >= BugBunny.config[:retry]
+          BugBunny.config[:logger].error(e)
           close_connection!
           raise(::BugBunny::ComunicationError, e.message, e.backtrace)
         end
@@ -319,7 +324,59 @@ module BugBunny
       end
     end
 
+    def self.test_sync(queue_name = nil)
+      queue_name ||= BugBunny.config[:default_queue]
+
+      adapter = new
+
+      message = ::BugBunny::Message.new(service_name: BugBunny.config[:service_name], service_action: self::ACTION_TEST_SYNC, body: :ping)
+      queue = adapter.build_queue(queue_name)
+      result = adapter.publish_and_consume!(message, queue, check_consumers_count: true)
+      build_standard_response(result)
+    rescue StandardError => e
+      raise ::BugBunny::StandardError, e.message
+    end
+
+    def self.test_async(queue_name = nil)
+      queue_name ||= BugBunny.config[:default_queue]
+
+      adapter = new
+
+      message = ::BugBunny::Message.new(service_name: BugBunny.config[:service_name], service_action: self::ACTION_TEST_SYNC, body: :ping)
+      queue = adapter.build_queue(queue_name)
+      result = adapter.publish!(message, queue)
+      build_standard_response(result)
+    rescue StandardError => e
+      raise ::BugBunny::StandardError, e.message
+    end
+
     private
+
+    def self.build_standard_response(payload)
+      BugBunny.config[:logger].debug("build_standard_response -> #{payload.status}")
+      BugBunny.config[:logger].debug("build_standard_response -> #{payload.response}")
+      # Tengo que hacer que el make response, retorne lo siguiente:
+      #   make_response.status => true o false
+      #   make_response.body => el mensaje pelado
+      # Si hago esto me queda al respuesta igual que el FaradayClient
+      body = payload.response
+
+      if body.present?
+        body = JSON.parse(body) if self.class.can_parse_json?(body)
+        body = body.map(&:with_indifferent_access) if payload.instance_of?(Array)
+        body = body.with_indifferent_access if body.instance_of?(Hash)
+      end
+
+      { status: payload.status, response: body }
+    end
+
+    def self.can_parse_json?(value)
+      result = JSON.parse(value)
+
+      result.is_a?(Hash) || result.is_a?(Array)
+    rescue JSON::ParserError, TypeError
+      false
+    end
 
     # AMQ::Protocol::EmptyResponseError: Este error lo note cuando el rabbit
     # acepta la connection pero aun no ha terminado de inicializar el servicio,
@@ -333,9 +390,9 @@ module BugBunny
            Bunny::ConnectionForced, AMQ::Protocol::EmptyResponseError,
            Errno::ECONNRESET => e
 
-      logger.debug(e)
-      close_connection!
-      raise Exception::ComunicationRabbitError.new(COMUNICATION_ERROR, e.backtrace)
+         BugBunny.config[:logger].error(e)
+         close_connection!
+         raise BugBunny::ComunicationError
     rescue OpenSSL::SSL::SSLError, OpenSSL::X509::CertificateError => e
       # el `e.to_s` devuelve alguno de los sgtes errores. Por ej:
       # SSL_connect returned=1 errno=0 state=unknown state: sslv3
@@ -351,17 +408,20 @@ module BugBunny
         @retries = 0 # reset the counter
       end
 
-      # Si sigue fallando desp de 3 veces o no tiene definido el handle
-      # bombita rodriguez
-      logger.error(e)
+      BugBunny.config[:logger].error(e)
 
       close_connection!
-      raise Exception::ComunicationRabbitError.new(COMUNICATION_ERROR, e.backtrace)
-    rescue Timeout::Error, StandardError => e
-      logger.error(e)
+      raise BugBunny::ComunicationError
+    rescue Timeout::Error
+      BugBunny.config[:logger].error(e)
 
       close_connection!
-      raise Exception::ComunicationRabbitError.new(COMUNICATION_ERROR, e.backtrace)
+      raise BugBunny::ComunicationError, 'timeout'
+    rescue StandardError => e
+      BugBunny.config[:logger].error(e)
+
+      close_connection!
+      raise BugBunny::ComunicationError, e
     end
   end
 end
