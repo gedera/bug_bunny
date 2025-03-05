@@ -12,10 +12,22 @@ require_relative "bug_bunny/response"
 require_relative "bug_bunny/security"
 require_relative "bug_bunny/helpers"
 
+require 'active_support/all'
+
 if defined? ::Rails::Railtie
   ## Rails only files
   require 'bug_bunny/railtie'
 end
 
 module BugBunny
+  include ActiveSupport::Configurable
+
+  configure do |config|
+    config.service_name = :bug_bunny
+    config.default_queue = :bug_bunny
+    config.default_props = { durable: true, auto_delete: false, exclusive: false }
+    config.timeout = 1.minute
+    config.retry = 3
+    config.logger = Logger.new(STDOUT)
+  end
 end

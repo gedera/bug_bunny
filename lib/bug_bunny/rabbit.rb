@@ -8,7 +8,6 @@ module BugBunny
                   :no_ack,
                   :persistent,
                   :block,
-                  :logger,
                   :identifier,
                   :connection
 
@@ -17,7 +16,6 @@ module BugBunny
       @no_ack         = attrs[:no_ack] || true
       @persistent     = attrs[:persistent] || true
       @confirm_select = attrs[:confirm_select] || true
-      @logger         = attrs[:logger] || Logger.new('./log/bug_rabbit.log', 'monthly')
       @identifier = SecureRandom.uuid
 
       create_connection
@@ -25,7 +23,7 @@ module BugBunny
     end
 
     def set_channel
-      logger.debug("Set Channel: #{connection.status}") if logger
+      BugBunny.config[:logger].debug("Set Channel: #{connection.status}")
       try(:close_channel)
       @rabbit_channel = connection.create_channel
       @exchange = channel.default_exchange
@@ -81,19 +79,16 @@ module BugBunny
       #                  tls_ca_certificates: ["#{path}/ca.pem"])
       # end
 
-      logger&.debug('Stablish new connection to rabbit')
-      logger&.debug("amqp://#{ENV['RABBIT_USER']}:" \
-                   "#{ENV['RABBIT_PASS']}@#{ENV['RABBIT_HOST']}" \
-                   "/#{ENV['RABBIT_VIRTUAL_HOST']}")
+      BugBunny.config[:logger].debug('Stablish new connection to rabbit')
+      BugBunny.config[:logger].debug("amqp://#{ENV['RABBIT_USER']}:" \
+                                     "#{ENV['RABBIT_PASS']}@#{ENV['RABBIT_HOST']}" \
+                                     "/#{ENV['RABBIT_VIRTUAL_HOST']}")
 
-
-      bunny_logger = ::Logger.new('./log/bunny.log', 7, 10485760)
-      bunny_logger.level = ::Logger::DEBUG
       options.merge!(
-        heartbeat_interval: 20,  # 20.seconds per connection
-        logger: bunny_logger,
+        heartbeat_interval: 20, # 20.seconds per connection
+        logger: BugBunny.config[:logger],
         # Override bunny client_propierties
-        client_properties: { product: identifier, platform: ''}
+        client_properties: { product: identifier, platform: '' }
       )
 
       rabbit_conn = Bunny.new("amqp://#{ENV['RABBIT_USER']}" \
@@ -102,7 +97,7 @@ module BugBunny
                               "#{ENV['RABBIT_VIRTUAL_HOST']}",
                               options)
       rabbit_conn.start
-      logger&.debug("New status connection: #{rabbit_conn.status}")
+      BugBunny.config[:logger].debug("New status connection: #{rabbit_conn.status}")
 
       self.connection = rabbit_conn
     end
