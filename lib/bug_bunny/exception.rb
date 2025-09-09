@@ -1,6 +1,5 @@
 module BugBunny
   class Exception
-
     class ServiceError < StandardError
       def to_s
         :service_error
@@ -29,6 +28,15 @@ module BugBunny
     end
 
     class ComunicationRabbitError < StandardError
+      attr_accessor :backtrace
+
+      def initialize(msg, backtrace)
+        @backtrace = backtrace
+        super(msg)
+      end
+    end
+
+    class WithOutConsumer < StandardError
       attr_accessor :backtrace
 
       def initialize(msg, backtrace)
