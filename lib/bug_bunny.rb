@@ -2,6 +2,7 @@
 
 require 'bunny'
 require_relative "bug_bunny/version"
+require_relative "bug_bunny/config"
 require_relative "bug_bunny/adapter"
 require_relative "bug_bunny/controller"
 require_relative "bug_bunny/exception"
@@ -18,4 +19,16 @@ if defined? ::Rails::Railtie
 end
 
 module BugBunny
+  class << self
+    # Aquí guardaremos la instancia de la configuración
+    def configuration
+      @configuration ||= BugBunny::Config.new
+    end
+
+    # Este es el método que usaremos para configurar.
+    # Recibe un bloque de código y le pasa el objeto de configuración.
+    def configure
+      yield(configuration) if block_given?
+    end
+  end
 end

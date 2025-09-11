@@ -68,8 +68,6 @@ module BugBunny
     # status = :open, :connected, :connecting,
     # :closing, :disconnected, :not_connected, :closed
     def create_connection
-      options = {}
-
       # if WisproUtils::Config.defaults.use_tls
       #   path = (Rails.root.join('private', 'certs') rescue './private/certs')
       #   options.merge!(tls:                 true,
@@ -80,28 +78,27 @@ module BugBunny
       #                  tls_key:             "#{path}/key.pem",
       #                  tls_ca_certificates: ["#{path}/ca.pem"])
       # end
+      options = {}
 
-      logger&.debug('Stablish new connection to rabbit')
-      logger&.debug("amqp://#{ENV['RABBIT_USER']}:" \
-                   "#{ENV['RABBIT_PASS']}@#{ENV['RABBIT_HOST']}" \
-                   "/#{ENV['RABBIT_VIRTUAL_HOST']}")
+      raise "Need user" if BugBunny.configuration.user.blank?
+      raise "Need pass" if BugBunny.configuration.pass.blank?
+      raise "Need host" if BugBunny.configuration.host.blank?
 
+      bunny_logger = BugBunny.configuration.logger || ::Logger.new('./log/bunny.log', 7, 10485760)
+      bunny_logger.level = BugBunny.configuration.log_level || ::Logger::INFO
 
-      bunny_logger = ::Logger.new('./log/bunny.log', 7, 10485760)
-      bunny_logger.level = ::Logger::DEBUG
       options.merge!(
-        heartbeat_interval: 20,  # 20.seconds per connection
+        heartbeat_interval: 20, # 20.seconds per connection
         logger: bunny_logger,
         # Override bunny client_propierties
-        client_properties: { product: identifier, platform: ''}
+        client_properties: { product: identifier, platform: '' }
       )
 
-      rabbit_conn = Bunny.new("amqp://#{ENV['RABBIT_USER']}" \
-                              ":#{ENV['RABBIT_PASS']}@"\
-                              "#{ENV['RABBIT_HOST']}/"\
-                              "#{ENV['RABBIT_VIRTUAL_HOST']}",
-                              options)
-      rabbit_conn.start
+      logger&.debug('Stablish new connection to rabbit')
+      logger&.debug(BugBunny.configuration.url)
+
+      Bunny.new(BugBunny.configuration.url, options).start
+
       logger&.debug("New status connection: #{rabbit_conn.status}")
 
       self.connection = rabbit_conn
