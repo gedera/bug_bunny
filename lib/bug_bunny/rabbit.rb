@@ -97,7 +97,8 @@ module BugBunny
       logger&.debug('Stablish new connection to rabbit')
       logger&.debug(BugBunny.configuration.url)
 
-      Bunny.new(BugBunny.configuration.url, options).start
+      rabbit_conn = Bunny.new(BugBunny.configuration.url, options)
+      rabbit_conn.start
 
       logger&.debug("New status connection: #{rabbit_conn.status}")
 
