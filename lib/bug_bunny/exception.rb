@@ -1,69 +1,17 @@
 module BugBunny
-  class Exception
-    class ServiceError < StandardError
-      def to_s
-        :service_error
-      end
-    end
+  # Clase base para TODOS los errores de la gema BugBunny.
+  # Ayuda a atrapar cualquier error de la gema con un solo 'rescue BugBunny::Error'.
+  class Error < ::StandardError; end
+  class PublishError < Error; end
 
-    class NeedSignature < StandardError
-      def to_s
-        :need_signature
-      end
-    end
+  module ResponseError
+    class Base < Error; end
 
-    class InvalidSignature < StandardError
-      def to_s
-        :invalid_signature
-      end
-    end
-
-    class GatewayError < StandardError
-      def to_s
-        :gateway_error
-      end
-    end
-
-    class UltraCriticError < StandardError
-    end
-
-    class ComunicationRabbitError < StandardError
-      attr_accessor :backtrace
-
-      def initialize(msg, backtrace)
-        @backtrace = backtrace
-        super(msg)
-      end
-    end
-
-    class WithOutConsumer < StandardError
-      attr_accessor :backtrace
-
-      def initialize(msg, backtrace)
-        @backtrace = backtrace
-        super(msg)
-      end
-    end
-
-    class RetryWithoutError < StandardError
-      def to_s
-        "retry_sidekiq_without_error"
-      end
-
-      def backtrace
-        []
-      end
-    end
-
-    ServiceClasses = [
-      Exception::NeedSignature,
-      Exception::InvalidSignature,
-      Exception::ServiceError,
-      Exception::GatewayError,
-      Exception::RetryWithoutError
-    ]
-
-    # Exceptions from ActiveRecord::StatementInvalid
-    PG_EXCEPTIONS_TO_EXIT = %w[PG::ConnectionBad PG::UnableToSend].freeze
+    class BadRequest < Base; end           # HTTP 400
+    class NotFound < Base; end             # HTTP 404
+    class NotAcceptable < Base; end        # HTTP 406
+    class RequestTimeout < Base; end       # HTTP 408
+    class UnprocessableEntity < Base; end  # HTTP 422
+    class InternalServerError < Base; end  # HTTP 500
   end
 end

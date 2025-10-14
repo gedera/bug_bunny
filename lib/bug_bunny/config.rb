@@ -1,11 +1,11 @@
 module BugBunny
   class Config
     # getter y setter para cada propiedad.
-    attr_accessor :user, :pass, :host, :virtual_host, :logger, :log_level
+    attr_accessor :host, :username, :password, :vhost, :logger, :automatically_recover, :network_recovery_interval, :connection_timeout, :read_timeout, :write_timeout, :heartbeat, :continuation_timeout
 
     # Método para generar la URL de conexión
     def url
-      "amqp://#{user}:#{pass}@#{host}/#{virtual_host}"
+      "amqp://#{username}:#{password}@#{host}/#{vhost}"
     end
   end
 end
