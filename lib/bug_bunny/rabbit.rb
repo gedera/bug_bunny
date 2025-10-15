@@ -137,11 +137,11 @@ module BugBunny
       Rails.logger.debug("PUBLISHER Options: #{options}")
       publish!(msg, options)
 
-      if response_latch.wait(RABBIT_READ_TIMEOUT)
+      if response_latch.wait(RABBIT_CONNECTION_TIMEOUT)
         subscription.cancel
         build_response(status: response[:status], body: response[:body])
       else
-        raise "Timeout: No response received within #{RABBIT_READ_TIMEOUT} seconds."
+        raise "Timeout: No response received within #{RABBIT_CONNECTION_TIMEOUT} seconds."
       end
     rescue BugBunny::ResponseError::Base => e
       subscription&.cancel
