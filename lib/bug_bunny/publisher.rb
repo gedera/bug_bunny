@@ -52,7 +52,7 @@ module BugBunny
     include ActiveModel::Attributes
 
     attribute :message
-    attribute :pool
+    attribute :connection
     attribute :routing_key, :string
     attribute :persistent, :boolean, default: false
     attribute :content_type, :string, default: "application/json"
@@ -72,19 +72,15 @@ module BugBunny
     attribute :arguments, default: {}
 
     def publish!
-      pool.with do |conn|
-        app = Rabbit.new(connection: conn)
-        app.build_exchange(name: exchange_name, type: exchange_type)
-        app.publish!(message, publish_opts)
-      end
+      app = Rabbit.new(connection: connection)
+      app.build_exchange(name: exchange_name, type: exchange_type)
+      app.publish!(message, publish_opts)
     end
 
     def publish_and_consume!
-      pool.with do |conn|
-        app = Rabbit.new(connection: conn)
-        app.build_exchange(name: exchange_name, type: exchange_type)
-        app.publish_and_consume!(message, publish_opts)
-      end
+      app = Rabbit.new(connection: connection)
+      app.build_exchange(name: exchange_name, type: exchange_type)
+      app.publish_and_consume!(message, publish_opts)
     end
 
     def publish_opts
