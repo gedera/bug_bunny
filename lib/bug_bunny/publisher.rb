@@ -66,10 +66,7 @@ module BugBunny
     attribute :expiration, :integer, default: -> { 1.day.in_milliseconds } #ms
     attribute :exchange_name, :string
     attribute :exchange_type, :string, default: 'direct'
-    attr_accessor :type
-
-    attribute :action, :string
-    attribute :arguments, default: {}
+    attribute :type, :string
 
     def publish!
       app = Rabbit.new(connection: connection)
@@ -97,14 +94,13 @@ module BugBunny
         expiration: expiration }
     end
 
-    def type
-      return if action.blank?
-
-      self.type = format(action, arguments)
-    end
-
     def initialize(attrs = {})
       super(attrs)
+      if attrs[:action].present?
+        args = attrs[:arguments] || {}
+
+        self.type = format(attrs[:action], args)
+      end
       self.routing_key ||= self.class::ROUTING_KEY
     end
   end
