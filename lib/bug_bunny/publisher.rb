@@ -52,7 +52,7 @@ module BugBunny
     include ActiveModel::Attributes
 
     attribute :message
-    attribute :pool
+    attribute :connection
     attribute :routing_key, :string
     attribute :persistent, :boolean, default: false
     attribute :content_type, :string, default: "application/json"
@@ -66,25 +66,19 @@ module BugBunny
     attribute :expiration, :integer, default: -> { 1.day.in_milliseconds } #ms
     attribute :exchange_name, :string
     attribute :exchange_type, :string, default: 'direct'
-    attr_accessor :type
-
+    attribute :type, :string
     attribute :action, :string
-    attribute :arguments, default: {}
 
     def publish!
-      pool.with do |conn|
-        app = Rabbit.new(connection: conn)
-        app.build_exchange(name: exchange_name, type: exchange_type)
-        app.publish!(message, publish_opts)
-      end
+      app = Rabbit.new(connection: connection)
+      app.build_exchange(name: exchange_name, type: exchange_type)
+      app.publish!(message, publish_opts)
     end
 
     def publish_and_consume!
-      pool.with do |conn|
-        app = Rabbit.new(connection: conn)
-        app.build_exchange(name: exchange_name, type: exchange_type)
-        app.publish_and_consume!(message, publish_opts)
-      end
+      app = Rabbit.new(connection: connection)
+      app.build_exchange(name: exchange_name, type: exchange_type)
+      app.publish_and_consume!(message, publish_opts)
     end
 
     def publish_opts
@@ -101,14 +95,13 @@ module BugBunny
         expiration: expiration }
     end
 
-    def type
-      return if action.blank?
-
-      self.type = format(action, arguments)
-    end
-
     def initialize(attrs = {})
       super(attrs)
+      if attrs[:action].present?
+        args = attrs[:arguments] || {}
+
+        self.type = format(attrs[:action], args)
+      end
       self.routing_key ||= self.class::ROUTING_KEY
     end
   end

@@ -21,16 +21,18 @@ module BugBunny
     end
 
     class ExchangeScope
-      attr_reader :exchange_name, :klass
+      attr_reader :exchange_name, :routing_key, :klass
 
-      def initialize(klass, exchange_name)
+      def initialize(klass, exchange_name, routing_key = nil)
         @klass = klass
         @exchange_name = exchange_name
+        @routing_key = routing_key
       end
 
       def method_missing(method_name, *args, **kwargs, &block)
         if @klass.respond_to?(method_name, true)
           kwargs[:exchange] = @exchange_name
+          kwargs[:routing_key] = @routing_key if @routing_key.present?
           @klass.execute(method_name.to_sym, *args, **kwargs, &block)
         else
           super
@@ -103,7 +105,7 @@ module BugBunny
 
       return self if persisted? && changes.empty?
 
-      obj = self.class.publisher.send(action, exchange: current_exchange, message: changes_to_send)
+      obj = self.class.publisher.send(action, exchange: current_exchange, routing_key: current_routing_key, message: changes_to_send)
 
       assign_attributes(obj) # refresco el objeto
       self.persisted = true
@@ -119,7 +121,7 @@ module BugBunny
       return self unless persisted?
 
       # Llamada al PUBLISHER sin el argumento 'box'
-      self.class.publisher.send(destroy_action.to_sym, exchange: current_exchange, id: id)
+      self.class.publisher.send(destroy_action.to_sym, exchange: current_exchange, routing_key: current_routing_key, id: id)
 
       self.persisted = false
       true
@@ -132,20 +134,28 @@ module BugBunny
       self.class.current_exchange
     end
 
-    def self.for_exchange(exchange_name)
+    def current_routing_key
+      self.class.current_routing_key
+    end
+
+    def self.for_exchange(exchange_name, routing_key = nil)
       raise ArgumentError, 'Exchange name must be specified.' if exchange_name.blank?
 
-      ExchangeScope.new(self, exchange_name)
+      ExchangeScope.new(self, exchange_name, routing_key)
     end
 
     def self.execute(name, *args, **kwargs, &block)
       original_exchange = Thread.current[:bugbunny_current_exchange]
       Thread.current[:bugbunny_current_exchange] = kwargs[:exchange]
+      original_routing_key = Thread.current[:bugbunny_current_routing_key]
+      Thread.current[:bugbunny_current_routing_key] = kwargs[:routing_key]
       begin
         kwargs.delete(:exchange)
+        kwargs.delete(:routing_key)
         send(name, *args, **kwargs, &block)
       ensure
         Thread.current[:bugbunny_current_exchange] = original_exchange
+        Thread.current[:bugbunny_current_routing_key] = original_routing_key
       end
     end
 
@@ -153,12 +163,16 @@ module BugBunny
       Thread.current[:bugbunny_current_exchange]
     end
 
+    def self.current_routing_key
+      Thread.current[:bugbunny_current_routing_key]
+    end
+
     def self.all
       where
     end
 
     def self.where(query = {})
-      body = publisher.send(index_action.to_sym, exchange: current_exchange, message: query)
+      body = publisher.send(index_action.to_sym, exchange: current_exchange, routing_key: current_routing_key, message: query)
       instances = []
 
       body.each do |obj|
@@ -171,7 +185,7 @@ module BugBunny
     end
 
     def self.find(id)
-      obj = publisher.send(show_action.to_sym, exchange: current_exchange, id: id)
+      obj = publisher.send(show_action.to_sym, exchange: current_exchange, routing_key: current_routing_key, id: id)
       return if obj.blank?
 
       instance = new

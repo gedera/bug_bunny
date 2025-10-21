@@ -303,6 +303,10 @@ module BugBunny
       )
 
       bunny.tap(&:start)
+    rescue Timeout::Error, Bunny::ConnectionError => e
+      # Timeout::Error (para el timeout de conexión TCP) se captura separadamente.
+      # Bunny::ConnectionError cubre TCPConnectionFailed, AuthenticationFailure, AccessRefused, etc.
+      raise BugBunny::Error::Connection, e.message
     end
   end
 end

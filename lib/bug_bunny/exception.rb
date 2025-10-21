@@ -3,6 +3,7 @@ module BugBunny
   # Ayuda a atrapar cualquier error de la gema con un solo 'rescue BugBunny::Error'.
   class Error < ::StandardError; end
   class PublishError < Error; end
+  class Connection < Error; end
 
   module ResponseError
     class Base < Error; end
