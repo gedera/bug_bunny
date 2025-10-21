@@ -67,6 +67,7 @@ module BugBunny
     attribute :exchange_name, :string
     attribute :exchange_type, :string, default: 'direct'
     attribute :type, :string
+    attribute :action, :string
 
     def publish!
       app = Rabbit.new(connection: connection)
