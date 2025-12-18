@@ -72,18 +72,24 @@ module BugBunny
       { status: status_number, body: json }
     end
 
+    def self.rescue_from(exception)
+      render status: :internal_server_error, json: exception.message
+    end
+
     def self.call(headers:, body: {})
       controller = new(headers: headers)
+
       controller.safe_parse_body(body)
       controller.params[:id] = headers[:id] if headers.key?(:id)
       controller.params.with_indifferent_access
+
       return controller.rendered_response unless controller._run_before_actions
 
       controller.send(controller.headers[:action])
     rescue NoMethodError => e # action controller no exist
       raise e
     rescue StandardError => e
-      render status: :internal_server_error, json: e.message
+      rescue_from(e)
     end
   end
 end

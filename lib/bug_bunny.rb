@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
 require 'bunny'
+require 'active_model'
+require 'concurrent'
+
 require_relative 'bug_bunny/version'
 require_relative 'bug_bunny/config'
 require_relative 'bug_bunny/controller'
@@ -8,6 +11,8 @@ require_relative 'bug_bunny/publisher'
 require_relative 'bug_bunny/exception'
 require_relative 'bug_bunny/rabbit'
 require_relative 'bug_bunny/resource'
+
+require_relative 'bug_bunny/railtie' if defined?(Rails)
 
 module BugBunny
   class << self

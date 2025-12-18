@@ -1,4 +1,13 @@
+# lib/bug_bunny/resource.rb
 module BugBunny
+  # Clase base para modelos que interactúan con microservicios remotos vía RabbitMQ.
+  # Implementa una interfaz similar a Active Record.
+  #
+  # @example
+  #   class User < BugBunny::Resource
+  #     attribute :name, :string
+  #     validates :name, presence: true
+  #   end
   class Resource
     include ActiveModel::API
     include ActiveModel::Attributes
@@ -45,6 +54,8 @@ module BugBunny
     end
 
     attribute :persisted, :boolean, default: false
+    attribute :current_exchange
+    attribute :current_routing_key
 
     def initialize(attributes = {})
       attributes.each do |key, value|
@@ -58,6 +69,9 @@ module BugBunny
 
       super(attributes)
 
+      self.current_exchange = self.class.current_exchange
+      self.current_routing_key = self.class.current_routing_key
+
       @previously_persisted = persisted
       clear_changes_information if persisted?
     end
@@ -66,7 +80,7 @@ module BugBunny
       return if attrs.blank?
 
       attrs.each do |key, val|
-        setter_method = "#{key.to_s.underscore}="
+        setter_method = "#{key}="
 
         next unless respond_to?(setter_method)
 
@@ -96,23 +110,31 @@ module BugBunny
 
     def changes_to_send
       attrs = {}
-      changes.each { |attribute, values| attrs[attribute] = values[1] }
+
+      changes.each do |attribute, values|
+        next if attribute.to_sym.in?(%i[current_exchange current_routing_key])
+
+        attrs[attribute] = values[1]
+      end
+
       attrs
     end
 
     def save
-      action = persisted? ? self.class.update_action.to_sym : self.class.create_action.to_sym
-
       return self if persisted? && changes.empty?
 
-      obj = self.class.publisher.send(action, exchange: current_exchange, routing_key: current_routing_key, message: changes_to_send)
+      obj = if persisted?
+              self.class.publisher.send(self.class.update_action.to_sym, id: id, exchange: current_exchange, routing_key: current_routing_key, message: changes_to_send)
+            else
+              self.class.publisher.send(self.class.create_action.to_sym, exchange: current_exchange, routing_key: current_routing_key, message: changes_to_send)
+            end
 
       assign_attributes(obj) # refresco el objeto
       self.persisted = true
       @previously_persisted = true
       clear_changes_information
       true
-    rescue BugBunny::ResponseError::UnprocessableEntity => e
+    rescue BugBunny::Error::UnprocessableEntity => e
       load_remote_rabbit_errors(e.message)
       false
     end
@@ -125,17 +147,18 @@ module BugBunny
 
       self.persisted = false
       true
-    rescue BugBunny::ResponseError::UnprocessableEntity => e
+    rescue BugBunny::Error::UnprocessableEntity => e
       load_remote_rabbit_errors(e.message)
       false
     end
 
-    def current_exchange
-      self.class.current_exchange
-    end
+    def inspect
+      # Creamos una lista bonita de atributos: "id: 123, name: 'Pepe'"
+      inspection = attributes.map do |name, value|
+        "#{name}: #{value.nil? ? 'nil' : value.inspect}"
+      end.join(", ")
 
-    def current_routing_key
-      self.class.current_routing_key
+      "#<#{self.class.name} #{inspection}>"
     end
 
     def self.for_exchange(exchange_name, routing_key = nil)
@@ -227,10 +250,19 @@ module BugBunny
                      end
     end
 
-    def load_remote_rabbit_errors(remote_errors)
-      JSON.parse(remote_errors).each do |attribute, errors|
-        errors.each do |error|
-          self.errors.add(attribute, error['error'], **error.except('error').symbolize_keys)
+    def load_remote_rabbit_errors(errors_hash)
+      return if errors_hash.blank?
+
+      errors_hash.each do |attribute, errors|
+        # Manejo defensivo por si 'errors' no es un array
+        Array.wrap(errors).each do |error|
+          if error.is_a?(Hash)
+            # Formato complejo: { "error": "is invalid", "code": "123" }
+            self.errors.add(attribute, error['error'], **error.except('error').symbolize_keys)
+          else
+            # Formato simple: "is invalid"
+            self.errors.add(attribute, error)
+          end
         end
       end
     end

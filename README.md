@@ -1,6 +1,9 @@
 # BugBunny
-
 ## Configuration
+
+```ruby
+rails g bug_bunny:install
+```
 
 ```ruby
 config/initializers/bug_bunny.rb
@@ -181,3 +184,24 @@ end
  - `BugBunny::ResponseError::RequestTimeout`
  - `BugBunny::ResponseError::UnprocessableEntity`: En este el error viene el error details a lo rails.
  - `BugBunny::ResponseError::InternalServerError`
+## Documentation
+- *host*: Especifica la dirección de red (hostname o IP) donde se está ejecutando el servidor RabbitMQ.
+- *username*: El nombre de usuario que se utiliza para la autenticación.
+- *password*: La contraseña para la autenticación.
+- *vhost*: Define el Virtual Host (VHost) al que se conectará la aplicación. Un VHost actúa como un namespace virtual dentro del broker, aislando entornos y recursos.
+- *logger*: Indica a Bunny que use el sistema de logging estándar de Rails, integrando los mensajes del cliente AMQP con el resto de los logs de tu aplicación.
+
+## Resiliencia y Recuperación Automática
+Estos parámetros son fundamentales para manejar fallos de red y garantizar que la aplicación se recupere sin intervención manual.
+
+- *automatically_recover*: Indica al cliente Bunny que debe intentar automáticamente reestablecer la conexión y todos los recursos asociados (canales, colas, exchanges) si la conexión se pierde debido a un fallo de red o un reinicio del broker. Nota: Este parámetro puede entrar en conflicto con un bucle de retry manual).
+- *network_recovery_interval*: El tiempo que Bunny esperará entre intentos consecutivos de reconexión de red.
+- *heartbeat*: El intervalo de tiempo (en segundos) en el que el cliente y el servidor deben enviarse un pequeño paquete ("latido"). Si no se recibe un heartbeat durante dos intervalos consecutivos, se asume que la conexión ha muerto (generalmente por un fallo de red o un proceso colgado), lo que dispara el mecanismo de recuperación.
+
+## Tiempos de Espera (Timeouts)
+ Estos parámetros previenen que la aplicación se bloquee indefinidamente esperando una respuesta del servidor.
+
+- *connection_timeout*: Tiempo máximo (en segundos) que Bunny esperará para establecer la conexión TCP inicial con el servidor RabbitMQ.
+- *read_timeout*: Tiempo máximo (en segundos) que la conexión esperará para leer datos del socket. Si el servidor se queda en silencio por más de 30 segundos, el socket se cerrará.
+- *write_timeout*: Tiempo máximo (en segundos) que la conexión esperará para escribir datos en el socket. Útil para manejar escenarios donde la red es lenta o está congestionada.
+- *continuation_timeout*: Es un timeout interno de protocolo AMQP (dado en milisegundos). Define cuánto tiempo esperará el cliente para que el servidor responda a una operación que requiere múltiples frames o pasos (como una transacción o una confirmación compleja). En este caso, son 15 segundos.
