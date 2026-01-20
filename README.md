@@ -72,7 +72,7 @@ Ideal para CRUDs remotos. Define modelos que representan recursos en otros micro
 ```ruby
 # app/models/remote_user.rb
 class RemoteUser < BugBunny::Resource
-  # Configuración de Ruteo
+  # Configuración de Ruteo Estática
   self.exchange = 'users_exchange'
   self.exchange_type = 'topic'
   self.routing_key_prefix = 'users' 
@@ -85,6 +85,23 @@ class RemoteUser < BugBunny::Resource
 
   # Validaciones Locales
   validates :email, presence: true
+end
+```
+
+### 1.1 Configuración Dinámica (Lambdas)
+
+Puedes usar `Procs` o `Lambdas` para que la configuración se evalúe en tiempo de ejecución. Esto es ideal para entornos Multi-Tenant o configuraciones que dependen de variables de entorno.
+
+```ruby
+class DynamicUser < BugBunny::Resource
+  # El exchange cambia según el entorno
+  self.exchange = -> { ENV['STAGING'] ? 'users_staging' : 'users_prod' }
+  
+  # El pool cambia según el Tenant actual
+  self.connection_pool = -> { Tenant.current.rabbit_pool }
+  
+  # El routing key prefix se calcula dinámicamente
+  self.routing_key_prefix = -> { "users.#{Date.today.year}" }
 end
 ```
 
@@ -106,7 +123,9 @@ else
 end
 ```
 
-### 3. Configuración Dinámica (`.with`)
+### 3. Override Temporal (`.with`)
+
+También puedes sobreescribir la configuración para una sola llamada o bloque.
 
 ```ruby
 # Usar otro exchange o pool solo para esta llamada
@@ -267,6 +286,7 @@ Estos parámetros son fundamentales para manejar fallos de red y garantizar que 
 - *read_timeout*: Tiempo máximo (en segundos) que la conexión esperará para leer datos del socket. Si el servidor se queda en silencio por más de 30 segundos, el socket se cerrará.
 - *write_timeout*: Tiempo máximo (en segundos) que la conexión esperará para escribir datos en el socket. Útil para manejar escenarios donde la red es lenta o está congestionada.
 - *continuation_timeout*: Es un timeout interno de protocolo AMQP (dado en milisegundos). Define cuánto tiempo esperará el cliente para que el servidor responda a una operación que requiere múltiples frames o pasos (como una transacción o una confirmación compleja). En este caso, son 15 segundos.
+
 
 ## 📄 Licencia
 
