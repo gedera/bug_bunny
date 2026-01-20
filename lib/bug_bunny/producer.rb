@@ -3,7 +3,9 @@ require 'json'
 require 'securerandom'
 
 module BugBunny
+  # Clase de bajo nivel que maneja la publicación de mensajes y la espera de respuestas RPC.
   class Producer
+    # @param session [BugBunny::Session] Sesión activa.
     def initialize(session)
       @session = session
       @pending_requests = Concurrent::Map.new
@@ -11,12 +13,10 @@ module BugBunny
       @reply_listener_started = false
     end
 
-    # -------------------------------------------------------------
-    # FIRE (Asíncrono) - Fire-and-Forget
-    # -------------------------------------------------------------
+    # Envía un mensaje sin esperar respuesta (Fire-and-Forget).
+    # @param request [BugBunny::Request] Objeto request.
     def fire(request)
       x = @session.exchange(name: request.exchange, type: request.exchange_type)
-
       payload = serialize_message(request.body)
       opts = request.amqp_options
 
@@ -25,16 +25,17 @@ module BugBunny
       x.publish(payload, opts.merge(routing_key: request.final_routing_key))
     end
 
-    # -------------------------------------------------------------
-    # RPC (Síncrono) - Request-Response
-    # -------------------------------------------------------------
+    # Envía un mensaje y bloquea esperando la respuesta RPC.
+    # Usa 'amq.rabbitmq.reply-to' para evitar crear colas temporales por request.
+    #
+    # @param request [BugBunny::Request] Objeto request.
+    # @return [Hash] Respuesta parseada.
+    # @raise [BugBunny::RequestTimeout] Timeout.
     def rpc(request)
       ensure_reply_listener!
 
       request.correlation_id ||= SecureRandom.uuid
       request.reply_to = 'amq.rabbitmq.reply-to'
-
-      # Timeout: Prioridad Request > Config Global
       wait_timeout = request.timeout || BugBunny.configuration.rpc_timeout
 
       future = Concurrent::IVar.new
@@ -42,8 +43,6 @@ module BugBunny
 
       begin
         fire(request)
-
-        # Esperamos respuesta (Bloqueante)
         response_payload = future.value(wait_timeout)
 
         if response_payload.nil?
@@ -70,6 +69,7 @@ module BugBunny
 
     def ensure_reply_listener!
       return if @reply_listener_started
+
       @reply_listener_mutex.synchronize do
         return if @reply_listener_started
 
@@ -78,7 +78,6 @@ module BugBunny
             future.set(body)
           end
         end
-        # =======================
         @reply_listener_started = true
       end
     end

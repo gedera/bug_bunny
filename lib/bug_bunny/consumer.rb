@@ -3,38 +3,43 @@ require 'concurrent'
 require 'json'
 
 module BugBunny
+  # Clase encargada de consumir mensajes de RabbitMQ, enrutarlos al controlador
+  # adecuado y manejar la respuesta RPC.
   class Consumer
+    # @return [BugBunny::Session] La sesión de Bunny wrappeada.
     attr_reader :session
 
-    # === 1. NUEVO: Wrapper de Clase (Fachada) ===
-    # Permite llamar a BugBunny::Consumer.subscribe(connection: conn, ...)
+    # Método de conveniencia para instanciar y suscribir.
+    #
+    # @param connection [Bunny::Session] Conexión activa.
+    # @param args [Hash] Argumentos para {#subscribe}.
+    # @return [void]
     def self.subscribe(connection:, **args)
       new(connection).subscribe(**args)
     end
-    # ============================================
 
-    # @param connection [Bunny::Session] Conexión activa (no del pool)
+    # @param connection [Bunny::Session] Conexión activa.
     def initialize(connection)
       @session = BugBunny::Session.new(connection)
     end
 
+    # Declara la cola, hace el binding y comienza a consumir.
+    #
+    # @param queue_name [String] Nombre de la cola.
+    # @param exchange_name [String] Nombre del exchange.
+    # @param routing_key [String] Routing key para el binding.
+    # @param exchange_type [String] Tipo de exchange (default: 'direct').
+    # @param queue_opts [Hash] Opciones de la cola (durable, auto_delete, etc).
+    # @param block [Boolean] Si es true, bloquea el hilo actual (útil para workers).
     def subscribe(queue_name:, exchange_name:, routing_key:, exchange_type: 'direct', queue_opts: {}, block: true)
-      # 1. Declarar Exchange y Cola
       x = session.exchange(name: exchange_name, type: exchange_type)
-
-      # queue_opts permite pasar { auto_delete: true, exclusive: false, etc }
       q = session.queue(queue_name, queue_opts)
-
-      # 2. Bind (Atar cola al exchange)
       q.bind(x, routing_key: routing_key)
 
       BugBunny.configuration.logger.info("[Consumer] Listening on #{queue_name} (Exchange: #{exchange_name})")
 
-      # 3. Health Check (Opcional, mantiene viva la conexión)
       start_health_check(queue_name)
 
-      # 4. Suscripción
-      # block: true es VITAL para que el Rake task no termine inmediatamente.
       q.subscribe(manual_ack: true, block: block) do |delivery_info, properties, body|
         process_message(delivery_info, properties, body)
       end
@@ -46,9 +51,8 @@ module BugBunny
 
     private
 
+    # Procesa el mensaje, encuentra el controlador y ejecuta la acción.
     def process_message(delivery_info, properties, body)
-      # ... (Tu lógica existente de parse_route, constantize, ack, reply) ...
-      # Se mantiene idéntica a la que me pasaste antes.
       if properties.type.nil? || properties.type.empty?
         BugBunny.configuration.logger.error("[Consumer] Missing 'type'. Rejected.")
         session.channel.reject(delivery_info.delivery_tag, false)
@@ -67,22 +71,18 @@ module BugBunny
         reply_to: properties.reply_to
       }
 
-      # Asumimos que los controladores están en Rabbit::Controllers::Nombre
       controller_class = "rabbit/controllers/#{route[:controller]}".camelize.constantize
 
-      # Invocamos al controlador
       response_payload = controller_class.call(headers: headers, body: body)
 
-      # RPC: Si esperan respuesta, respondemos
       if properties.reply_to
         reply(response_payload, properties.reply_to, properties.correlation_id)
       end
 
       session.channel.ack(delivery_info.delivery_tag)
-
     rescue NameError => e
       BugBunny.configuration.logger.error("[Consumer] Controller not found: #{e.message}")
-      session.channel.reject(delivery_info.delivery_tag, false) # No reencolar si no existe el código
+      session.channel.reject(delivery_info.delivery_tag, false)
     rescue StandardError => e
       BugBunny.configuration.logger.error("[Consumer] Error processing message: #{e.message}")
       session.channel.reject(delivery_info.delivery_tag, false)

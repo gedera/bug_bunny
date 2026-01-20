@@ -2,6 +2,16 @@ require 'active_model'
 require 'active_support/core_ext/string/inflections'
 
 module BugBunny
+  # Clase base para modelos remotos (ORM sobre AMQP).
+  # Provee una interfaz similar a ActiveRecord/ActiveResource para interactuar
+  # con servicios remotos vía RabbitMQ.
+  #
+  # @example Definición
+  #   class User < BugBunny::Resource
+  #     self.exchange = 'users.topic'
+  #     self.exchange_type = 'topic'
+  #     attribute :name, :string
+  #   end
   class Resource
     include ActiveModel::API
     include ActiveModel::Attributes
@@ -9,86 +19,100 @@ module BugBunny
     include ActiveModel::Validations
 
     class << self
-      # Setters
       attr_writer :connection_pool, :exchange, :exchange_type, :routing_key_prefix, :resource_name
 
+      # Resuelve la configuración buscando en este orden:
+      # 1. Overrides temporales (Thread-local vía .with)
+      # 2. Valores de clase base.
+      # 3. Ejecución de Procs/Lambdas (para config dinámica).
+      #
+      # @param key [Symbol] Clave interna del override.
+      # @param instance_var [Symbol] Variable de instancia de fallback.
+      # @return [Object] El valor de configuración resuelto.
+      # @api private
       def resolve_config(key, instance_var)
-        # 1. Buscar override temporal en el Thread (Contexto .with)
         thread_key = "bb_#{object_id}_#{key}"
         return Thread.current[thread_key] if Thread.current.key?(thread_key)
 
-        # 2. Obtener valor base
         value = instance_variable_get(instance_var)
-
-        # 3. Si es un Proc/Lambda, evaluarlo. Si no, devolver valor.
         value.respond_to?(:call) ? value.call : value
       end
 
+      # @return [ConnectionPool] El pool de conexiones configurado.
       def connection_pool
         resolve_config(:pool, :@connection_pool)
       end
 
+      # @return [String] El nombre del exchange actual.
       def current_exchange
         resolve_config(:exchange, :@exchange) || raise(ArgumentError, "Exchange not defined for #{name}")
       end
 
+      # @return [String] El tipo de exchange (default: 'direct').
       def current_exchange_type
         resolve_config(:exchange_type, :@exchange_type) || 'direct'
       end
 
+      # @return [String, nil] El prefijo para las routing keys (ej: 'users').
       def current_routing_key_prefix
         resolve_config(:prefix, :@routing_key_prefix)
       end
 
+      # @return [String] El nombre del recurso inferido de la clase (ej: 'User' -> 'user').
       def resource_name
         @resource_name ||= name.demodulize.underscore
       end
 
+      # Instancia un cliente ligero para realizar peticiones.
+      # @return [BugBunny::Client]
       def bug_bunny_client
         pool = connection_pool
         raise BugBunny::Error, "connection_pool not configured for #{name}" unless pool
-        # Nota: Podríamos cachear el cliente si el pool es el mismo,
-        # pero para soportar pool dinámico, instanciamos ligero.
         BugBunny::Client.new(pool: pool)
       end
 
-      # === MÉTODO .WITH (Fluent Interface) ===
-      # Permite cambiar configuración solo para un bloque o cadena
-      # Uso: TestUser.with(exchange: 'otro').find(1)
+      # Permite cambiar la configuración del recurso temporalmente.
+      #
+      # @example Uso con bloque
+      #   User.with(exchange: 'staging') { User.find(1) }
+      #
+      # @example Uso encadenado
+      #   User.with(routing_key: 'custom.route').create(name: 'Test')
+      #
+      # @param exchange [String, nil] Override del exchange.
+      # @param routing_key [String, nil] Override forzado de la routing key.
+      # @param exchange_type [String, nil] Override del tipo de exchange.
+      # @param pool [ConnectionPool, nil] Override del pool.
+      # @return [Class, ScopeProxy] Retorna self o un Proxy para encadenar.
       def with(exchange: nil, routing_key: nil, exchange_type: nil, pool: nil)
-        # Guardamos estado anterior
         keys = {
           exchange: "bb_#{object_id}_exchange",
           exchange_type: "bb_#{object_id}_exchange_type",
           pool: "bb_#{object_id}_pool",
-          routing_key: "bb_#{object_id}_routing_key" # Este es especial para override total
+          routing_key: "bb_#{object_id}_routing_key"
         }
 
         old_values = {}
         keys.each { |k, v| old_values[k] = Thread.current[v] }
 
-        # Seteamos nuevos valores
         Thread.current[keys[:exchange]] = exchange if exchange
         Thread.current[keys[:exchange_type]] = exchange_type if exchange_type
         Thread.current[keys[:pool]] = pool if pool
         Thread.current[keys[:routing_key]] = routing_key if routing_key
 
-        # Retornamos self para encadenar (Chainable) o ejecutamos bloque
         if block_given?
           begin
             yield
           ensure
-            # Restaurar
             keys.each { |k, v| Thread.current[v] = old_values[k] }
           end
         else
-          # Modo Proxy para encadenar: TestUser.with(...).find(...)
-          # Creamos un proxy que limpie el thread después de la llamada
           ScopeProxy.new(self, keys, old_values)
         end
       end
 
-      # Proxy para limpiar el thread automáticamente después de una llamada encadenada
+      # Proxy para limpiar el thread automáticamente tras la ejecución.
+      # @api private
       class ScopeProxy < BasicObject
         def initialize(target, keys, old_values)
           @target = target
@@ -99,15 +123,14 @@ module BugBunny
         def method_missing(method, *args, &block)
           @target.public_send(method, *args, &block)
         ensure
-          # Limpieza automática post-ejecución
           @keys.each { |k, v| ::Thread.current[v] = @old_values[k] }
         end
       end
 
-      # === LÓGICA DE RUTEO ===
-
+      # Calcula la routing key final basada en la acción.
+      # @param action [Symbol, String] La acción (ej: :create).
+      # @return [String] Routing key (ej: 'users.create').
       def calculate_routing_key(action)
-        # Override manual directo (via .with(routing_key: ...))
         manual_rk = Thread.current["bb_#{object_id}_routing_key"]
         return manual_rk if manual_rk
 
@@ -117,12 +140,16 @@ module BugBunny
         "#{prefix}.#{action}"
       end
 
+      # Verbos de acción RESTful mapeados a AMQP
       def index_action; :index; end
       def show_action; :show; end
       def create_action; :create; end
       def update_action; :update; end
       def destroy_action; :destroy; end
 
+      # Busca un recurso por ID mediante RPC.
+      # @param id [Integer, String] El ID del recurso.
+      # @return [Resource, nil] La instancia o nil si no existe (404).
       def find(id)
         url_path = "#{resource_name}/#{show_action}"
         rk = calculate_routing_key(show_action)
@@ -144,6 +171,9 @@ module BugBunny
         instance
       end
 
+      # Crea y persiste un nuevo recurso.
+      # @param payload [Hash] Atributos del recurso.
+      # @return [Resource] La instancia creada (revisar #persisted? para éxito).
       def create(payload)
         instance = new(payload)
         instance.save
@@ -151,14 +181,13 @@ module BugBunny
       end
     end
 
-    # Instancia
+    # Instancia: Delegadores
     def current_exchange; self.class.current_exchange; end
     def current_exchange_type; self.class.current_exchange_type; end
     def calculate_routing_key(action); self.class.calculate_routing_key(action); end
-
-    # IMPORTANTE: El cliente de instancia también debe ser dinámico
     def bug_bunny_client; self.class.bug_bunny_client; end
 
+    # @return [Boolean] Indica si el recurso está guardado en el backend remoto.
     attribute :persisted, :boolean, default: false
 
     def initialize(attributes = {})
@@ -187,6 +216,10 @@ module BugBunny
       attrs
     end
 
+    # Guarda el registro (Create o Update) via RPC.
+    # Maneja automáticamente errores de validación (422) populando `errors`.
+    #
+    # @return [Boolean] true si tuvo éxito, false si hubo error de validación.
     def save
       return self if persisted? && changes.empty?
 
@@ -219,6 +252,8 @@ module BugBunny
       false
     end
 
+    # Elimina el registro remoto.
+    # @return [Boolean] true si se eliminó correctamente.
     def destroy
       return self unless persisted?
 
@@ -242,6 +277,7 @@ module BugBunny
 
     def load_remote_rabbit_errors(errors_hash)
       return if errors_hash.nil?
+
       if errors_hash.is_a?(String)
         errors.add(:base, errors_hash)
       else
