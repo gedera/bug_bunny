@@ -117,7 +117,7 @@ RemoteUser.with(exchange: 'legacy_exchange').find(99)
 
 ## 🔌 Opción B: Modo Publisher (Sin Active Resource)
 
-Si prefieres un control total o no estás mapeando un recurso REST, puedes usar `BugBunny::Client` directamente. Se recomienda encapsularlo en clases "Publisher".
+Si prefieres un control total o no estás mapeando un recurso REST, puedes usar `BugBunny::Client` directamente. Se recomienda encapsularlo en clases "Publisher" y usar bloques para configurar el request.
 
 ### 1. Crear un Publisher
 
@@ -132,23 +132,20 @@ class NotificationPublisher
   # Ejemplo 1: Fire-and-Forget (Asíncrono)
   # Envía el mensaje y retorna inmediatamente. Ideal para eventos.
   def self.send_alert(msg)
-    client.publish('alerts/create', 
-      body: { message: msg, timestamp: Time.now },
-      exchange: 'notifications_exchange',
-      exchange_type: 'topic',
-      routing_key: 'alerts.critical'
-    )
+    client.publish('alerts/create', exchange: 'notifications_exchange', routing_key: 'alerts.critical') do |req|
+      req.exchange_type = 'topic'
+      req.body = { message: msg, timestamp: Time.now }
+    end
   end
 
   # Ejemplo 2: RPC (Síncrono)
   # Envía el mensaje y espera la respuesta del consumidor.
   def self.check_status(service_id)
-    response = client.request('status/check',
-      body: { service: service_id },
-      exchange: 'system_exchange',
-      routing_key: 'system.status',
-      timeout: 5 # Timeout específico para esta llamada
-    )
+    response = client.request('status/check', exchange: 'system_exchange', routing_key: 'system.status') do |req|
+      req.timeout = 5 # Timeout específico para esta llamada
+      req.body = { service: service_id }
+      req.headers['X-Source'] = 'RailsApp'
+    end
     
     # Retorna el body parseado (Hash)
     response['body'] 
