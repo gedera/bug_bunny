@@ -15,12 +15,10 @@ require_relative 'bug_bunny/consumer'
 require_relative 'bug_bunny/controller'
 
 module BugBunny
-  class << self
-    attr_accessor :configuration
-  end
+  # class << self
+  #   attr_accessor :configuration
+  # end
 
-  # Factory Method (Fachada Principal)
-  # Uso: client = BugBunny.new(pool: MI_POOL)
   def self.new(**args)
     BugBunny::Client.new(**args)
   end
@@ -34,27 +32,28 @@ module BugBunny
     @configuration ||= Config.new
   end
 
-  # Helper para desconexión global (usado por Railtie)
   def self.disconnect
     BugBunny::Rabbit.disconnect
   end
-  
-  # === ESTE ES EL MÉTODO QUE TE FALTABA ===
-  def self.create_connection
+
+  def self.create_connection(**options)
+    default = configuration
+
     bunny = Bunny.new(
-      host: configuration.host,
-      username: configuration.username,
-      password: configuration.password,
-      vhost: configuration.vhost,
-      logger: configuration.logger,
-      automatically_recover: configuration.automatically_recover,
-      network_recovery_interval: configuration.network_recovery_interval,
-      connection_timeout: configuration.connection_timeout,
-      read_timeout: configuration.read_timeout,
-      write_timeout: configuration.write_timeout,
-      heartbeat: configuration.heartbeat,
-      continuation_timeout: configuration.continuation_timeout
+      host:                      options[:host]                      || default.host,
+      username:                  options[:username]                  || default.username,
+      password:                  options[:password]                  || default.password,
+      vhost:                     options[:vhost]                     || default.vhost,
+      logger:                    options[:logger]                    || default.logger,
+      automatically_recover:     options[:automatically_recover]     || default.automatically_recover,
+      network_recovery_interval: options[:network_recovery_interval] || default.network_recovery_interval,
+      connection_timeout:        options[:connection_timeout]        || default.connection_timeout,
+      read_timeout:              options[:read_timeout]              || default.read_timeout,
+      write_timeout:             options[:write_timeout]             || default.write_timeout,
+      heartbeat:                 options[:heartbeat]                 || default.heartbeat,
+      continuation_timeout:      options[:continuation_timeout]      || default.continuation_timeout
     )
+
     bunny.start
     bunny
   rescue Timeout::Error, Bunny::ConnectionError => e

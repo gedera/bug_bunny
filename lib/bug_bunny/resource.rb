@@ -9,68 +9,141 @@ module BugBunny
     include ActiveModel::Validations
 
     class << self
-      attr_accessor :resource_path
-      attr_writer :resource_name
-      attr_accessor :connection_pool
+      # Setters
+      attr_writer :connection_pool, :exchange, :exchange_type, :routing_key_prefix, :resource_name
+
+      def resolve_config(key, instance_var)
+        # 1. Buscar override temporal en el Thread (Contexto .with)
+        thread_key = "bb_#{object_id}_#{key}"
+        return Thread.current[thread_key] if Thread.current.key?(thread_key)
+
+        # 2. Obtener valor base
+        value = instance_variable_get(instance_var)
+
+        # 3. Si es un Proc/Lambda, evaluarlo. Si no, devolver valor.
+        value.respond_to?(:call) ? value.call : value
+      end
+
+      def connection_pool
+        resolve_config(:pool, :@connection_pool)
+      end
+
+      def current_exchange
+        resolve_config(:exchange, :@exchange) || raise(ArgumentError, "Exchange not defined for #{name}")
+      end
+
+      def current_exchange_type
+        resolve_config(:exchange_type, :@exchange_type) || 'direct'
+      end
+
+      def current_routing_key_prefix
+        resolve_config(:prefix, :@routing_key_prefix)
+      end
 
       def resource_name
         @resource_name ||= name.demodulize.underscore
       end
 
-      # Singleton del Cliente (Lazy Load)
       def bug_bunny_client
-        raise BugBunny::Error, "connection_pool not configured for #{name}" unless connection_pool
-        @bug_bunny_client ||= BugBunny::Client.new(pool: connection_pool)
+        pool = connection_pool
+        raise BugBunny::Error, "connection_pool not configured for #{name}" unless pool
+        # Nota: Podríamos cachear el cliente si el pool es el mismo,
+        # pero para soportar pool dinámico, instanciamos ligero.
+        BugBunny::Client.new(pool: pool)
       end
 
-      # Scope Chaining
-      def for_exchange(exchange_name, routing_key = nil)
-        raise ArgumentError, 'Exchange name required.' if exchange_name.nil? || exchange_name.empty?
-        ExchangeScope.new(self, exchange_name, routing_key)
+      # === MÉTODO .WITH (Fluent Interface) ===
+      # Permite cambiar configuración solo para un bloque o cadena
+      # Uso: TestUser.with(exchange: 'otro').find(1)
+      def with(exchange: nil, routing_key: nil, exchange_type: nil, pool: nil)
+        # Guardamos estado anterior
+        keys = {
+          exchange: "bb_#{object_id}_exchange",
+          exchange_type: "bb_#{object_id}_exchange_type",
+          pool: "bb_#{object_id}_pool",
+          routing_key: "bb_#{object_id}_routing_key" # Este es especial para override total
+        }
+
+        old_values = {}
+        keys.each { |k, v| old_values[k] = Thread.current[v] }
+
+        # Seteamos nuevos valores
+        Thread.current[keys[:exchange]] = exchange if exchange
+        Thread.current[keys[:exchange_type]] = exchange_type if exchange_type
+        Thread.current[keys[:pool]] = pool if pool
+        Thread.current[keys[:routing_key]] = routing_key if routing_key
+
+        # Retornamos self para encadenar (Chainable) o ejecutamos bloque
+        if block_given?
+          begin
+            yield
+          ensure
+            # Restaurar
+            keys.each { |k, v| Thread.current[v] = old_values[k] }
+          end
+        else
+          # Modo Proxy para encadenar: TestUser.with(...).find(...)
+          # Creamos un proxy que limpie el thread después de la llamada
+          ScopeProxy.new(self, keys, old_values)
+        end
       end
 
-      # Helper para scope seguro con Threads
-      def with_scope(exchange, routing_key)
-        old_x = Thread.current[:bb_exchange]
-        old_rk = Thread.current[:bb_routing_key]
-        Thread.current[:bb_exchange] = exchange
-        Thread.current[:bb_routing_key] = routing_key
-        yield
-      ensure
-        Thread.current[:bb_exchange] = old_x
-        Thread.current[:bb_routing_key] = old_rk
+      # Proxy para limpiar el thread automáticamente después de una llamada encadenada
+      class ScopeProxy < BasicObject
+        def initialize(target, keys, old_values)
+          @target = target
+          @keys = keys
+          @old_values = old_values
+        end
+
+        def method_missing(method, *args, &block)
+          @target.public_send(method, *args, &block)
+        ensure
+          # Limpieza automática post-ejecución
+          @keys.each { |k, v| ::Thread.current[v] = @old_values[k] }
+        end
       end
 
-      def current_exchange
-        Thread.current[:bb_exchange]
+      # === LÓGICA DE RUTEO ===
+
+      def calculate_routing_key(action)
+        # Override manual directo (via .with(routing_key: ...))
+        manual_rk = Thread.current["bb_#{object_id}_routing_key"]
+        return manual_rk if manual_rk
+
+        prefix = current_routing_key_prefix
+        return action.to_s unless prefix
+
+        "#{prefix}.#{action}"
       end
 
-      def current_routing_key
-        Thread.current[:bb_routing_key]
-      end
-
-      # Acciones RESTful
       def index_action; :index; end
       def show_action; :show; end
       def create_action; :create; end
       def update_action; :update; end
       def destroy_action; :destroy; end
 
-      # Find
       def find(id)
         url_path = "#{resource_name}/#{show_action}"
-        obj = bug_bunny_client.request(url_path, exchange: current_exchange) do |req|
-           req.routing_key = current_routing_key
+        rk = calculate_routing_key(show_action)
+
+        response = bug_bunny_client.request(url_path, exchange: current_exchange, exchange_type: current_exchange_type) do |req|
+           req.routing_key = rk
            req.headers[:id] = id
         end
-        return nil if obj.nil? || (obj.respond_to?(:empty?) && obj.empty?)
+
+        return nil if response.nil? || response['status'] == 404
+
+        attributes = response['body']
+        return nil unless attributes.is_a?(Hash)
 
         instance = new
-        instance.assign_attributes(obj.merge(persisted: true))
+        instance.assign_attributes(attributes)
+        instance.persisted = true
+        instance.send(:clear_changes_information)
         instance
       end
 
-      # Create
       def create(payload)
         instance = new(payload)
         instance.save
@@ -78,54 +151,37 @@ module BugBunny
       end
     end
 
-    class ExchangeScope
-      def initialize(klass, exchange_name, routing_key)
-        @klass = klass
-        @exchange_name = exchange_name
-        @routing_key = routing_key
-      end
+    # Instancia
+    def current_exchange; self.class.current_exchange; end
+    def current_exchange_type; self.class.current_exchange_type; end
+    def calculate_routing_key(action); self.class.calculate_routing_key(action); end
 
-      def method_missing(method_name, *args, **kwargs, &block)
-        if @klass.respond_to?(method_name, true)
-           @klass.with_scope(@exchange_name, @routing_key) do
-             @klass.send(method_name, *args, **kwargs, &block)
-           end
-        else
-          super
-        end
-      end
-    end
+    # IMPORTANTE: El cliente de instancia también debe ser dinámico
+    def bug_bunny_client; self.class.bug_bunny_client; end
 
     attribute :persisted, :boolean, default: false
-    attribute :current_exchange
-    attribute :current_routing_key
 
     def initialize(attributes = {})
       super(attributes)
-      self.current_exchange = self.class.current_exchange
-      self.current_routing_key = self.class.current_routing_key
       @previously_persisted = persisted
-      clear_changes_information if persisted?
-    end
-
-    def assign_attributes(attrs)
-      return if attrs.nil?
-
-      attrs.each do |key, val|
-        setter = "#{key}="
-        send(setter, val) if respond_to?(setter)
-      end
     end
 
     def persisted?
       persisted
     end
 
+    def assign_attributes(new_attributes)
+      return if new_attributes.nil?
+      new_attributes.each do |k, v|
+        setter = "#{k}="
+        public_send(setter, v) if respond_to?(setter)
+      end
+    end
+
     def changes_to_send
       attrs = {}
       changes.each do |attr, vals|
-        next if attr.to_sym.in?(%i[current_exchange current_routing_key persisted])
-
+        next if attr.to_sym == :persisted
         attrs[attr] = vals[1]
       end
       attrs
@@ -136,19 +192,29 @@ module BugBunny
 
       action_verb = persisted? ? self.class.update_action : self.class.create_action
       url_path = "#{self.class.resource_name}/#{action_verb}"
+      rk = calculate_routing_key(action_verb)
 
-      obj = self.class.bug_bunny_client.request(url_path, exchange: current_exchange) do |req|
-        req.routing_key = current_routing_key
+      response = bug_bunny_client.request(url_path, exchange: current_exchange, exchange_type: current_exchange_type) do |req|
+        req.routing_key = rk
         req.headers[:id] = id if persisted?
         req.body = changes_to_send
       end
 
-      assign_attributes(obj)
+      if response['status'] == 422
+        raise BugBunny::UnprocessableEntity.new(response['body']['errors'] || response['body'])
+      elsif response['status'] >= 500
+        raise BugBunny::InternalServerError, "Server Error: #{response['status']}"
+      elsif response['status'] >= 400
+        raise BugBunny::ClientError, "Request Failed: #{response['status']}"
+      end
+
+      assign_attributes(response['body'])
+
       self.persisted = true
       @previously_persisted = true
       clear_changes_information
       true
-    rescue BugBunny::Error::UnprocessableEntity => e
+    rescue BugBunny::UnprocessableEntity => e
       load_remote_rabbit_errors(e.error_messages)
       false
     end
@@ -157,25 +223,30 @@ module BugBunny
       return self unless persisted?
 
       url_path = "#{self.class.resource_name}/#{self.class.destroy_action}"
+      rk = calculate_routing_key(self.class.destroy_action)
 
-      self.class.bug_bunny_client.request(url_path, exchange: current_exchange) do |req|
-        req.routing_key = current_routing_key
+      response = bug_bunny_client.request(url_path, exchange: current_exchange, exchange_type: current_exchange_type) do |req|
+        req.routing_key = rk
         req.headers[:id] = id
+      end
+
+      if response['status'] >= 500
+         raise BugBunny::InternalServerError
+      elsif response['status'] >= 400
+         raise BugBunny::ClientError
       end
 
       self.persisted = false
       true
-    rescue BugBunny::Error::UnprocessableEntity => e
-      load_remote_rabbit_errors(e.error_messages)
-      false
     end
 
     def load_remote_rabbit_errors(errors_hash)
       return if errors_hash.nil?
-
-      errors_hash.each do |attribute, errors|
-        Array(errors).each do |error|
-          self.errors.add(attribute, error)
+      if errors_hash.is_a?(String)
+        errors.add(:base, errors_hash)
+      else
+        errors_hash.each do |attribute, msgs|
+          Array(msgs).each { |msg| errors.add(attribute, msg) }
         end
       end
     end
