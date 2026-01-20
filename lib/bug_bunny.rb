@@ -14,6 +14,10 @@ require_relative 'bug_bunny/rabbit'
 require_relative 'bug_bunny/consumer'
 require_relative 'bug_bunny/controller'
 
+require_relative 'bug_bunny/middleware/stack'
+require_relative 'bug_bunny/middleware/raise_error'
+require_relative 'bug_bunny/middleware/json_response'
+
 module BugBunny
   # class << self
   #   attr_accessor :configuration

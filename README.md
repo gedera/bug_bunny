@@ -46,7 +46,7 @@ BugBunny.configure do |config|
   config.username = ENV.fetch('RABBITMQ_USER', 'guest')
   config.password = ENV.fetch('RABBITMQ_PASS', 'guest')
   config.vhost    = ENV.fetch('RABBITMQ_VHOST', '/')
-  
+
   # Timeouts y Recuperación
   config.rpc_timeout = 10     # Segundos a esperar respuesta síncrona
   config.network_recovery_interval = 5
@@ -75,7 +75,7 @@ class RemoteUser < BugBunny::Resource
   # Configuración de Ruteo Estática
   self.exchange = 'users_exchange'
   self.exchange_type = 'topic'
-  self.routing_key_prefix = 'users' 
+  self.routing_key_prefix = 'users'
   # Esto generará rutas automáticas: 'users.show', 'users.create', etc.
 
   # Atributos (ActiveModel)
@@ -96,10 +96,10 @@ Puedes usar `Procs` o `Lambdas` para que la configuración se evalúe en tiempo 
 class DynamicUser < BugBunny::Resource
   # El exchange cambia según el entorno
   self.exchange = -> { ENV['STAGING'] ? 'users_staging' : 'users_prod' }
-  
+
   # El pool cambia según el Tenant actual
   self.connection_pool = -> { Tenant.current.rabbit_pool }
-  
+
   # El routing key prefix se calcula dinámicamente
   self.routing_key_prefix = -> { "users.#{Date.today.year}" }
 end
@@ -143,9 +143,15 @@ Si prefieres un control total o no estás mapeando un recurso REST, puedes usar 
 ```ruby
 # app/publishers/notification_publisher.rb
 class NotificationPublisher
-  # Instanciamos el cliente inyectándole el Pool
+  # Instanciamos el cliente inyectándole el Pool y los Middlewares
   def self.client
-    @client ||= BugBunny::Client.new(pool: BUG_BUNNY_POOL)
+    @client ||= BugBunny::Client.new(pool: BUG_BUNNY_POOL) do |conn|
+      # 1. Manejo de Errores: Lanza excepciones si el status es 4xx/5xx
+      conn.use BugBunny::Middleware::RaiseError
+
+      # 2. Parseo JSON: Convierte el body string a Hash (con Indifferent Access)
+      conn.use BugBunny::Middleware::JsonResponse
+    end
   end
 
   # Ejemplo 1: Fire-and-Forget (Asíncrono)
@@ -161,13 +167,12 @@ class NotificationPublisher
   # Envía el mensaje y espera la respuesta del consumidor.
   def self.check_status(service_id)
     response = client.request('status/check', exchange: 'system_exchange', routing_key: 'system.status') do |req|
-      req.timeout = 5 # Timeout específico para esta llamada
+      req.timeout = 5
       req.body = { service: service_id }
-      req.headers['X-Source'] = 'RailsApp'
     end
-    
-    # Retorna el body parseado (Hash)
-    response['body'] 
+
+    # Gracias a JsonResponse, el body ya es un Hash accesible
+    response['body'][:uptime]
   end
 end
 ```
@@ -178,8 +183,12 @@ end
 # En un controller o Job
 NotificationPublisher.send_alert("Servidor caído")
 
-status = NotificationPublisher.check_status("database")
-puts status['uptime']
+begin
+  uptime = NotificationPublisher.check_status("database")
+  puts uptime
+rescue BugBunny::NotFound
+  puts "El servicio no existe"
+end
 ```
 
 ---
@@ -197,7 +206,7 @@ Crea tus controladores en `app/rabbit/controllers/`. Deben heredar de `BugBunny:
 module Rabbit
   module Controllers
     class Users < BugBunny::Controller
-      
+
       # Acción para routing_key: 'users.show'
       def show
         # Tienes acceso a headers y params
@@ -213,7 +222,7 @@ module Rabbit
       # Acción para routing_key: 'users.create'
       def create
         user = User.new(params)
-        
+
         if user.save
           render status: 201, json: user.as_json
         else
@@ -242,15 +251,25 @@ Simplemente escala el número de réplicas de este worker. BugBunny usa el patr�
 
 ---
 
-## 🛠 Avanzado: Middlewares
+## 🛠 Avanzado: Middlewares Incluidos
 
-BugBunny soporta middlewares estilo Faraday en el cliente. Esto es útil para logging, tracing (OpenTelemetry), o manejo de errores global.
+BugBunny adopta la arquitectura "Onion" (similar a Faraday). Puedes usar middlewares para transformar peticiones y respuestas.
+
+La gema incluye los siguientes middlewares listos para usar:
+
+| Middleware | Descripción |
+| :--- | :--- |
+| `BugBunny::Middleware::RaiseError` | Inspecciona el `status` de la respuesta. Si es `4xx` o `5xx`, lanza la excepción Ruby correspondiente (`NotFound`, `InternalServerError`, `UnprocessableEntity`, etc). |
+| `BugBunny::Middleware::JsonResponse` | Parsea automáticamente el `body` de la respuesta si es JSON válido. Además, si usas Rails, aplica `ActiveSupport::HashWithIndifferentAccess` para que puedas acceder con keys `:simbolo` o `'string'`. |
+| `BugBunny::Middleware::Logger` | (Opcional) Loguea las peticiones y respuestas salientes. |
+
+### Orden Recomendado
+El orden importa. Se recomienda definir `RaiseError` **antes** que `JsonResponse` para que el error pueda aprovechar el body ya parseado.
 
 ```ruby
-# Instanciar cliente con Middleware
-client = BugBunny::Client.new(pool: BUG_BUNNY_POOL) do |conn|
-  conn.use BugBunny::Middleware::Logger, Rails.logger
-  conn.use MyCustomMetricsMiddleware
+client = BugBunny::Client.new(pool: POOL) do |conn|
+  conn.use BugBunny::Middleware::RaiseError
+  conn.use BugBunny::Middleware::JsonResponse
 end
 ```
 
@@ -263,8 +282,9 @@ BugBunny lanza excepciones específicas que puedes capturar:
 | Excepción | Causa |
 | :--- | :--- |
 | `BugBunny::RequestTimeout` | El servidor no respondió a tiempo (RPC). |
-| `BugBunny::UnprocessableEntity` | Error de validación (422) remoto. |
-| `BugBunny::ClientError` | Errores 4xx genéricos. |
+| `BugBunny::UnprocessableEntity` | Error de validación (422) remoto. Contiene el payload de errores. |
+| `BugBunny::BadRequest` | Error 400 (Petición mal formada). |
+| `BugBunny::NotFound` | Error 404 (Recurso no encontrado). |
 | `BugBunny::ServerError` | Errores 5xx (Excepción en el worker remoto). |
 | `BugBunny::CommunicationError` | Fallo de conexión con RabbitMQ. |
 

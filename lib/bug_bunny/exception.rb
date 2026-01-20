@@ -1,12 +1,27 @@
 module BugBunny
+  # Base de todas las excepciones de la gema
   class Error < ::StandardError; end
+
+  # Errores de conexión (Bunny, Red, TCP)
   class CommunicationError < Error; end
+
+  # Errores 4xx (Culpa del Cliente)
   class ClientError < Error; end
+
+  # Errores 5xx (Culpa del Servidor)
   class ServerError < Error; end
 
-  class RequestTimeout < ClientError; end
-  class InternalServerError < ServerError; end
+  # === Errores Específicos 4xx ===
+  class BadRequest < ClientError; end      # 400
+  class NotFound < ClientError; end        # 404
+  class NotAcceptable < ClientError; end   # 406
+  class RequestTimeout < ClientError; end  # 408 (Timeout HTTP/RPC)
 
+  # === Errores Específicos 5xx ===
+  class InternalServerError < ServerError; end # 500
+
+  # === Error de Validación (422) ===
+  # Este es especial porque parsea el body para extraer los mensajes de error
   class UnprocessableEntity < ClientError
     attr_reader :error_messages, :raw_response
 

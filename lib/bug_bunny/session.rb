@@ -8,6 +8,7 @@ module BugBunny
 
     def initialize(connection)
       raise BugBunny::Error, "Connection is closed or nil" unless connection&.open?
+
       @connection = connection
       # Creamos canal nuevo para esta sesión
       @channel = connection.create_channel
