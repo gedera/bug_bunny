@@ -2,10 +2,9 @@
 
 **BugBunny** es un framework de comunicación para Ruby on Rails sobre **RabbitMQ**.
 
-Su objetivo es abstraer la complejidad de AMQP (Exchanges, Colas, Canales) y ofrecer una interfaz familiar para desarrolladores Rails:
-* **Cliente:** Usa modelos estilo `ActiveRecord` para hacer peticiones RPC.
-* **Servidor:** Usa controladores estilo `ActionController` para procesar mensajes.
-* **Infraestructura:** Soporta Middlewares (estilo Faraday) y Pools de conexiones.
+Su objetivo es abstraer la complejidad de AMQP (Exchanges, Colas, Canales) y ofrecer una interfaz familiar para desarrolladores Rails. Soporta dos modos de operación principales:
+1.  **Modo Resource:** Estilo `ActiveRecord` para mapear recursos remotos.
+2.  **Modo Publisher:** Estilo Servicios/Cliente para enviar mensajes libres (Fire-and-forget o RPC).
 
 ---
 
@@ -58,15 +57,15 @@ BUG_BUNNY_POOL = ConnectionPool.new(size: ENV.fetch('RAILS_MAX_THREADS', 5).to_i
   BugBunny.create_connection
 end
 
-# Inyectamos el pool por defecto a los recursos
+# Inyectamos el pool por defecto a los recursos (si usas el modo Resource)
 BugBunny::Resource.connection_pool = BUG_BUNNY_POOL
 ```
 
 ---
 
-## 🚀 Uso: El Cliente (Active Resource)
+## 🚀 Opción A: Modo Resource (Active Resource)
 
-Define modelos que representan recursos remotos en otros microservicios.
+Ideal para CRUDs remotos. Define modelos que representan recursos en otros microservicios.
 
 ### 1. Definir el Modelo
 
@@ -105,37 +104,73 @@ if user.save
 else
   puts "Errores remotos: #{user.errors.full_messages}"
 end
-
-# --- UPDATE (RPC: 'users.update') ---
-user.name = "Editado"
-user.save
-
-# --- DESTROY (RPC: 'users.destroy') ---
-user.destroy
 ```
 
 ### 3. Configuración Dinámica (`.with`)
 
-Ideal para entornos Multi-Tenant o para cambiar el comportamiento en tiempo de ejecución.
-
 ```ruby
 # Usar otro exchange o pool solo para esta llamada
 RemoteUser.with(exchange: 'legacy_exchange').find(99)
+```
 
-# Cambiar la routing key manualmente
-RemoteUser.with(routing_key: 'users.v2.create').create(params)
+---
 
-# Encadenamiento fluido
-RemoteUser.with(pool: SPECIAL_POOL)
-          .with(exchange_type: 'direct')
-          .find(1)
+## 🔌 Opción B: Modo Publisher (Sin Active Resource)
+
+Si prefieres un control total o no estás mapeando un recurso REST, puedes usar `BugBunny::Client` directamente. Se recomienda encapsularlo en clases "Publisher".
+
+### 1. Crear un Publisher
+
+```ruby
+# app/publishers/notification_publisher.rb
+class NotificationPublisher
+  # Instanciamos el cliente inyectándole el Pool
+  def self.client
+    @client ||= BugBunny::Client.new(pool: BUG_BUNNY_POOL)
+  end
+
+  # Ejemplo 1: Fire-and-Forget (Asíncrono)
+  # Envía el mensaje y retorna inmediatamente. Ideal para eventos.
+  def self.send_alert(msg)
+    client.publish('alerts/create', 
+      body: { message: msg, timestamp: Time.now },
+      exchange: 'notifications_exchange',
+      exchange_type: 'topic',
+      routing_key: 'alerts.critical'
+    )
+  end
+
+  # Ejemplo 2: RPC (Síncrono)
+  # Envía el mensaje y espera la respuesta del consumidor.
+  def self.check_status(service_id)
+    response = client.request('status/check',
+      body: { service: service_id },
+      exchange: 'system_exchange',
+      routing_key: 'system.status',
+      timeout: 5 # Timeout específico para esta llamada
+    )
+    
+    # Retorna el body parseado (Hash)
+    response['body'] 
+  end
+end
+```
+
+### 2. Usar el Publisher
+
+```ruby
+# En un controller o Job
+NotificationPublisher.send_alert("Servidor caído")
+
+status = NotificationPublisher.check_status("database")
+puts status['uptime']
 ```
 
 ---
 
 ## 📡 Uso: El Servidor (Workers)
 
-BugBunny incluye un servidor capaz de procesar mensajes entrantes y enrutarlos a controladores.
+BugBunny incluye un servidor capaz de procesar mensajes entrantes (tanto de Resources como de Publishers) y enrutarlos a controladores.
 
 ### 1. Definir Controladores
 
@@ -191,23 +226,16 @@ Simplemente escala el número de réplicas de este worker. BugBunny usa el patr�
 
 ---
 
-## 🛠 Avanzado: Cliente Raw & Middleware
+## 🛠 Avanzado: Middlewares
 
-Si no quieres usar `Resource`, puedes usar el cliente directo con soporte de middlewares.
+BugBunny soporta middlewares estilo Faraday en el cliente. Esto es útil para logging, tracing (OpenTelemetry), o manejo de errores global.
 
 ```ruby
 # Instanciar cliente con Middleware
 client = BugBunny::Client.new(pool: BUG_BUNNY_POOL) do |conn|
   conn.use BugBunny::Middleware::Logger, Rails.logger
-  conn.use MyCustomAuthMiddleware
+  conn.use MyCustomMetricsMiddleware
 end
-
-# Publicar (Fire-and-Forget)
-client.publish('logs/info', body: { msg: 'Hola' }, exchange: 'logs')
-
-# Request (RPC)
-response = client.request('users/get', body: { id: 1 }, exchange: 'users')
-puts response['body']
 ```
 
 ---
@@ -226,7 +254,7 @@ BugBunny lanza excepciones específicas que puedes capturar:
 
 ---
 
-## Help
+## Teoria
 
 ## Resiliencia y Recuperación Automática
 Estos parámetros son fundamentales para manejar fallos de red y garantizar que la aplicación se recupere sin intervención manual.
@@ -243,13 +271,6 @@ Estos parámetros son fundamentales para manejar fallos de red y garantizar que 
 - *write_timeout*: Tiempo máximo (en segundos) que la conexión esperará para escribir datos en el socket. Útil para manejar escenarios donde la red es lenta o está congestionada.
 - *continuation_timeout*: Es un timeout interno de protocolo AMQP (dado en milisegundos). Define cuánto tiempo esperará el cliente para que el servidor responda a una operación que requiere múltiples frames o pasos (como una transacción o una confirmación compleja). En este caso, son 15 segundos.
 
-## 🤝 Contribución
-
-1.  Fork it
-2.  Create your feature branch (`git checkout -b my-new-feature`)
-3.  Commit your changes (`git commit -am 'Add some feature'`)
-4.  Push to the branch (`git push origin my-new-feature`)
-5.  Create new Pull Request
-
 ## 📄 Licencia
+
 La gema está disponible como código abierto bajo los términos de la [MIT License](https://opensource.org/licenses/MIT).
