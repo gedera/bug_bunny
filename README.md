@@ -71,7 +71,6 @@ class RemoteUser < BugBunny::Resource
   self.exchange_type = 'topic'
 
   # Define el nombre lógico del recurso.
-  # 1. Routing Key: 'users.create', 'users.show.12'
   # 2. Header Type: 'users/create', 'users/show/12'
   self.resource_name = 'users'
 
