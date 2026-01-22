@@ -66,18 +66,27 @@ Define modelos que actúan como proxis de recursos remotos. BugBunny se encarga 
 ```ruby
 # app/models/remote_user.rb
 class RemoteUser < BugBunny::Resource
-  # Configuración de RabbitMQ
+  # --- Configuración de Infraestructura (RabbitMQ) ---
   self.exchange = 'users.topic'
   self.exchange_type = 'topic'
-  self.routing_key_prefix = 'users'
+  
+  # Define el inicio de la routing key (ej: 'users.create')
+  # Esto decide a qué COLA va el mensaje.
+  self.routing_key_prefix = 'users' 
+  
+  # --- Configuración de Aplicación (Controller Mapping) ---
+  # Define qué Controlador procesará el mensaje.
+  # Por defecto usa el nombre de la clase (RemoteUser -> remote_users).
+  # Aquí lo forzamos a 'users' para que apunte a 'UsersController' en el destino.
+  self.resource_name = 'users' 
 
-  # Atributos (ActiveModel)
+  # --- Atributos (ActiveModel) ---
   attribute :id, :integer
   attribute :name, :string
   attribute :email, :string
   attribute :active, :boolean
 
-  # Validaciones (se ejecutan antes de viajar a la red)
+  # --- Validaciones ---
   validates :email, presence: true
 end
 ```
@@ -88,27 +97,27 @@ La API simula ActiveRecord, pero por debajo envía mensajes RPC con headers tipo
 
 ```ruby
 # --- READ (Colección con Filtros) ---
-# Genera Header type: "remote_users/index?active=true&role=admin"
+# Genera Header type: "users/index?active=true&role=admin"
 # Genera Routing Key: "users.index"
 users = RemoteUser.where(active: true, role: 'admin')
 
 # --- READ (Singular) ---
-# Genera Header type: "remote_users/show/123"
+# Genera Header type: "users/show/123"
 # Genera Routing Key: "users.show.123"
 user = RemoteUser.find(123)
 
 # --- CREATE ---
-# Genera Header type: "remote_users/create" (Body JSON con datos)
+# Genera Header type: "users/create" (Body JSON con datos)
 user = RemoteUser.create(name: "Nuevo", email: "test@test.com")
 puts user.persisted? # => true
 
 # --- UPDATE ---
-# Genera Header type: "remote_users/update/123"
+# Genera Header type: "users/update/123"
 user.update(name: "Editado") 
 # Solo envía los atributos modificados (Dirty Tracking)
 
 # --- DESTROY ---
-# Genera Header type: "remote_users/destroy/123"
+# Genera Header type: "users/destroy/123"
 user.destroy
 ```
 
@@ -132,21 +141,22 @@ BugBunny incluye un **Router Inteligente** que parsea el header `type` del mensa
 Crea tus controladores en `app/rabbit/controllers/`. Heredan de `BugBunny::Controller`.
 
 ```ruby
-# app/rabbit/controllers/remote_users_controller.rb
-class RemoteUsersController < BugBunny::Controller
+# app/rabbit/controllers/users_controller.rb
+# El nombre coincide con self.resource_name = 'users' definido en el cliente.
+class UsersController < BugBunny::Controller
 
-  # Acción para type: "remote_users/index?active=true"
+  # Acción para type: "users/index?active=true"
   def index
     # params[:active] viene del Query String de la URL
     users = User.where(active: params[:active])
     render status: 200, json: users
   end
 
-  # Acción para type: "remote_users/show/12"
+  # Acción para type: "users/show/12"
   def show
     # params[:id] se extrae automáticamente del Path de la URL
     user = User.find_by(id: params[:id])
-
+    
     if user
       render status: 200, json: user
     else
@@ -154,11 +164,11 @@ class RemoteUsersController < BugBunny::Controller
     end
   end
 
-  # Acción para type: "remote_users/create"
+  # Acción para type: "users/create"
   def create
     # params fusiona el Body JSON + Query Params + ID
     user = User.new(params)
-
+    
     if user.save
       render status: 201, json: user
     else
@@ -202,13 +212,13 @@ puts response['body'] # Array de usuarios
 
 BugBunny mapea conceptos de HTTP/REST a AMQP 0.9.1 para estandarizar la comunicación entre microservicios:
 
-| Concepto | REST (HTTP) | BugBunny (AMQP) |
-| :--- | :--- | :--- |
-| **Endpoint** | URL Path (`/users/1`) | Header `type` (`users/show/1`) |
-| **Filtros** | Query String (`?active=true`) | Header `type` (`users/index?active=true`) |
-| **Verbo** | GET, POST, PUT, DELETE | Routing Key (`users.show`, `users.create`) |
-| **Payload** | Body (JSON) | Body (JSON) |
-| **Status** | HTTP Status Code (200, 404) | JSON Response `status` key |
+| Concepto | REST (HTTP) | BugBunny (AMQP) | Configuración |
+| :--- | :--- | :--- | :--- |
+| **Endpoint** | URL Path (`/users/1`) | Header `type` (`users/show/1`) | `resource_name` |
+| **Filtros** | Query String (`?active=true`) | Header `type` (`users/index?active=true`) | N/A (Automático) |
+| **Verbo** | GET, POST, PUT, DELETE | Routing Key (`users.show`) | `routing_key_prefix` |
+| **Payload** | Body (JSON) | Body (JSON) | N/A |
+| **Status** | HTTP Status Code (200) | JSON Response `status` key | N/A |
 
 ---
 
