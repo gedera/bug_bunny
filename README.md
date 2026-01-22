@@ -1,6 +1,6 @@
 # 🐰 BugBunny
 
-**BugBunny** es un framework de comunicación RPC para Ruby on Rails sobre **RabbitMQ**.
+**BugBunny** es un framework RPC para Ruby on Rails sobre **RabbitMQ**.
 
 Su filosofía es **"Active Record over AMQP"**. Abstrae la complejidad de colas y exchanges transformando patrones de mensajería en una arquitectura **RESTful simulada**, donde los mensajes contienen "URLs" y "Query Params" que son enrutados automáticamente a controladores.
 
@@ -59,74 +59,85 @@ BugBunny::Resource.connection_pool = BUG_BUNNY_POOL
 
 ## 🚀 Modo Resource (El Cliente)
 
-Define modelos que actúan como proxis de recursos remotos. BugBunny se encarga de construir la "URL" y la Routing Key automáticamente siguiendo convenciones REST.
+Define modelos que actúan como proxis de recursos remotos. BugBunny separa la **Lógica de Transporte** (RabbitMQ) de la **Lógica de Aplicación** (Controladores).
 
-### 1. Definir el Modelo
+### Escenario A: Routing Dinámico (Estándar)
+Ideal para Topic Exchanges donde quieres enrutar por acción (`users.create`, `users.show.12`).
 
 ```ruby
-# app/models/remote_user.rb
 class RemoteUser < BugBunny::Resource
-  # --- Configuración de Infraestructura (RabbitMQ) ---
-  self.exchange = 'users.topic'
+  # --- Transporte (RabbitMQ) ---
+  self.exchange = 'app.topic'
   self.exchange_type = 'topic'
-  
-  # Define el inicio de la routing key (ej: 'users.create')
-  # Esto decide a qué COLA va el mensaje.
-  self.routing_key_prefix = 'users' 
-  
-  # --- Configuración de Aplicación (Controller Mapping) ---
-  # Define qué Controlador procesará el mensaje.
-  # Por defecto usa el nombre de la clase (RemoteUser -> remote_users).
-  # Aquí lo forzamos a 'users' para que apunte a 'UsersController' en el destino.
-  self.resource_name = 'users' 
+  # Generará routing keys como: 'users.create', 'users.update.12'
+  self.routing_key_prefix = 'users'
 
-  # --- Atributos (ActiveModel) ---
+  # --- Aplicación (Header Type) ---
+  # Define qué controlador recibe el mensaje.
+  # Por defecto infiere el nombre de la clase (RemoteUser -> remote_users).
+  # Aquí lo forzamos a 'users' para apuntar a 'UsersController'.
+  self.resource_name = 'users'
+
   attribute :id, :integer
-  attribute :name, :string
   attribute :email, :string
-  attribute :active, :boolean
-
-  # --- Validaciones ---
-  validates :email, presence: true
 end
 ```
 
-### 2. Consumir el Servicio (CRUD)
+### Escenario B: Routing Estático (Direct/Cola Dedicada)
+Ideal cuando quieres enviar todo a una cola específica (ej: un Manager), pero mantener la distinción lógica de acciones.
 
-La API simula ActiveRecord, pero por debajo envía mensajes RPC con headers tipo URL para enrutamiento inteligente.
+```ruby
+class BoxManager < BugBunny::Resource
+  # --- Transporte (RabbitMQ) ---
+  self.exchange = 'warehouse.direct'
+  self.exchange_type = 'direct'
+
+  # FORZAMOS LA ROUTING KEY.
+  # No importa la acción (create, find), todo viaja con esta key.
+  self.routing_key = 'manager_queue'
+
+  # --- Aplicación (Header Type) ---
+  # Aunque todo vaya a la misma cola, el header 'type' diferenciará las acciones:
+  # 'box_manager/create', 'box_manager/show/12'
+  self.resource_name = 'box_manager'
+
+  attribute :id, :integer
+  attribute :status, :string
+end
+```
+
+### Consumiendo el Servicio (CRUD)
+
+La API simula ActiveRecord. Por debajo, construye una "URL" en el header `type` para que el consumidor sepa qué hacer.
 
 ```ruby
 # --- READ (Colección con Filtros) ---
-# Genera Header type: "users/index?active=true&role=admin"
-# Genera Routing Key: "users.index"
-users = RemoteUser.where(active: true, role: 'admin')
+# Header Type: "users/index?active=true" (Query Params)
+users = RemoteUser.where(active: true)
 
 # --- READ (Singular) ---
-# Genera Header type: "users/show/123"
-# Genera Routing Key: "users.show.123"
+# Header Type: "users/show/123" (ID en Path)
 user = RemoteUser.find(123)
 
 # --- CREATE ---
-# Genera Header type: "users/create" (Body JSON con datos)
-user = RemoteUser.create(name: "Nuevo", email: "test@test.com")
-puts user.persisted? # => true
+# Header Type: "users/create"
+user = RemoteUser.create(email: "test@test.com")
 
 # --- UPDATE ---
-# Genera Header type: "users/update/123"
-user.update(name: "Editado") 
-# Solo envía los atributos modificados (Dirty Tracking)
+# Header Type: "users/update/123"
+user.update(email: "edit@test.com")
+# Dirty Tracking: Solo se envían los atributos modificados.
 
 # --- DESTROY ---
-# Genera Header type: "users/destroy/123"
+# Header Type: "users/destroy/123"
 user.destroy
 ```
 
-### 3. Override Temporal (`.with`)
-
-Thread-safe para entornos concurrentes (Sidekiq/Puma).
+### Override Temporal (`.with`)
+Thread-safe. Útil para cambiar configuración en tiempo de ejecución.
 
 ```ruby
-# Usar otro exchange solo para esta llamada
+# Enviar este mensaje específico a otro exchange
 RemoteUser.with(exchange: 'legacy_exchange').find(99)
 ```
 
@@ -134,7 +145,7 @@ RemoteUser.with(exchange: 'legacy_exchange').find(99)
 
 ## 📡 Modo Servidor (El Worker)
 
-BugBunny incluye un **Router Inteligente** que parsea el header `type` del mensaje entrante, extrae el ID y los Query Params (usando `URI`), e invoca al controlador correspondiente.
+BugBunny incluye un **Router Inteligente** que parsea el header `type` (la URL simulada), extrae parámetros y despacha al controlador.
 
 ### 1. Definir Controladores
 
@@ -142,12 +153,11 @@ Crea tus controladores en `app/rabbit/controllers/`. Heredan de `BugBunny::Contr
 
 ```ruby
 # app/rabbit/controllers/users_controller.rb
-# El nombre coincide con self.resource_name = 'users' definido en el cliente.
 class UsersController < BugBunny::Controller
 
   # Acción para type: "users/index?active=true"
   def index
-    # params[:active] viene del Query String de la URL
+    # params fusiona Query Params y Body
     users = User.where(active: params[:active])
     render status: 200, json: users
   end
@@ -156,7 +166,7 @@ class UsersController < BugBunny::Controller
   def show
     # params[:id] se extrae automáticamente del Path de la URL
     user = User.find_by(id: params[:id])
-    
+
     if user
       render status: 200, json: user
     else
@@ -166,12 +176,11 @@ class UsersController < BugBunny::Controller
 
   # Acción para type: "users/create"
   def create
-    # params fusiona el Body JSON + Query Params + ID
     user = User.new(params)
-    
     if user.save
       render status: 201, json: user
     else
+      # Estos errores se propagan como BugBunny::UnprocessableEntity
       render status: 422, json: { errors: user.errors }
     end
   end
@@ -180,68 +189,46 @@ end
 
 ### 2. Ejecutar el Worker
 
-BugBunny incluye una tarea Rake que levanta los consumidores configurados.
-
 ```bash
 bundle exec rake bug_bunny:work
 ```
 
 ---
 
-## 🔌 Modo Publisher Manual
-
-Si necesitas enviar mensajes crudos sin usar `Resource` (ej: eventos fire-and-forget), puedes usar el Cliente directamente.
-
-```ruby
-client = BugBunny::Client.new(pool: BUG_BUNNY_POOL)
-
-# Enviar una alerta (Fire-and-Forget)
-# Respetamos la convención de URL en el 'type' para que el router lo entienda
-client.publish('alerts/create', exchange: 'notifications', routing_key: 'alerts.critical') do |req|
-  req.body = { message: "CPU High", server: "web-1" }
-end
-
-# Petición RPC Manual
-response = client.request('users/index?role=admin', exchange: 'users', routing_key: 'users.index')
-puts response['body'] # Array de usuarios
-```
-
----
-
 ## 🏗 Arquitectura REST-over-AMQP
 
-BugBunny mapea conceptos de HTTP/REST a AMQP 0.9.1 para estandarizar la comunicación entre microservicios:
+BugBunny desacopla el transporte de la lógica usando headers.
 
 | Concepto | REST (HTTP) | BugBunny (AMQP) | Configuración |
 | :--- | :--- | :--- | :--- |
 | **Endpoint** | URL Path (`/users/1`) | Header `type` (`users/show/1`) | `resource_name` |
-| **Filtros** | Query String (`?active=true`) | Header `type` (`users/index?active=true`) | N/A (Automático) |
-| **Verbo** | GET, POST, PUT, DELETE | Routing Key (`users.show`) | `routing_key_prefix` |
+| **Filtros** | Query String (`?active=true`) | Header `type` (`users/index?active=true`) | Automático (`where`) |
+| **Destino Físico** | IP/Dominio | Routing Key (`users.create` o `manager`) | `routing_key` / `prefix` |
 | **Payload** | Body (JSON) | Body (JSON) | N/A |
-| **Status** | HTTP Status Code (200) | JSON Response `status` key | N/A |
+| **Status** | HTTP Code (200, 404) | JSON Response `status` | N/A |
 
 ---
 
 ## 🛠 Middlewares
 
-BugBunny usa una arquitectura de pila (Stack) para procesar peticiones y respuestas.
+BugBunny usa una pila de middlewares para procesar respuestas.
 
 ```ruby
 BugBunny::Client.new(pool: POOL) do |conn|
-  # 1. Convierte errores 4xx/5xx en Excepciones Ruby
+  # 1. Lanza excepciones Ruby para errores 4xx/5xx
   conn.use BugBunny::Middleware::RaiseError
 
-  # 2. Parsea JSON string a HashWithIndifferentAccess
+  # 2. Parsea JSON a HashWithIndifferentAccess
   conn.use BugBunny::Middleware::JsonResponse
 end
 ```
 
-### Excepciones Principales
+### Excepciones
 
 * `BugBunny::UnprocessableEntity` (422): Error de validación.
 * `BugBunny::NotFound` (404): Recurso no encontrado.
-* `BugBunny::RequestTimeout`: El servidor demoró más de `rpc_timeout`.
-* `BugBunny::CommunicationError`: RabbitMQ no disponible.
+* `BugBunny::RequestTimeout`: Timeout RPC.
+* `BugBunny::CommunicationError`: Fallo de red RabbitMQ.
 
 ---
 
