@@ -44,8 +44,8 @@ Gem::Specification.new do |spec|
   spec.add_dependency "activemodel", ">= 6.1"      # Validaciones, Callbacks
   spec.add_dependency "activesupport", ">= 6.1"    # Inflector, IndifferentAccess
   spec.add_dependency "rack", ">= 2.0"             # Status codes (200, 404, etc)
-  spec.add_dependency "json"     # Asegura una versión de JSON compatible
-  spec.add_dependency "ostruct"  # Requerido por JSON en algunas versiones y Ruby modernos
+  spec.add_dependency "json"
+  spec.add_dependency "ostruct"                    # Requerido por JSON en algunas versiones y Ruby modernos
 
   # === DEPENDENCIAS DE DESARROLLO (Para tests y herramientas) ===
   spec.add_development_dependency "bundler"

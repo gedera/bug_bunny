@@ -1,10 +1,8 @@
 # 🐰 BugBunny
 
-**BugBunny** es un framework de comunicación para Ruby on Rails sobre **RabbitMQ**.
+**BugBunny** es un framework de comunicación RPC para Ruby on Rails sobre **RabbitMQ**.
 
-Su objetivo es abstraer la complejidad de AMQP (Exchanges, Colas, Canales) y ofrecer una interfaz familiar para desarrolladores Rails. Soporta dos modos de operación principales:
-1.  **Modo Resource:** Estilo `ActiveRecord` para mapear recursos remotos.
-2.  **Modo Publisher:** Estilo Servicios/Cliente para enviar mensajes libres (Fire-and-forget o RPC).
+Su filosofía es **"Active Record over AMQP"**. Abstrae la complejidad de colas y exchanges transformando patrones de mensajería en una arquitectura **RESTful simulada**, donde los mensajes contienen "URLs" y "Query Params" que son enrutados automáticamente a controladores.
 
 ---
 
@@ -22,15 +20,11 @@ Ejecuta el bundle:
 bundle install
 ```
 
-Corre el instalador para generar la configuración y directorios:
+Corre el instalador para generar la configuración:
 
 ```bash
 rails g bug_bunny:install
 ```
-
-Esto creará:
-* `config/initializers/bug_bunny.rb`
-* `app/rabbit/controllers/`
 
 ---
 
@@ -48,7 +42,7 @@ BugBunny.configure do |config|
   config.vhost    = ENV.fetch('RABBITMQ_VHOST', '/')
 
   # Timeouts y Recuperación
-  config.rpc_timeout = 10     # Segundos a esperar respuesta síncrona
+  config.rpc_timeout = 10       # Segundos a esperar respuesta síncrona
   config.network_recovery_interval = 5
 end
 
@@ -57,179 +51,118 @@ BUG_BUNNY_POOL = ConnectionPool.new(size: ENV.fetch('RAILS_MAX_THREADS', 5).to_i
   BugBunny.create_connection
 end
 
-# Inyectamos el pool por defecto a los recursos (si usas el modo Resource)
+# Inyectamos el pool por defecto a los recursos
 BugBunny::Resource.connection_pool = BUG_BUNNY_POOL
 ```
 
 ---
 
-## 🚀 Opción A: Modo Resource (Active Resource)
+## 🚀 Modo Resource (El Cliente)
 
-Ideal para CRUDs remotos. Define modelos que representan recursos en otros microservicios.
+Define modelos que actúan como proxis de recursos remotos. BugBunny se encarga de construir la "URL" y la Routing Key automáticamente siguiendo convenciones REST.
 
 ### 1. Definir el Modelo
 
 ```ruby
 # app/models/remote_user.rb
 class RemoteUser < BugBunny::Resource
-  # Configuración de Ruteo Estática
-  self.exchange = 'users_exchange'
+  # Configuración de RabbitMQ
+  self.exchange = 'users.topic'
   self.exchange_type = 'topic'
   self.routing_key_prefix = 'users'
-  # Esto generará rutas automáticas: 'users.show', 'users.create', etc.
 
   # Atributos (ActiveModel)
   attribute :id, :integer
   attribute :name, :string
   attribute :email, :string
+  attribute :active, :boolean
 
-  # Validaciones Locales
+  # Validaciones (se ejecutan antes de viajar a la red)
   validates :email, presence: true
-end
-```
-
-### 1.1 Configuración Dinámica (Lambdas)
-
-Puedes usar `Procs` o `Lambdas` para que la configuración se evalúe en tiempo de ejecución. Esto es ideal para entornos Multi-Tenant o configuraciones que dependen de variables de entorno.
-
-```ruby
-class DynamicUser < BugBunny::Resource
-  # El exchange cambia según el entorno
-  self.exchange = -> { ENV['STAGING'] ? 'users_staging' : 'users_prod' }
-
-  # El pool cambia según el Tenant actual
-  self.connection_pool = -> { Tenant.current.rabbit_pool }
-
-  # El routing key prefix se calcula dinámicamente
-  self.routing_key_prefix = -> { "users.#{Date.today.year}" }
 end
 ```
 
 ### 2. Consumir el Servicio (CRUD)
 
-La API es idéntica a ActiveRecord. Por debajo, esto envía mensajes AMQP y espera la respuesta (RPC).
+La API simula ActiveRecord, pero por debajo envía mensajes RPC con headers tipo URL para enrutamiento inteligente.
 
 ```ruby
-# --- FIND (RPC: 'users.show') ---
-user = RemoteUser.find(123)
-puts user.name # => "Gabriel"
+# --- READ (Colección con Filtros) ---
+# Genera Header type: "remote_users/index?active=true&role=admin"
+# Genera Routing Key: "users.index"
+users = RemoteUser.where(active: true, role: 'admin')
 
-# --- CREATE (RPC: 'users.create') ---
-user = RemoteUser.new(name: "Nuevo", email: "test@test.com")
-if user.save
-  puts "Usuario creado con ID: #{user.id}"
-else
-  puts "Errores remotos: #{user.errors.full_messages}"
-end
+# --- READ (Singular) ---
+# Genera Header type: "remote_users/show/123"
+# Genera Routing Key: "users.show.123"
+user = RemoteUser.find(123)
+
+# --- CREATE ---
+# Genera Header type: "remote_users/create" (Body JSON con datos)
+user = RemoteUser.create(name: "Nuevo", email: "test@test.com")
+puts user.persisted? # => true
+
+# --- UPDATE ---
+# Genera Header type: "remote_users/update/123"
+user.update(name: "Editado") 
+# Solo envía los atributos modificados (Dirty Tracking)
+
+# --- DESTROY ---
+# Genera Header type: "remote_users/destroy/123"
+user.destroy
 ```
 
 ### 3. Override Temporal (`.with`)
 
-También puedes sobreescribir la configuración para una sola llamada o bloque.
+Thread-safe para entornos concurrentes (Sidekiq/Puma).
 
 ```ruby
-# Usar otro exchange o pool solo para esta llamada
+# Usar otro exchange solo para esta llamada
 RemoteUser.with(exchange: 'legacy_exchange').find(99)
 ```
 
 ---
 
-## 🔌 Opción B: Modo Publisher (Sin Active Resource)
+## 📡 Modo Servidor (El Worker)
 
-Si prefieres un control total o no estás mapeando un recurso REST, puedes usar `BugBunny::Client` directamente. Se recomienda encapsularlo en clases "Publisher" y usar bloques para configurar el request.
-
-### 1. Crear un Publisher
-
-```ruby
-# app/publishers/notification_publisher.rb
-class NotificationPublisher
-  # Instanciamos el cliente inyectándole el Pool y los Middlewares
-  def self.client
-    @client ||= BugBunny::Client.new(pool: BUG_BUNNY_POOL) do |conn|
-      # 1. Manejo de Errores: Lanza excepciones si el status es 4xx/5xx
-      conn.use BugBunny::Middleware::RaiseError
-
-      # 2. Parseo JSON: Convierte el body string a Hash (con Indifferent Access)
-      conn.use BugBunny::Middleware::JsonResponse
-    end
-  end
-
-  # Ejemplo 1: Fire-and-Forget (Asíncrono)
-  # Envía el mensaje y retorna inmediatamente. Ideal para eventos.
-  def self.send_alert(msg)
-    client.publish('alerts/create', exchange: 'notifications_exchange', routing_key: 'alerts.critical') do |req|
-      req.exchange_type = 'topic'
-      req.body = { message: msg, timestamp: Time.now }
-    end
-  end
-
-  # Ejemplo 2: RPC (Síncrono)
-  # Envía el mensaje y espera la respuesta del consumidor.
-  def self.check_status(service_id)
-    response = client.request('status/check', exchange: 'system_exchange', routing_key: 'system.status') do |req|
-      req.timeout = 5
-      req.body = { service: service_id }
-    end
-
-    # Gracias a JsonResponse, el body ya es un Hash accesible
-    response['body'][:uptime]
-  end
-end
-```
-
-### 2. Usar el Publisher
-
-```ruby
-# En un controller o Job
-NotificationPublisher.send_alert("Servidor caído")
-
-begin
-  uptime = NotificationPublisher.check_status("database")
-  puts uptime
-rescue BugBunny::NotFound
-  puts "El servicio no existe"
-end
-```
-
----
-
-## 📡 Uso: El Servidor (Workers)
-
-BugBunny incluye un servidor capaz de procesar mensajes entrantes (tanto de Resources como de Publishers) y enrutarlos a controladores.
+BugBunny incluye un **Router Inteligente** que parsea el header `type` del mensaje entrante, extrae el ID y los Query Params (usando `URI`), e invoca al controlador correspondiente.
 
 ### 1. Definir Controladores
 
-Crea tus controladores en `app/rabbit/controllers/`. Deben heredar de `BugBunny::Controller`.
+Crea tus controladores en `app/rabbit/controllers/`. Heredan de `BugBunny::Controller`.
 
 ```ruby
-# app/rabbit/controllers/users_controller.rb
-module Rabbit
-  module Controllers
-    class Users < BugBunny::Controller
+# app/rabbit/controllers/remote_users_controller.rb
+class RemoteUsersController < BugBunny::Controller
 
-      # Acción para routing_key: 'users.show'
-      def show
-        # Tienes acceso a headers y params
-        user = User.find_by(id: params[:id])
+  # Acción para type: "remote_users/index?active=true"
+  def index
+    # params[:active] viene del Query String de la URL
+    users = User.where(active: params[:active])
+    render status: 200, json: users
+  end
 
-        if user
-          render status: 200, json: user.as_json
-        else
-          render status: 404, json: { error: 'No encontrado' }
-        end
-      end
+  # Acción para type: "remote_users/show/12"
+  def show
+    # params[:id] se extrae automáticamente del Path de la URL
+    user = User.find_by(id: params[:id])
 
-      # Acción para routing_key: 'users.create'
-      def create
-        user = User.new(params)
+    if user
+      render status: 200, json: user
+    else
+      render status: 404, json: { error: 'Not Found' }
+    end
+  end
 
-        if user.save
-          render status: 201, json: user.as_json
-        else
-          # Estos errores se propagarán al cliente remoto
-          render status: 422, json: { errors: user.errors.full_messages }
-        end
-      end
+  # Acción para type: "remote_users/create"
+  def create
+    # params fusiona el Body JSON + Query Params + ID
+    user = User.new(params)
+
+    if user.save
+      render status: 201, json: user
+    else
+      render status: 422, json: { errors: user.errors }
     end
   end
 end
@@ -237,77 +170,71 @@ end
 
 ### 2. Ejecutar el Worker
 
-BugBunny usa un Rake task inteligente que detecta tus controladores y se conecta a RabbitMQ.
+BugBunny incluye una tarea Rake que levanta los consumidores configurados.
 
 ```bash
-# En tu terminal o Dockerfile
 bundle exec rake bug_bunny:work
 ```
 
-Esto iniciará un proceso bloqueante que escucha en la cola configurada (por defecto `[app_name]_rpc_queue`).
+---
 
-**En Kubernetes:**
-Simplemente escala el número de réplicas de este worker. BugBunny usa el patrón "Work Queue", por lo que RabbitMQ balanceará la carga automáticamente entre todos los pods.
+## 🔌 Modo Publisher Manual
+
+Si necesitas enviar mensajes crudos sin usar `Resource` (ej: eventos fire-and-forget), puedes usar el Cliente directamente.
+
+```ruby
+client = BugBunny::Client.new(pool: BUG_BUNNY_POOL)
+
+# Enviar una alerta (Fire-and-Forget)
+# Respetamos la convención de URL en el 'type' para que el router lo entienda
+client.publish('alerts/create', exchange: 'notifications', routing_key: 'alerts.critical') do |req|
+  req.body = { message: "CPU High", server: "web-1" }
+end
+
+# Petición RPC Manual
+response = client.request('users/index?role=admin', exchange: 'users', routing_key: 'users.index')
+puts response['body'] # Array de usuarios
+```
 
 ---
 
-## 🛠 Avanzado: Middlewares Incluidos
+## 🏗 Arquitectura REST-over-AMQP
 
-BugBunny adopta la arquitectura "Onion" (similar a Faraday). Puedes usar middlewares para transformar peticiones y respuestas.
+BugBunny mapea conceptos de HTTP/REST a AMQP 0.9.1 para estandarizar la comunicación entre microservicios:
 
-La gema incluye los siguientes middlewares listos para usar:
+| Concepto | REST (HTTP) | BugBunny (AMQP) |
+| :--- | :--- | :--- |
+| **Endpoint** | URL Path (`/users/1`) | Header `type` (`users/show/1`) |
+| **Filtros** | Query String (`?active=true`) | Header `type` (`users/index?active=true`) |
+| **Verbo** | GET, POST, PUT, DELETE | Routing Key (`users.show`, `users.create`) |
+| **Payload** | Body (JSON) | Body (JSON) |
+| **Status** | HTTP Status Code (200, 404) | JSON Response `status` key |
 
-| Middleware | Descripción |
-| :--- | :--- |
-| `BugBunny::Middleware::RaiseError` | Inspecciona el `status` de la respuesta. Si es `4xx` o `5xx`, lanza la excepción Ruby correspondiente (`NotFound`, `InternalServerError`, `UnprocessableEntity`, etc). |
-| `BugBunny::Middleware::JsonResponse` | Parsea automáticamente el `body` de la respuesta si es JSON válido. Además, si usas Rails, aplica `ActiveSupport::HashWithIndifferentAccess` para que puedas acceder con keys `:simbolo` o `'string'`. |
-| `BugBunny::Middleware::Logger` | (Opcional) Loguea las peticiones y respuestas salientes. |
+---
 
-### Orden Recomendado
-El orden importa. Se recomienda definir `RaiseError` **antes** que `JsonResponse` para que el error pueda aprovechar el body ya parseado.
+## 🛠 Middlewares
+
+BugBunny usa una arquitectura de pila (Stack) para procesar peticiones y respuestas.
 
 ```ruby
-client = BugBunny::Client.new(pool: POOL) do |conn|
+BugBunny::Client.new(pool: POOL) do |conn|
+  # 1. Convierte errores 4xx/5xx en Excepciones Ruby
   conn.use BugBunny::Middleware::RaiseError
+
+  # 2. Parsea JSON string a HashWithIndifferentAccess
   conn.use BugBunny::Middleware::JsonResponse
 end
 ```
 
----
+### Excepciones Principales
 
-## ⚠️ Manejo de Errores
-
-BugBunny lanza excepciones específicas que puedes capturar:
-
-| Excepción | Causa |
-| :--- | :--- |
-| `BugBunny::RequestTimeout` | El servidor no respondió a tiempo (RPC). |
-| `BugBunny::UnprocessableEntity` | Error de validación (422) remoto. Contiene el payload de errores. |
-| `BugBunny::BadRequest` | Error 400 (Petición mal formada). |
-| `BugBunny::NotFound` | Error 404 (Recurso no encontrado). |
-| `BugBunny::ServerError` | Errores 5xx (Excepción en el worker remoto). |
-| `BugBunny::CommunicationError` | Fallo de conexión con RabbitMQ. |
+* `BugBunny::UnprocessableEntity` (422): Error de validación.
+* `BugBunny::NotFound` (404): Recurso no encontrado.
+* `BugBunny::RequestTimeout`: El servidor demoró más de `rpc_timeout`.
+* `BugBunny::CommunicationError`: RabbitMQ no disponible.
 
 ---
-
-## Teoria
-
-## Resiliencia y Recuperación Automática
-Estos parámetros son fundamentales para manejar fallos de red y garantizar que la aplicación se recupere sin intervención manual.
-
-- *automatically_recover*: Indica al cliente Bunny que debe intentar automáticamente reestablecer la conexión y todos los recursos asociados (canales, colas, exchanges) si la conexión se pierde debido a un fallo de red o un reinicio del broker. Nota: Este parámetro puede entrar en conflicto con un bucle de retry manual).
-- *network_recovery_interval*: El tiempo que Bunny esperará entre intentos consecutivos de reconexión de red.
-- *heartbeat*: El intervalo de tiempo (en segundos) en el que el cliente y el servidor deben enviarse un pequeño paquete ("latido"). Si no se recibe un heartbeat durante dos intervalos consecutivos, se asume que la conexión ha muerto (generalmente por un fallo de red o un proceso colgado), lo que dispara el mecanismo de recuperación.
-
-## Tiempos de Espera (Timeouts)
- Estos parámetros previenen que la aplicación se bloquee indefinidamente esperando una respuesta del servidor.
-
-- *connection_timeout*: Tiempo máximo (en segundos) que Bunny esperará para establecer la conexión TCP inicial con el servidor RabbitMQ.
-- *read_timeout*: Tiempo máximo (en segundos) que la conexión esperará para leer datos del socket. Si el servidor se queda en silencio por más de 30 segundos, el socket se cerrará.
-- *write_timeout*: Tiempo máximo (en segundos) que la conexión esperará para escribir datos en el socket. Útil para manejar escenarios donde la red es lenta o está congestionada.
-- *continuation_timeout*: Es un timeout interno de protocolo AMQP (dado en milisegundos). Define cuánto tiempo esperará el cliente para que el servidor responda a una operación que requiere múltiples frames o pasos (como una transacción o una confirmación compleja). En este caso, son 15 segundos.
-
 
 ## 📄 Licencia
 
-La gema está disponible como código abierto bajo los términos de la [MIT License](https://opensource.org/licenses/MIT).
+Código abierto bajo [MIT License](https://opensource.org/licenses/MIT).
