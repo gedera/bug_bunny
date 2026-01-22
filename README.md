@@ -67,6 +67,7 @@ Ideal cuando quieres enrutar por acción. La Routing Key se genera automáticame
 ```ruby
 class RemoteUser < BugBunny::Resource
   # --- Configuración ---
+  self.connection_pool = POOL
   self.exchange = 'app.topic'
   self.exchange_type = 'topic'
 
@@ -85,6 +86,7 @@ Ideal cuando quieres enviar todo a una cola específica (ej: un Manager), indepe
 ```ruby
 class BoxManager < BugBunny::Resource
   # --- Configuración ---
+  self.connection_pool = POOL
   self.exchange = 'warehouse.direct'
   self.exchange_type = 'direct'
 
@@ -122,7 +124,7 @@ user = RemoteUser.create(email: "test@test.com")
 
 # --- UPDATE ---
 # Header Type: "users/update/123"
-user.update(email: "edit@test.com") 
+user.update(email: "edit@test.com")
 # Dirty Tracking: Solo se envían los atributos modificados.
 
 # --- DESTROY ---
