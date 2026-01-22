@@ -4,26 +4,14 @@ require 'active_support/core_ext/string/inflections'
 require 'uri'
 
 module BugBunny
-  # Clase base para modelos remotos que implementan el patrón Active Record sobre AMQP.
+  # Clase base para modelos remotos (RPC over AMQP).
   #
-  # Esta clase transforma operaciones CRUD estándar en peticiones RPC (Remote Procedure Call).
-  # Separa la lógica de transporte (RabbitMQ) de la lógica de aplicación (Controladores):
-  # * **Transporte:** Usa `routing_key` (dinámica o estática) para entregar el mensaje a la cola correcta.
-  # * **Aplicación:** Usa el header `type` como una URL RESTful (`users/show/12`) para indicar qué acción ejecutar.
+  # Esta clase maneja la comunicación con microservicios.
+  # Soporta dos estrategias de ruteo:
+  # 1. **Estático (Direct):** Se define una `routing_key` fija (ej: 'manager').
+  # 2. **Dinámico (Topic):** Se genera `resource_name.action` (ej: 'users.create').
   #
-  # @example Configuración con Routing Dinámico (Topic)
-  #   class User < BugBunny::Resource
-  #     self.exchange = 'app.topic'
-  #     self.routing_key_prefix = 'users'
-  #     # Genera routing keys: 'users.create', 'users.show.12'
-  #   end
-  #
-  # @example Configuración con Routing Estático (Direct/Queue dedicada)
-  #   class Box < BugBunny::Resource
-  #     self.exchange = 'warehouse.direct'
-  #     self.routing_key = 'manager_queue'
-  #     # Siempre envía a 'manager_queue', la acción viaja en el header type.
-  #   end
+  # En ambos casos, la intención de la acción viaja en el header `type` (URL simulada).
   class Resource
     include ActiveModel::API
     include ActiveModel::Attributes
@@ -36,9 +24,10 @@ module BugBunny
     class << self
       # @!group Configuración
 
-      attr_writer :connection_pool, :exchange, :exchange_type, :routing_key_prefix, :resource_name, :routing_key
+      # Eliminamos routing_key_prefix por ser redundante.
+      attr_writer :connection_pool, :exchange, :exchange_type, :resource_name, :routing_key
 
-      # Resuelve la configuración buscando en una jerarquía de prioridades.
+      # Helper para resolver configuración (Thread-local > Clase).
       # @api private
       def resolve_config(key, instance_var)
         thread_key = "bb_#{object_id}_#{key}"
@@ -50,15 +39,15 @@ module BugBunny
       def connection_pool; resolve_config(:pool, :@connection_pool); end
       def current_exchange; resolve_config(:exchange, :@exchange) || raise(ArgumentError, "Exchange not defined"); end
       def current_exchange_type; resolve_config(:exchange_type, :@exchange_type) || 'direct'; end
-      def current_routing_key_prefix; resolve_config(:prefix, :@routing_key_prefix); end
 
-      # Nombre lógico del recurso utilizado para construir la URL en el header `type`.
-      # @return [String] Ej: 'users' (si self.resource_name = 'users') o 'remote_user' (inferido).
+      # Nombre del recurso. Se usa para:
+      # 1. Construir la URL en el header `type` (ej: 'users/create').
+      # 2. Generar la routing key dinámica si no hay una fija (ej: 'users.create').
+      # @return [String] Ej: 'users' o 'box_manager'.
       def resource_name
         resolve_config(:resource_name, :@resource_name) || name.demodulize.underscore
       end
 
-      # Instancia el cliente RPC.
       # @return [BugBunny::Client]
       def bug_bunny_client
         pool = connection_pool
@@ -66,12 +55,7 @@ module BugBunny
         BugBunny::Client.new(pool: pool)
       end
 
-      # Permite overrides temporales de configuración (Thread-safe).
-      # Útil para cambiar de exchange o routing key en tiempo de ejecución.
-      #
-      # @param exchange [String]
-      # @param routing_key [String]
-      # @param pool [ConnectionPool]
+      # Override temporal (Thread-safe).
       def with(exchange: nil, routing_key: nil, exchange_type: nil, pool: nil)
         keys = { exchange: "bb_#{object_id}_exchange", exchange_type: "bb_#{object_id}_exchange_type", pool: "bb_#{object_id}_pool", routing_key: "bb_#{object_id}_routing_key" }
         old_values = {}
@@ -88,34 +72,33 @@ module BugBunny
         end
       end
 
-      # @api private
       class ScopeProxy < BasicObject
         def initialize(target, keys, old_values); @target = target; @keys = keys; @old_values = old_values; end
         def method_missing(method, *args, &block); @target.public_send(method, *args, &block); ensure; @keys.each { |k, v| ::Thread.current[v] = @old_values[k] }; end
       end
 
-      # Calcula la Routing Key final para el mensaje.
+      # Calcula la Routing Key final.
       #
-      # Prioridad:
-      # 1. Override temporal (.with)
-      # 2. Configuración estática (self.routing_key = 'manager')
-      # 3. Generación dinámica (prefix.action.id)
+      # Lógica simplificada:
+      # 1. Si hay una `routing_key` explícita (configurada o via .with), ÚSALA.
+      # 2. Si no, GENÉRALA usando `resource_name.action`.
       #
       # @param action [Symbol] La acción (ej: :create).
-      # @param id [String, nil] ID opcional (solo usado en generación dinámica).
+      # @param id [String, nil] ID opcional (solo para routing dinámico).
       # @return [String]
       def calculate_routing_key(action, id = nil)
-        # 1. Override temporal
+        # 1. Estrategia Estática (Explícita)
+        # Busca override temporal O valor de clase (self.routing_key = 'manager')
+        static_rk = resolve_config(:routing_key, :@routing_key)
+
+        # Override temporal tiene prioridad (se resuelve en resolve_config primero via thread)
         manual_rk = Thread.current["bb_#{object_id}_routing_key"]
         return manual_rk if manual_rk
-
-        # 2. Configuración estática (Tu requerimiento específico)
-        static_rk = resolve_config(:routing_key, :@routing_key)
         return static_rk if static_rk.present?
 
-        # 3. Generación dinámica (Fallback para Topic Exchanges)
-        prefix = current_routing_key_prefix
-        key = prefix ? "#{prefix}.#{action}" : action.to_s
+        # 2. Estrategia Dinámica (Fallback por defecto)
+        # Usa el resource_name como prefijo: 'users' -> 'users.create'
+        key = "#{resource_name}.#{action}"
         key = "#{key}.#{id}" if id
         key
       end
@@ -128,16 +111,13 @@ module BugBunny
       def update_action; :update; end
       def destroy_action; :destroy; end
 
-      # Recupera una colección de recursos aplicando filtros.
-      # Genera header type: `resource/index?query`
-      #
-      # @param filters [Hash] Filtros de búsqueda (Query Params).
-      # @return [Array<Resource>] Array de objetos hidratados.
+      # Recupera colección.
+      # Header Type: `resource/index?query`
+      # Routing Key: `routing_key` (fija) o `resource.index` (dinámica).
       def where(filters = {})
         rk = calculate_routing_key(index_action)
         path = "#{resource_name}/#{index_action}"
 
-        # Construcción de URL con Query String seguro
         if filters.present?
           query_string = URI.encode_www_form(filters)
           type_header = "#{path}?#{query_string}"
@@ -159,14 +139,11 @@ module BugBunny
         end
       end
 
-      # Alias para recuperar todos los registros sin filtros.
       def all; where({}); end
 
-      # Busca un recurso por su ID.
-      # Genera header type: `resource/show/id`
-      #
-      # @param id [Integer, String] ID del recurso.
-      # @return [Resource, nil] Objeto encontrado o nil (404).
+      # Busca por ID.
+      # Header Type: `resource/show/id`
+      # Routing Key: `routing_key` (fija) o `resource.show.id` (dinámica).
       def find(id)
         rk = calculate_routing_key(show_action, id)
         type_header = "#{resource_name}/#{show_action}/#{id}"
@@ -187,9 +164,6 @@ module BugBunny
         instance
       end
 
-      # Crea un nuevo recurso.
-      # @param payload [Hash] Atributos.
-      # @return [Resource] Instancia creada.
       def create(payload)
         instance = new(payload)
         instance.save
@@ -215,29 +189,18 @@ module BugBunny
 
     def assign_attributes(new_attributes)
       return if new_attributes.nil?
-
       super(new_attributes)
     end
 
-    # Actualiza atributos y guarda inmediatamente.
     def update(attributes)
       assign_attributes(attributes)
       save
     end
 
-    # Calcula el payload (solo atributos modificados).
     def changes_to_send
       changes.transform_values(&:last).except(:persisted)
     end
 
-    # Guarda el registro (Create o Update).
-    #
-    # * Create: Genera URL `resource/create`
-    # * Update: Genera URL `resource/update/id`
-    #
-    # La Routing Key será fija o dinámica dependiendo de la configuración de la clase.
-    #
-    # @return [Boolean] true si éxito, false si error de validación.
     def save
       return false unless valid?
 
@@ -245,14 +208,13 @@ module BugBunny
         is_new = !persisted?
         action_verb = is_new ? self.class.create_action : self.class.update_action
 
-        # Construcción de la "URL" (Header Type)
         if is_new
           type_header = "#{self.class.resource_name}/#{action_verb}"
-          # En Create no hay ID para routing dinámico
+          # Si hay RK fija, usa esa. Si no, usa resource.create
           rk = calculate_routing_key(action_verb)
         else
           type_header = "#{self.class.resource_name}/#{action_verb}/#{id}"
-          # En Update pasamos ID por si el routing es dinámico (topic)
+          # Si hay RK fija, usa esa. Si no, usa resource.update.id
           rk = calculate_routing_key(action_verb, id)
         end
 
@@ -268,8 +230,6 @@ module BugBunny
       false
     end
 
-    # Elimina el registro remoto.
-    # Genera URL `resource/destroy/id`.
     def destroy
       return false unless persisted?
 

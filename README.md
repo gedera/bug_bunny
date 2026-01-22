@@ -61,21 +61,18 @@ BugBunny::Resource.connection_pool = BUG_BUNNY_POOL
 
 Define modelos que actúan como proxis de recursos remotos. BugBunny separa la **Lógica de Transporte** (RabbitMQ) de la **Lógica de Aplicación** (Controladores).
 
-### Escenario A: Routing Dinámico (Estándar)
-Ideal para Topic Exchanges donde quieres enrutar por acción (`users.create`, `users.show.12`).
+### Escenario A: Routing Dinámico (Topic / Estándar)
+Ideal cuando quieres enrutar por acción. La Routing Key se genera automáticamente usando `resource_name.action`.
 
 ```ruby
 class RemoteUser < BugBunny::Resource
-  # --- Transporte (RabbitMQ) ---
+  # --- Configuración ---
   self.exchange = 'app.topic'
   self.exchange_type = 'topic'
-  # Generará routing keys como: 'users.create', 'users.update.12'
-  self.routing_key_prefix = 'users'
 
-  # --- Aplicación (Header Type) ---
-  # Define qué controlador recibe el mensaje.
-  # Por defecto infiere el nombre de la clase (RemoteUser -> remote_users).
-  # Aquí lo forzamos a 'users' para apuntar a 'UsersController'.
+  # Define el nombre lógico del recurso.
+  # 1. Routing Key: 'users.create', 'users.show.12'
+  # 2. Header Type: 'users/create', 'users/show/12'
   self.resource_name = 'users'
 
   attribute :id, :integer
@@ -83,22 +80,21 @@ class RemoteUser < BugBunny::Resource
 end
 ```
 
-### Escenario B: Routing Estático (Direct/Cola Dedicada)
-Ideal cuando quieres enviar todo a una cola específica (ej: un Manager), pero mantener la distinción lógica de acciones.
+### Escenario B: Routing Estático (Direct / Cola Dedicada)
+Ideal cuando quieres enviar todo a una cola específica (ej: un Manager), independientemente de la acción.
 
 ```ruby
 class BoxManager < BugBunny::Resource
-  # --- Transporte (RabbitMQ) ---
+  # --- Configuración ---
   self.exchange = 'warehouse.direct'
   self.exchange_type = 'direct'
 
   # FORZAMOS LA ROUTING KEY.
-  # No importa la acción (create, find), todo viaja con esta key.
+  # Todo viaja con esta key, sin importar la acción.
   self.routing_key = 'manager_queue'
 
-  # --- Aplicación (Header Type) ---
-  # Aunque todo vaya a la misma cola, el header 'type' diferenciará las acciones:
-  # 'box_manager/create', 'box_manager/show/12'
+  # Define el nombre lógico para el Controlador.
+  # Header Type: 'box_manager/create', 'box_manager/show/12'
   self.resource_name = 'box_manager'
 
   attribute :id, :integer
@@ -113,10 +109,12 @@ La API simula ActiveRecord. Por debajo, construye una "URL" en el header `type` 
 ```ruby
 # --- READ (Colección con Filtros) ---
 # Header Type: "users/index?active=true" (Query Params)
+# Routing Key: "users.index" (Dinámico) o "manager_queue" (Estático)
 users = RemoteUser.where(active: true)
 
 # --- READ (Singular) ---
 # Header Type: "users/show/123" (ID en Path)
+# Routing Key: "users.show.123" (Dinámico) o "manager_queue" (Estático)
 user = RemoteUser.find(123)
 
 # --- CREATE ---
@@ -125,7 +123,7 @@ user = RemoteUser.create(email: "test@test.com")
 
 # --- UPDATE ---
 # Header Type: "users/update/123"
-user.update(email: "edit@test.com")
+user.update(email: "edit@test.com") 
 # Dirty Tracking: Solo se envían los atributos modificados.
 
 # --- DESTROY ---
@@ -137,8 +135,8 @@ user.destroy
 Thread-safe. Útil para cambiar configuración en tiempo de ejecución.
 
 ```ruby
-# Enviar este mensaje específico a otro exchange
-RemoteUser.with(exchange: 'legacy_exchange').find(99)
+# Enviar este mensaje a una cola específica solo por esta vez
+RemoteUser.with(routing_key: 'urgent_queue').create(email: 'vip@test.com')
 ```
 
 ---
@@ -203,7 +201,7 @@ BugBunny desacopla el transporte de la lógica usando headers.
 | :--- | :--- | :--- | :--- |
 | **Endpoint** | URL Path (`/users/1`) | Header `type` (`users/show/1`) | `resource_name` |
 | **Filtros** | Query String (`?active=true`) | Header `type` (`users/index?active=true`) | Automático (`where`) |
-| **Destino Físico** | IP/Dominio | Routing Key (`users.create` o `manager`) | `routing_key` / `prefix` |
+| **Destino Físico** | IP/Dominio | Routing Key (`users.create` o `manager`) | `routing_key` (Estático) o `resource_name` (Dinámico) |
 | **Payload** | Body (JSON) | Body (JSON) | N/A |
 | **Status** | HTTP Code (200, 404) | JSON Response `status` | N/A |
 
