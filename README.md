@@ -57,7 +57,7 @@ BugBunny::Resource.connection_pool = BUG_BUNNY_POOL
 
 ---
 
-## 🚀 Modo Resource (El Cliente)
+## 🚀 Modo Resource (ORM / Active Record)
 
 Define modelos que actúan como proxis de recursos remotos. BugBunny separa la **Lógica de Transporte** (RabbitMQ) de la **Lógica de Aplicación** (Controladores).
 
@@ -67,16 +67,15 @@ Ideal cuando quieres enrutar por acción. La Routing Key se genera automáticame
 ```ruby
 class RemoteUser < BugBunny::Resource
   # --- Configuración ---
-  self.connection_pool = POOL
   self.exchange = 'app.topic'
   self.exchange_type = 'topic'
-
+  
   # Define el nombre lógico del recurso.
+  # 1. Routing Key: 'users.create', 'users.show.12'
   # 2. Header Type: 'users/create', 'users/show/12'
   self.resource_name = 'users'
 
-  attribute :id, :integer
-  attribute :email, :string
+  # No necesitas definir atributos, BugBunny soporta atributos dinámicos (Schema-less)
 end
 ```
 
@@ -86,10 +85,9 @@ Ideal cuando quieres enviar todo a una cola específica (ej: un Manager), indepe
 ```ruby
 class BoxManager < BugBunny::Resource
   # --- Configuración ---
-  self.connection_pool = POOL
   self.exchange = 'warehouse.direct'
   self.exchange_type = 'direct'
-
+  
   # FORZAMOS LA ROUTING KEY.
   # Todo viaja con esta key, sin importar la acción.
   self.routing_key = 'manager_queue'
@@ -97,9 +95,6 @@ class BoxManager < BugBunny::Resource
   # Define el nombre lógico para el Controlador.
   # Header Type: 'box_manager/create', 'box_manager/show/12'
   self.resource_name = 'box_manager'
-
-  attribute :id, :integer
-  attribute :status, :string
 end
 ```
 
@@ -117,6 +112,7 @@ users = RemoteUser.where(active: true)
 # Header Type: "users/show/123" (ID en Path)
 # Routing Key: "users.show.123" (Dinámico) o "manager_queue" (Estático)
 user = RemoteUser.find(123)
+puts user.name # Acceso dinámico a atributos
 
 # --- CREATE ---
 # Header Type: "users/create"
@@ -124,7 +120,7 @@ user = RemoteUser.create(email: "test@test.com")
 
 # --- UPDATE ---
 # Header Type: "users/update/123"
-user.update(email: "edit@test.com")
+user.update(email: "edit@test.com") 
 # Dirty Tracking: Solo se envían los atributos modificados.
 
 # --- DESTROY ---
@@ -132,12 +128,52 @@ user.update(email: "edit@test.com")
 user.destroy
 ```
 
-### Override Temporal (`.with`)
-Thread-safe. Útil para cambiar configuración en tiempo de ejecución.
+---
+
+## 🔌 Modo Publisher (Cliente Manual)
+
+Si no necesitas mapear un recurso o quieres enviar mensajes crudos ("Fire-and-Forget"), puedes usar `BugBunny::Client` directamente.
+
+### 1. Instanciar el Cliente
 
 ```ruby
-# Enviar este mensaje a una cola específica solo por esta vez
-RemoteUser.with(routing_key: 'urgent_queue').create(email: 'vip@test.com')
+# Puedes inyectar middlewares personalizados aquí si lo deseas
+client = BugBunny::Client.new(pool: BUG_BUNNY_POOL) do |conn|
+  conn.use BugBunny::Middleware::JsonResponse
+end
+```
+
+### 2. Publicar Asíncronamente (Fire-and-Forget)
+Envía el mensaje y retorna inmediatamente. Ideal para eventos o logs.
+
+```ruby
+# publish(url_logica, opciones)
+client.publish('notifications/alert', 
+  exchange: 'events.topic', 
+  exchange_type: 'topic',
+  routing_key: 'alerts.critical',
+  body: { message: 'CPU High', server: 'web-1' }
+)
+```
+
+### 3. Petición Síncrona (RPC)
+Envía el mensaje y bloquea el hilo esperando la respuesta del consumidor.
+
+```ruby
+begin
+  # request(url_logica, opciones)
+  response = client.request('math/calculate', 
+    exchange: 'rpc.direct', 
+    routing_key: 'calculator',
+    body: { a: 10, b: 20 },
+    timeout: 5 # Segundos de espera máxima
+  )
+  
+  puts response['body'] # => { "result": 30 }
+
+rescue BugBunny::RequestTimeout
+  puts "El servidor tardó demasiado."
+end
 ```
 
 ---
@@ -165,7 +201,7 @@ class UsersController < BugBunny::Controller
   def show
     # params[:id] se extrae automáticamente del Path de la URL
     user = User.find_by(id: params[:id])
-
+    
     if user
       render status: 200, json: user
     else
@@ -213,7 +249,8 @@ BugBunny desacopla el transporte de la lógica usando headers.
 BugBunny usa una pila de middlewares para procesar respuestas.
 
 ```ruby
-BugBunny::Client.new(pool: POOL) do |conn|
+# Configuración global en el Resource
+BugBunny::Resource.client_middleware do |conn|
   # 1. Lanza excepciones Ruby para errores 4xx/5xx
   conn.use BugBunny::Middleware::RaiseError
 
