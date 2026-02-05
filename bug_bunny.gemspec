@@ -35,7 +35,21 @@ Gem::Specification.new do |spec|
   # Uncomment to register a new dependency of your gem
   # spec.add_dependency "example-gem", "~> 1.0"
 
-  # For more information and examples about making a new gem, check out our
+  # For more information and examples about making a new gem, check out
   # guide at: https://bundler.io/guides/creating_gem.html
-  spec.add_dependency "bunny", "~> 2.24"
+  # === DEPENDENCIAS DE RUNTIME (Lo que tu gema necesita para funcionar) ===
+  spec.add_dependency "bunny", "~> 2.24"           # El cliente RabbitMQ
+  spec.add_dependency "connection_pool", ">= 2.4"  # Manejo de hilos
+  spec.add_dependency "concurrent-ruby", "~> 1.3"  # IVars, TimerTasks
+  spec.add_dependency "activemodel", ">= 6.1"      # Validaciones, Callbacks
+  spec.add_dependency "activesupport", ">= 6.1"    # Inflector, IndifferentAccess
+  spec.add_dependency "rack", ">= 2.0"             # Status codes (200, 404, etc)
+  spec.add_dependency "json"
+  spec.add_dependency "ostruct"                    # Requerido por JSON en algunas versiones y Ruby modernos
+
+  # === DEPENDENCIAS DE DESARROLLO (Para tests y herramientas) ===
+  spec.add_development_dependency "bundler"
+  spec.add_development_dependency "rake"
+  spec.add_development_dependency "rspec"
+  spec.add_development_dependency "yard"
 end
