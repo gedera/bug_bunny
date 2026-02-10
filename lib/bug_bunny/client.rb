@@ -4,31 +4,25 @@ require_relative 'middleware/stack'
 module BugBunny
   # Cliente principal para realizar peticiones a RabbitMQ.
   #
-  # Implementa el patrón "Onion Middleware" (Arquitectura de Cebolla) similar a Faraday,
-  # permitiendo interceptar, transformar y procesar tanto las peticiones salientes
-  # como las respuestas entrantes mediante una pila de middlewares.
+  # Implementa el patrón "Onion Middleware" (Arquitectura de Cebolla) similar a Faraday.
+  # Mantiene una interfaz flexible donde el verbo HTTP se pasa como opción.
   #
-  # @example Inicialización básica
-  #   client = BugBunny::Client.new(pool: MY_POOL)
+  # @example Petición RPC (GET)
+  #   client.request('users/123', method: :get)
   #
-  # @example Con Middlewares personalizados
-  #   client = BugBunny::Client.new(pool: MY_POOL) do |conn|
-  #     conn.use BugBunny::Middleware::RaiseError
-  #     conn.use BugBunny::Middleware::JsonResponse
-  #     conn.use BugBunny::Middleware::Logger, Rails.logger
-  #   end
+  # @example Publicación Fire-and-Forget (POST)
+  #   client.publish('logs', method: :post, body: { msg: 'Error' })
   class Client
     # @return [ConnectionPool] El pool de conexiones subyacente a RabbitMQ.
     attr_reader :pool
 
-    # @return [BugBunny::Middleware::Stack] La pila de middlewares configurada para este cliente.
+    # @return [BugBunny::Middleware::Stack] La pila de middlewares configurada.
     attr_reader :stack
 
     # Inicializa un nuevo cliente.
     #
     # @param pool [ConnectionPool] Pool de conexiones a RabbitMQ configurado previamente.
     # @yield [stack] Bloque opcional para configurar la pila de middlewares.
-    # @yieldparam stack [BugBunny::Middleware::Stack] El objeto stack para registrar middlewares con {#use}.
     # @raise [ArgumentError] Si no se proporciona un `pool`.
     def initialize(pool:)
       raise ArgumentError, "BugBunny::Client requiere un 'pool:'" if pool.nil?
@@ -39,21 +33,16 @@ module BugBunny
 
     # Realiza una petición Síncrona (RPC / Request-Response).
     #
-    # Envía un mensaje y bloquea la ejecución del hilo actual hasta recibir una respuesta
-    # correlacionada del servidor o hasta que se supere el tiempo de espera (timeout).
+    # Envía un mensaje y bloquea la ejecución del hilo actual hasta recibir respuesta.
     #
-    # @param url [String] La ruta o acción del mensaje (ej: 'users/create').
-    # @param args [Hash] Opciones de configuración de la petición.
-    # @option args [Object] :body El cuerpo del mensaje (Hash o String).
-    # @option args [String] :exchange Nombre del exchange destino.
-    # @option args [String] :exchange_type Tipo de exchange ('direct', 'topic', 'fanout').
-    # @option args [String] :routing_key Routing key manual (opcional).
-    # @option args [Integer] :timeout Tiempo máximo de espera en segundos antes de lanzar timeout.
-    # @option args [Hash] :headers Headers AMQP adicionales para metadatos.
-    # @yield [req] Bloque opcional para configurar el objeto Request directamente.
-    # @yieldparam req [BugBunny::Request] Objeto request configurable.
-    # @return [Hash] La respuesta del servidor, conteniendo habitualmente `status` y `body`.
-    # @raise [BugBunny::RequestTimeout] Si no se recibe respuesta en el tiempo límite.
+    # @param url [String] La ruta del recurso (ej: 'users/1').
+    # @param args [Hash] Opciones de configuración.
+    # @option args [Symbol] :method El verbo HTTP (:get, :post, :put, :delete). Default: :get.
+    # @option args [Object] :body El cuerpo del mensaje.
+    # @option args [Hash] :headers Headers AMQP adicionales.
+    # @option args [Integer] :timeout Tiempo máximo de espera.
+    # @yield [req] Bloque para configurar el objeto Request directamente.
+    # @return [Hash] La respuesta del servidor.
     def request(url, **args)
       run_in_pool(:rpc, url, args) do |req|
         yield req if block_given?
@@ -62,13 +51,9 @@ module BugBunny
 
     # Realiza una publicación Asíncrona (Fire-and-Forget).
     #
-    # Envía el mensaje al exchange y retorna el control inmediatamente sin esperar
-    # ninguna confirmación o respuesta del consumidor.
-    #
-    # @param url [String] La ruta o acción del mensaje.
-    # @param args [Hash] Mismas opciones que {#request}, excepto `:timeout` (no aplica).
-    # @yield [req] Bloque opcional para configurar el objeto Request.
-    # @yieldparam req [BugBunny::Request] Objeto request configurable.
+    # @param url [String] La ruta del evento/recurso.
+    # @param args [Hash] Mismas opciones que {#request}, excepto `:timeout`.
+    # @yield [req] Bloque para configurar el objeto Request.
     # @return [void]
     def publish(url, **args)
       run_in_pool(:fire, url, args) do |req|
@@ -78,16 +63,14 @@ module BugBunny
 
     private
 
-    # Ejecuta la lógica de envío dentro del contexto del Pool y aplica la cadena de middlewares.
-    #
-    # @param method_name [Symbol] El método a invocar en el Producer (:rpc o :fire).
-    # @param url [String] La URL/Acción del request.
-    # @param args [Hash] Argumentos pasados al método público.
+    # Ejecuta la lógica de envío dentro del contexto del Pool.
+    # Mapea los argumentos al objeto Request y ejecuta la cadena de middlewares.
     def run_in_pool(method_name, url, args)
       # 1. Builder del Request
       req = BugBunny::Request.new(url)
 
       # 2. Syntactic Sugar: Mapeo de argumentos a atributos del Request
+      req.method        = args[:method]        if args[:method]
       req.body          = args[:body]          if args[:body]
       req.exchange      = args[:exchange]      if args[:exchange]
       req.exchange_type = args[:exchange_type] if args[:exchange_type]

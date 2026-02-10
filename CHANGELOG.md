@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.0.1] - 2026-02-10
+
+### 🚀 Features: RESTful Architecture
+* **HTTP Verbs over AMQP:** Implemented support for semantic HTTP verbs (`GET`, `POST`, `PUT`, `DELETE`) within AMQP headers (`x-http-method`). This enables a true RESTful design over RabbitMQ.
+* **Smart Router:** The `BugBunny::Consumer` now behaves like a Rails Router. It automatically infers the controller action based on the combination of the **Verb** and the **URL Path** (e.g., `GET users/1` dispatches to `show`, `POST users` to `create`).
+* **Resource CRUD Mapping:** `BugBunny::Resource` now maps Ruby operations to their specific REST verbs:
+    * `create` -> `POST`
+    * `update` -> `PUT`
+    * `destroy` -> `DELETE`
+    * `find/where` -> `GET`.
+
+### 🛠 Improvements
+* **Client API:** Updated `BugBunny::Client#request` and `#publish` to accept a `method:` argument (e.g., `client.request('users', method: :post)`), giving developers full control over the request semantics without changing the method signature.
+* **Request Metadata:** `BugBunny::Request` now handles the `method` attribute and ensures it is properly injected into the AMQP headers for the consumer to read.
+
 ## [3.0.0] - 2026-02-05
 
 ### ⚠ Breaking Changes
