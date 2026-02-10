@@ -4,9 +4,20 @@ require 'active_support/core_ext/string/inflections'
 require 'uri'
 
 module BugBunny
-  # Clase base para modelos remotos (Active Record over AMQP RESTful).
+  # Clase base para modelos remotos que implementan **Active Record over AMQP (RESTful)**.
   #
-  # Mapea operaciones CRUD de objetos Ruby a verbos HTTP sobre RabbitMQ.
+  # Esta clase transforma operaciones CRUD estándar en peticiones RPC utilizando
+  # verbos HTTP semánticos (GET, POST, PUT, DELETE) transportados sobre headers AMQP.
+  #
+  # @example
+  #   class User < BugBunny::Resource
+  #     self.exchange = 'app.topic'
+  #     self.resource_name = 'users'
+  #   end
+  #
+  #   User.create(name: 'Gaby') # Envía POST 'users'
+  #   u = User.find(1)          # Envía GET 'users/1'
+  #   u.destroy                 # Envía DELETE 'users/1'
   class Resource
     include ActiveModel::API
     include ActiveModel::Dirty
@@ -19,9 +30,10 @@ module BugBunny
     attr_accessor :persisted
 
     class << self
-      # ... (Configuración igual que antes: resolve_config, connection_pool, etc) ...
       attr_writer :connection_pool, :exchange, :exchange_type, :resource_name, :routing_key
 
+      # Resuelve la configuración buscando en la jerarquía de clases.
+      # @api private
       def resolve_config(key, instance_var)
         thread_key = "bb_#{object_id}_#{key}"
         return Thread.current[thread_key] if Thread.current.key?(thread_key)
@@ -42,11 +54,13 @@ module BugBunny
         resolve_config(:resource_name, :@resource_name) || name.demodulize.underscore.pluralize
       end
 
+      # Define middlewares para el cliente de este recurso.
       def client_middleware(&block)
         @client_middleware_stack ||= []
         @client_middleware_stack << block
       end
 
+      # @api private
       def resolve_middleware_stack
         stack = []
         target = self
@@ -61,7 +75,7 @@ module BugBunny
       def bug_bunny_client
         pool = connection_pool
         raise BugBunny::Error, "Connection pool missing for #{name}" unless pool
-
+        
         BugBunny::Client.new(pool: pool) do |conn|
           resolve_middleware_stack.each { |block| block.call(conn) }
         end
@@ -75,43 +89,40 @@ module BugBunny
         Thread.current[keys[:exchange_type]] = exchange_type if exchange_type
         Thread.current[keys[:pool]] = pool if pool
         Thread.current[keys[:routing_key]] = routing_key if routing_key
-
         if block_given?
           begin; yield; ensure; keys.each { |k, v| Thread.current[v] = old_values[k] }; end
         else
           ScopeProxy.new(self, keys, old_values)
         end
       end
-
+      
       class ScopeProxy < BasicObject
         def initialize(target, keys, old_values); @target = target; @keys = keys; @old_values = old_values; end
         def method_missing(method, *args, &block); @target.public_send(method, *args, &block); ensure; @keys.each { |k, v| ::Thread.current[v] = @old_values[k] }; end
       end
 
       # Calcula la Routing Key.
-      # Si hay routing_key fija, la usa. Si no, usa el resource_name como key.
-      # @note En REST, la routing key suele ser el nombre del recurso (ej: 'users').
+      # @note En REST, por defecto es el resource_name (Topic 'users'), pero puede ser forzada.
       def calculate_routing_key(id = nil)
         manual_rk = Thread.current["bb_#{object_id}_routing_key"]
         return manual_rk if manual_rk
-
         static_rk = resolve_config(:routing_key, :@routing_key)
         return static_rk if static_rk.present?
-
-        # Por defecto la routing key es el nombre del recurso (ej: 'users')
-        # Esto asume un Topic Exchange donde se escucha 'users' o 'users.*'
         resource_name
       end
 
       # @!group Acciones CRUD RESTful
 
       # GET resource?query
+      #
+      # @param filters [Hash] Parámetros de consulta (Query params).
       def where(filters = {})
         rk = calculate_routing_key
         path = resource_name
         path += "?#{URI.encode_www_form(filters)}" if filters.present?
 
-        response = bug_bunny_client.get(path, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk)
+        # REST: GET collection
+        response = bug_bunny_client.request(path, method: :get, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk)
 
         return [] unless response['body'].is_a?(Array)
         response['body'].map do |attrs|
@@ -125,14 +136,17 @@ module BugBunny
       def all; where({}); end
 
       # GET resource/id
+      #
+      # @param id [String, Integer] ID del recurso.
       def find(id)
         rk = calculate_routing_key(id)
         path = "#{resource_name}/#{id}"
 
-        response = bug_bunny_client.get(path, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk)
+        # REST: GET member
+        response = bug_bunny_client.request(path, method: :get, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk)
 
         return nil if response.nil? || response['status'] == 404
-
+        
         attributes = response['body']
         return nil unless attributes.is_a?(Hash)
 
@@ -149,7 +163,7 @@ module BugBunny
       end
     end
 
-    # @!group Instancia (Sin cambios mayores, solo en save/destroy)
+    # @!group Instancia
 
     def current_exchange; self.class.current_exchange; end
     def current_exchange_type; self.class.current_exchange_type; end
@@ -167,10 +181,9 @@ module BugBunny
 
     def assign_attributes(new_attributes)
       return if new_attributes.nil?
-
       new_attributes.each { |k, v| public_send("#{k}=", v) }
     end
-
+    
     def update(attributes)
       assign_attributes(attributes)
       save
@@ -181,6 +194,7 @@ module BugBunny
       @remote_attributes.except('id', 'ID', 'Id', '_id')
     end
 
+    # Magic Methods para atributos dinámicos
     def method_missing(method_name, *args, &block)
       attribute_name = method_name.to_s
       if attribute_name.end_with?('=')
@@ -211,22 +225,23 @@ module BugBunny
 
     # @!group Persistencia RESTful
 
+    # Guarda el registro (POST si es nuevo, PUT si existe).
     def save
       return false unless valid?
 
       run_callbacks(:save) do
         is_new = !persisted?
         rk = calculate_routing_key(id)
-
-        # Mapeo a verbos HTTP
+        
+        # Mapeo a verbos HTTP usando client.request(method: ...)
         if is_new
-          # POST resource
+          # REST: POST resource (Create)
           path = self.class.resource_name
-          response = bug_bunny_client.post(path, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk, body: changes_to_send)
+          response = bug_bunny_client.request(path, method: :post, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk, body: changes_to_send)
         else
-          # PUT resource/id
+          # REST: PUT resource/id (Update)
           path = "#{self.class.resource_name}/#{id}"
-          response = bug_bunny_client.put(path, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk, body: changes_to_send)
+          response = bug_bunny_client.request(path, method: :put, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk, body: changes_to_send)
         end
 
         handle_save_response(response)
@@ -236,15 +251,16 @@ module BugBunny
       false
     end
 
+    # Elimina el registro (DELETE).
     def destroy
       return false unless persisted?
 
       run_callbacks(:destroy) do
-        # DELETE resource/id
+        # REST: DELETE resource/id
         path = "#{self.class.resource_name}/#{id}"
         rk = calculate_routing_key(id)
 
-        bug_bunny_client.delete(path, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk)
+        bug_bunny_client.request(path, method: :delete, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk)
 
         self.persisted = false
       end
@@ -272,7 +288,6 @@ module BugBunny
 
     def load_remote_rabbit_errors(errors_hash)
       return if errors_hash.nil?
-
       if errors_hash.is_a?(String)
         errors.add(:base, errors_hash)
       else

@@ -21,6 +21,7 @@ module BugBunny
       @session = BugBunny::Session.new(connection)
     end
 
+    # Inicia la suscripción a la cola.
     def subscribe(queue_name:, exchange_name:, routing_key:, exchange_type: 'direct', queue_opts: {}, block: true)
       x = session.exchange(name: exchange_name, type: exchange_type)
       q = session.queue(queue_name, queue_opts)
@@ -40,6 +41,8 @@ module BugBunny
 
     private
 
+    # Procesa el mensaje entrante.
+    # Infiere la acción basándose en Verbo + URL.
     def process_message(delivery_info, properties, body)
       if properties.type.nil? || properties.type.empty?
         BugBunny.configuration.logger.error("[Consumer] Missing 'type'. Rejected.")
@@ -47,10 +50,11 @@ module BugBunny
         return
       end
 
-      # 1. Obtenemos el Verbo HTTP del header (Default: GET)
+      # 1. Leemos el verbo HTTP desde el header (Default: GET)
+      # Nota: Bunny devuelve los headers en propiedades.headers
       http_method = properties.headers ? (properties.headers['x-http-method'] || 'GET') : 'GET'
 
-      # 2. Despachamos la ruta (Router Inteligente)
+      # 2. Despachamos usando lógica Rails
       route_info = router_dispatch(http_method, properties.type)
 
       headers = {
@@ -65,6 +69,7 @@ module BugBunny
         reply_to: properties.reply_to
       }
 
+      # Convention: "users" -> Rabbit::Controllers::UsersController
       controller_class_name = "rabbit/controllers/#{route_info[:controller]}".camelize
       controller_class = controller_class_name.constantize
 
@@ -86,11 +91,10 @@ module BugBunny
       end
     end
 
-    # Simula el config/routes.rb de Rails.
-    # Infiere la acción basándose en Verbo + Estructura del Path.
+    # Router: Simula el config/routes.rb de Rails.
     #
     # @param method [String] Verbo HTTP (GET, POST, etc).
-    # @param path [String] URL Path (users, users/1).
+    # @param path [String] URL Path (ej: 'users/1').
     # @return [Hash] {controller, action, id, params}
     def router_dispatch(method, path)
       uri = URI.parse("http://dummy/#{path}")
@@ -98,7 +102,7 @@ module BugBunny
       query_params = uri.query ? CGI.parse(uri.query).transform_values(&:first) : {}
 
       controller_name = segments[0] # "users"
-      id = segments[1]              # "123" o nil (si hay 2 segmentos)
+      id = segments[1]              # "123" o nil
 
       # Lógica de Inferencia Rails Standard
       # GET users      -> index
@@ -116,17 +120,17 @@ module BugBunny
                when 'DELETE'
                  'destroy'
                else
-                 id || 'index' # Fallback
+                 id || 'index' # Fallback para verbos custom
                end
 
       # Soporte para Member Actions Custom (ej: POST users/1/activate)
-      # Segmentos: [users, 1, activate]
+      # Path: users/1/activate -> segments: [users, 1, activate]
       if segments.size >= 3
          id = segments[1]
          action = segments[2]
       end
 
-      # Inyectar ID en params para acceso unificado
+      # Inyectar ID en params para acceso unificado en el controller
       query_params['id'] = id if id
 
       {

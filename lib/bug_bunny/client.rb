@@ -2,16 +2,28 @@
 require_relative 'middleware/stack'
 
 module BugBunny
-  # Cliente principal para realizar peticiones a RabbitMQ con semántica REST.
+  # Cliente principal para realizar peticiones a RabbitMQ.
   #
-  # @example Petición GET
-  #   client.get('users/123')
+  # Implementa el patrón "Onion Middleware" (Arquitectura de Cebolla) similar a Faraday.
+  # Mantiene una interfaz flexible donde el verbo HTTP se pasa como opción.
   #
-  # @example Petición POST
-  #   client.post('users', body: { name: 'Gaby' })
+  # @example Petición RPC (GET)
+  #   client.request('users/123', method: :get)
+  #
+  # @example Publicación Fire-and-Forget (POST)
+  #   client.publish('logs', method: :post, body: { msg: 'Error' })
   class Client
-    attr_reader :pool, :stack
+    # @return [ConnectionPool] El pool de conexiones subyacente a RabbitMQ.
+    attr_reader :pool
 
+    # @return [BugBunny::Middleware::Stack] La pila de middlewares configurada.
+    attr_reader :stack
+
+    # Inicializa un nuevo cliente.
+    #
+    # @param pool [ConnectionPool] Pool de conexiones a RabbitMQ configurado previamente.
+    # @yield [stack] Bloque opcional para configurar la pila de middlewares.
+    # @raise [ArgumentError] Si no se proporciona un `pool`.
     def initialize(pool:)
       raise ArgumentError, "BugBunny::Client requiere un 'pool:'" if pool.nil?
       @pool = pool
@@ -19,55 +31,46 @@ module BugBunny
       yield(@stack) if block_given?
     end
 
-    # --- VERBOS HTTP (Syntactic Sugar) ---
-
-    # Realiza una petición GET (RPC). Ideal para lecturas (show, index).
-    def get(url, **args)
-      request(url, method: :get, **args)
-    end
-
-    # Realiza una petición POST (RPC). Ideal para creaciones (create).
-    def post(url, **args)
-      request(url, method: :post, **args)
-    end
-
-    # Realiza una petición PUT (RPC). Ideal para actualizaciones completas (update).
-    def put(url, **args)
-      request(url, method: :put, **args)
-    end
-
-    # Realiza una petición DELETE (RPC). Ideal para eliminaciones (destroy).
-    def delete(url, **args)
-      request(url, method: :delete, **args)
-    end
-
-    # --- MÉTODOS CORE ---
-
-    # Realiza una petición Síncrona (RPC).
+    # Realiza una petición Síncrona (RPC / Request-Response).
     #
-    # @param url [String] La ruta del recurso.
-    # @param method [Symbol] El verbo HTTP (:get, :post, etc).
-    # @param args [Hash] Opciones (body, headers, timeout).
-    def request(url, method: :get, **args)
-      run_in_pool(:rpc, url, args.merge(method: method)) do |req|
+    # Envía un mensaje y bloquea la ejecución del hilo actual hasta recibir respuesta.
+    #
+    # @param url [String] La ruta del recurso (ej: 'users/1').
+    # @param args [Hash] Opciones de configuración.
+    # @option args [Symbol] :method El verbo HTTP (:get, :post, :put, :delete). Default: :get.
+    # @option args [Object] :body El cuerpo del mensaje.
+    # @option args [Hash] :headers Headers AMQP adicionales.
+    # @option args [Integer] :timeout Tiempo máximo de espera.
+    # @yield [req] Bloque para configurar el objeto Request directamente.
+    # @return [Hash] La respuesta del servidor.
+    def request(url, **args)
+      run_in_pool(:rpc, url, args) do |req|
         yield req if block_given?
       end
     end
 
     # Realiza una publicación Asíncrona (Fire-and-Forget).
-    # Por defecto usa POST si no se especifica método.
-    def publish(url, method: :post, **args)
-      run_in_pool(:fire, url, args.merge(method: method)) do |req|
+    #
+    # @param url [String] La ruta del evento/recurso.
+    # @param args [Hash] Mismas opciones que {#request}, excepto `:timeout`.
+    # @yield [req] Bloque para configurar el objeto Request.
+    # @return [void]
+    def publish(url, **args)
+      run_in_pool(:fire, url, args) do |req|
         yield req if block_given?
       end
     end
 
     private
 
+    # Ejecuta la lógica de envío dentro del contexto del Pool.
+    # Mapea los argumentos al objeto Request y ejecuta la cadena de middlewares.
     def run_in_pool(method_name, url, args)
-      # Pasamos el verbo al inicializador del Request
-      req = BugBunny::Request.new(url, method: args[:method])
+      # 1. Builder del Request
+      req = BugBunny::Request.new(url)
 
+      # 2. Syntactic Sugar: Mapeo de argumentos a atributos del Request
+      req.method        = args[:method]        if args[:method]
       req.body          = args[:body]          if args[:body]
       req.exchange      = args[:exchange]      if args[:exchange]
       req.exchange_type = args[:exchange_type] if args[:exchange_type]
@@ -75,13 +78,19 @@ module BugBunny
       req.timeout       = args[:timeout]       if args[:timeout]
       req.headers.merge!(args[:headers])       if args[:headers]
 
+      # 3. Configuración del usuario (bloque específico por request)
       yield req if block_given?
 
+      # 4. Ejecución dentro del Pool
       @pool.with do |conn|
         session = BugBunny::Session.new(conn)
         producer = BugBunny::Producer.new(session)
+
         begin
+          # Onion Architecture: La acción final es llamar al Producer real.
           final_action = ->(env) { producer.send(method_name, env) }
+
+          # Construimos y ejecutamos la cadena de middlewares
           app = @stack.build(final_action)
           app.call(req)
         ensure

@@ -2,7 +2,9 @@
 
 **BugBunny** es un framework RPC para Ruby on Rails sobre **RabbitMQ**.
 
-Su filosofía es **"Active Record over AMQP"**. Transforma patrones de mensajería en una arquitectura **RESTful simulada**. Los mensajes viajan con un verbo HTTP (`POST`, `GET`) y una URL (`users/123`), y un Router inteligente los despacha al controlador y acción correspondiente siguiendo las convenciones de Rails.
+Su filosofía es **"Active Record over AMQP"**. Abstrae la complejidad de colas y exchanges transformando patrones de mensajería en una arquitectura **RESTful simulada**.
+
+A diferencia de otros clientes de RabbitMQ, BugBunny viaja con **Verbos HTTP** (`GET`, `POST`, `PUT`, `DELETE`) inyectados en los headers AMQP. Esto permite construir una API semántica donde un **Router Inteligente** despacha los mensajes a controladores Rails estándar.
 
 ---
 
@@ -20,7 +22,7 @@ Ejecuta el bundle:
 bundle install
 ```
 
-Corre el instalador para generar la configuración:
+Corre el instalador para generar la configuración inicial:
 
 ```bash
 rails g bug_bunny:install
@@ -30,11 +32,9 @@ rails g bug_bunny:install
 
 ## ⚙️ Configuración
 
-Configura tus credenciales y el Pool de conexiones en el inicializador.
+Configura tus credenciales y el Pool de conexiones en el inicializador `config/initializers/bug_bunny.rb`.
 
 ```ruby
-# config/initializers/bug_bunny.rb
-
 BugBunny.configure do |config|
   config.host     = ENV.fetch('RABBITMQ_HOST', 'localhost')
   config.username = ENV.fetch('RABBITMQ_USER', 'guest')
@@ -46,7 +46,9 @@ BugBunny.configure do |config|
   config.network_recovery_interval = 5
 end
 
-# Definimos el Pool Global (Vital para Puma/Sidekiq)
+# ⚠️ CRÍTICO: Definimos el Pool Global
+# Es vital usar ConnectionPool para garantizar la seguridad en entornos
+# multi-hilo como Puma o Sidekiq.
 BUG_BUNNY_POOL = ConnectionPool.new(size: ENV.fetch('RAILS_MAX_THREADS', 5).to_i, timeout: 5) do
   BugBunny.create_connection
 end
@@ -59,7 +61,7 @@ BugBunny::Resource.connection_pool = BUG_BUNNY_POOL
 
 ## 🚀 Modo Resource (ORM / Active Record)
 
-Define modelos que actúan como proxis de recursos remotos. BugBunny separa la **Lógica de Transporte** (RabbitMQ) de la **Lógica de Aplicación** (Controladores).
+Define modelos que actúan como proxies de recursos remotos. BugBunny separa la **Lógica de Transporte** (RabbitMQ) de la **Lógica de Aplicación** (Controladores).
 
 ### Definición del Modelo
 
@@ -82,39 +84,53 @@ end
 
 ### Consumiendo el Servicio (CRUD RESTful)
 
-BugBunny traduce las llamadas de Ruby a peticiones HTTP simuladas sobre AMQP.
+BugBunny traduce automáticamente las llamadas de Ruby a peticiones HTTP simuladas.
 
 ```ruby
 # --- READ COLLECTION (Index) ---
 # Envia: GET users?active=true
+# Routing Key: "users"
 users = RemoteUser.where(active: true)
 
 # --- READ MEMBER (Show) ---
 # Envia: GET users/123
+# Routing Key: "users"
 user = RemoteUser.find(123)
 puts user.email 
 
 # --- CREATE ---
 # Envia: POST users
+# Routing Key: "users"
 # Body: { "email": "test@test.com", "role": "admin" }
 user = RemoteUser.create(email: "test@test.com", role: "admin")
 
 # --- UPDATE ---
 # Envia: PUT users/123
-# Body: { "email": "edit@test.com" }
+# Routing Key: "users"
 user.update(email: "edit@test.com") 
 # Dirty Tracking: Solo se envían los campos modificados.
 
 # --- DESTROY ---
 # Envia: DELETE users/123
+# Routing Key: "users"
 user.destroy
 ```
+
+### Estrategias de Routing
+
+Tienes 3 formas de controlar la `routing_key` hacia donde se envían los mensajes:
+
+| Nivel | Método | Descripción | Ejemplo Config |
+| :--- | :--- | :--- | :--- |
+| **1. Dinámico** | `resource_name` | (Por defecto) Usa el nombre del recurso. | `self.resource_name = 'users'` -> Key `users` |
+| **2. Estático** | `routing_key` | Fuerza TODO a una sola cola. | `self.routing_key = 'cola_manager'` |
+| **3. Temporal** | `.with(...)` | Override solo para esa petición. | `User.with(routing_key: 'urgent').create` |
 
 ---
 
 ## 🔌 Modo Publisher (Cliente Manual)
 
-Si no necesitas mapear un recurso o quieres enviar mensajes crudos, utiliza `BugBunny::Client`. Ahora soporta semántica REST.
+Si no necesitas mapear un recurso o quieres enviar mensajes crudos, utiliza `BugBunny::Client`. Soporta semántica REST pasando el argumento `method:`.
 
 ### 1. Instanciar el Cliente
 
@@ -125,49 +141,54 @@ client = BugBunny::Client.new(pool: BUG_BUNNY_POOL) do |conn|
 end
 ```
 
-### 2. Métodos RESTful (Síncronos RPC)
+### 2. Request (RPC Síncrono)
 
-Estos métodos envían el mensaje, bloquean el hilo y esperan la respuesta JSON.
+Envía el mensaje, **bloquea el hilo** y espera la respuesta JSON. Ideal para obtener datos.
 
 ```ruby
-# GET
-response = client.get('users/123')
+# GET (Leer)
+response = client.request('users/123', method: :get)
+puts response['body']
 
-# POST
-response = client.post('users', body: { name: 'Gaby' })
+# POST (Crear / Ejecutar)
+response = client.request('math/calc', method: :post, body: { a: 10, b: 20 })
 
-# PUT
-response = client.put('users/123', body: { active: true })
+# PUT (Actualizar)
+client.request('users/123', method: :put, body: { active: true })
 
-# DELETE
-client.delete('users/123')
+# DELETE (Borrar)
+client.request('users/123', method: :delete)
 ```
 
-### 3. Publicación Asíncrona (Fire-and-Forget)
+### 3. Publish (Asíncrono / Fire-and-Forget)
 
-Usa `publish` para enviar sin esperar respuesta. Por defecto usa POST, pero puedes especificar el método.
+Envía el mensaje y retorna inmediatamente. No espera respuesta. Por defecto usa `method: :post` si no se especifica.
 
 ```ruby
-# Envía un evento asíncrono
-client.publish('logs', method: :post, body: { level: 'error' })
+# Enviar log o evento
+client.publish('logs/error', method: :post, body: { msg: 'Disk full' })
 ```
 
 ### 4. Configuración Avanzada (Bloques)
 
-Puedes usar un bloque para configurar opciones de bajo nivel de AMQP (prioridad, expiración, headers).
+Puedes usar un bloque para configurar opciones de bajo nivel de AMQP (prioridad, expiración, headers, app_id).
 
 ```ruby
-client.post('jobs/process') do |req|
+client.publish('jobs/process') do |req|
+  req.method = :post
   req.body = { image_id: 99 }
-  req.priority = 9         # Alta prioridad
-  req.expiration = '5000'  # TTL 5 segundos
+  
+  # Metadatos AMQP
+  req.priority = 9         # Alta prioridad (0-9)
+  req.expiration = '5000'  # TTL 5 segundos (ms)
   req.app_id = 'web-frontend'
+  req.headers['X-Trace-Id'] = 'abc-123'
 end
 ```
 
 ### 5. Referencia de Opciones
 
-Estas opciones pueden pasarse como argumentos (`client.post(..., key: val)`) o dentro del bloque (`req.key = val`).
+Estas opciones pueden pasarse como argumentos (`client.request(key: val)`) o dentro del bloque (`req.key = val`).
 
 | Opción / Atributo | Tipo | Descripción | Default |
 | :--- | :--- | :--- | :--- |
@@ -189,7 +210,7 @@ BugBunny incluye un **Router Inteligente** que funciona igual que el `config/rou
 
 ### 1. Definir Controladores
 
-Crea tus controladores en `app/rabbit/controllers/`.
+Crea tus controladores en `app/rabbit/controllers/`. Heredan de `BugBunny::Controller`.
 
 ```ruby
 # app/rabbit/controllers/users_controller.rb
@@ -213,6 +234,7 @@ class UsersController < BugBunny::Controller
     if user.save
       render status: 201, json: user
     else
+      # Estos errores se propagan como BugBunny::UnprocessableEntity
       render status: 422, json: { errors: user.errors }
     end
   end
@@ -233,7 +255,7 @@ end
 
 El Router despacha automáticamente según esta tabla:
 
-| Verbo | URL Pattern | Controlador | Acción |
+| Header `x-http-method` | Header `type` (URL) | Controlador | Acción |
 | :--- | :--- | :--- | :--- |
 | `GET` | `users` | `UsersController` | `index` |
 | `GET` | `users/12` | `UsersController` | `show` |
@@ -258,7 +280,7 @@ BugBunny desacopla el transporte de la lógica usando headers AMQP estándar.
 | :--- | :--- | :--- |
 | **Recurso** | `POST /users` | Header `type`: `users` + Header `x-http-method`: `POST` |
 | **Parametros** | Query String / Body | Header `type` (Query) + Body (Payload) |
-| **Destino** | DNS / IP | Routing Key (`users`) |
+| **Destino** | DNS / IP | Routing Key (ej: `users`) |
 | **Status** | HTTP Code (200, 404) | JSON Response `status` |
 
 ---
