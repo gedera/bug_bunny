@@ -4,79 +4,71 @@ module BugBunny
   # Encapsula toda la información necesaria para realizar una petición o publicación.
   #
   # Actúa como el objeto "Environment" en la arquitectura de middlewares.
-  # Contiene el cuerpo del mensaje, la configuración de enrutamiento y todos los
-  # metadatos estándar del protocolo AMQP 0.9.1.
+  # Contiene el cuerpo del mensaje, la configuración de enrutamiento, el VERBO HTTP
+  # y todos los metadatos estándar del protocolo AMQP 0.9.1.
   class Request
     # === DATOS (Payload) ===
 
-    # @return [Object] El cuerpo del mensaje (Hash, Array o String) antes de ser serializado.
+    # @return [Object] El cuerpo del mensaje (Hash, Array o String).
     attr_accessor :body
 
-    # @return [Hash] Cabeceras personalizadas (Headers AMQP) para pasar metadatos extra.
+    # @return [Hash] Cabeceras personalizadas (Headers AMQP).
     attr_accessor :headers
 
-    # === ENRUTAMIENTO ===
+    # === ENRUTAMIENTO REST ===
 
-    # @return [String] La "ruta" lógica del mensaje (ej: 'users/create'). Se usa por defecto como routing key y type.
-    attr_accessor :action
+    # @return [String] La ruta lógica del recurso (ej: 'users', 'users/123').
+    attr_accessor :path
 
-    # @return [String] El nombre del Exchange destino donde se publicará el mensaje.
+    # @return [Symbol, String] El verbo HTTP (GET, POST, PUT, DELETE).
+    attr_accessor :method
+
+    # === INFRAESTRUCTURA AMQP ===
+
+    # @return [String] El nombre del Exchange destino.
     attr_accessor :exchange
 
-    # @return [String] El tipo de exchange ('direct', 'topic', 'fanout', 'headers'). Default: 'direct'.
+    # @return [String] El tipo de exchange ('direct', 'topic', 'fanout').
     attr_accessor :exchange_type
 
-    # @return [String] La routing key específica para RabbitMQ. Si es nil, se usará {#action}.
+    # @return [String] La routing key específica. Si es nil, se usará {#path}.
     attr_accessor :routing_key
 
     # === CONFIGURACIÓN ===
 
-    # @return [Integer] Tiempo máximo en segundos que el cliente RPC esperará la respuesta.
+    # @return [Integer] Tiempo máximo en segundos para timeout RPC.
     attr_accessor :timeout
 
     # === METADATOS AMQP ===
 
-    # @return [String] Identificador de la aplicación origen (App ID).
+    # @return [String] App ID.
     attr_accessor :app_id
-
-    # @return [String] Tipo MIME del contenido (Default: 'application/json').
+    # @return [String] Content Type (Default: application/json).
     attr_accessor :content_type
-
-    # @return [String] Codificación del contenido (ej: 'gzip').
+    # @return [String] Content Encoding.
     attr_accessor :content_encoding
-
-    # @return [Integer] Prioridad del mensaje (0-9).
+    # @return [Integer] Prioridad (0-9).
     attr_accessor :priority
-
-    # @return [Integer] Timestamp UNIX del momento de creación.
+    # @return [Integer] Timestamp.
     attr_accessor :timestamp
-
-    # @return [String, Integer] Tiempo de vida (TTL) del mensaje en milisegundos.
+    # @return [String] Expiration (TTL).
     attr_accessor :expiration
-
-    # @return [Boolean] Si es `true`, el mensaje se guardará en disco (más lento, más seguro). Default: `false`.
+    # @return [Boolean] Persistent.
     attr_accessor :persistent
-
-    # @return [String] Cola específica donde se espera la respuesta (usado internamente para RPC).
+    # @return [String] Reply To queue.
     attr_accessor :reply_to
-
-    # @return [String] ID único para correlacionar petición y respuesta (RPC).
+    # @return [String] Correlation ID.
     attr_accessor :correlation_id
-
-    # @return [String] Sobrescribe el header 'type' de AMQP. Vital para el enrutamiento en el Consumer.
+    # @return [String] Type header override.
     attr_accessor :type
 
     # Inicializa un nuevo Request.
     #
-    # Establece valores por defecto sensatos:
-    # * Content-Type: application/json
-    # * Timestamp: Ahora
-    # * Persistent: false (Modo rápido/volátil por defecto)
-    # * Exchange Type: direct
-    #
-    # @param action [String] La acción o ruta lógica del mensaje (ej: 'users/update').
-    def initialize(action)
-      @action = action
+    # @param path [String] La ruta del recurso (ej: 'users/123').
+    # @param method [Symbol] El verbo HTTP (:get, :post, :put, :delete).
+    def initialize(path, method: :get)
+      @path = path
+      @method = method.to_s.upcase
       @headers = {}
       @content_type = 'application/json'
       @timestamp = Time.now.to_i
@@ -84,32 +76,30 @@ module BugBunny
       @exchange_type = 'direct'
     end
 
-    # Calcula la Routing Key final que se usará en RabbitMQ.
-    #
-    # Principio: "Convention over Configuration".
-    # Si no se define una `routing_key` manual, se asume que la `action` actúa como tal.
-    #
-    # @return [String] La routing key definitiva.
+    # Calcula la Routing Key final.
+    # Usa la ruta como key por defecto si no se especifica una manual.
+    # @return [String]
     def final_routing_key
-      routing_key || action
+      routing_key || path
     end
 
     # Calcula el valor para el header AMQP 'type'.
-    #
-    # Este valor es utilizado por {BugBunny::Consumer} para decidir qué Controlador ejecutar.
-    # Si no se define manualmente, usa la `action`.
-    #
-    # @return [String] El tipo de mensaje definitivo.
+    # En esta arquitectura REST, el 'type' es la URL del recurso (el path).
+    # @return [String]
     def final_type
-      type || action
+      type || path
     end
 
-    # Genera el Hash de opciones limpio para la gema Bunny.
+    # Genera el Hash de opciones para Bunny.
     #
-    # Elimina las claves con valor `nil` (`compact`) para reducir el tamaño del paquete de red.
+    # INYECTA el verbo HTTP en los headers bajo la clave 'x-http-method'.
+    # Esto permite al Consumer enrutar correctamente a la acción del controlador.
     #
-    # @return [Hash] Opciones listas para pasar a `exchange.publish`.
+    # @return [Hash] Opciones para exchange.publish.
     def amqp_options
+      # Fusionamos el método HTTP en los headers
+      final_headers = headers.merge('x-http-method' => method)
+
       {
         type: final_type,
         app_id: app_id,
@@ -119,7 +109,7 @@ module BugBunny
         timestamp: timestamp,
         expiration: expiration,
         persistent: persistent,
-        headers: headers,
+        headers: final_headers,
         reply_to: reply_to,
         correlation_id: correlation_id
       }.compact

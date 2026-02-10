@@ -6,15 +6,13 @@ require 'uri'
 require 'cgi'
 
 module BugBunny
-  # Consumidor de mensajes y Router RPC.
+  # Consumidor de mensajes y Router RPC estilo REST.
   #
-  # Esta clase escucha en una cola RabbitMQ, parsea el header `type` como si fuera una URL,
-  # extrae el controlador, acción, ID y query params, y despacha la ejecución al controlador correspondiente.
+  # Parsea el header `type` (URL) y el header `x-http-method` (Verbo)
+  # para despachar al controlador y acción correctos siguiendo convenciones Rails.
   class Consumer
     attr_reader :session
 
-    # Método factory para instanciar y suscribir.
-    # @see #subscribe
     def self.subscribe(connection:, **args)
       new(connection).subscribe(**args)
     end
@@ -23,13 +21,6 @@ module BugBunny
       @session = BugBunny::Session.new(connection)
     end
 
-    # Inicia la suscripción a la cola.
-    #
-    # @param queue_name [String] Cola a escuchar.
-    # @param exchange_name [String] Exchange para binding.
-    # @param routing_key [String] Routing key.
-    # @param exchange_type [String] Tipo de exchange.
-    # @param block [Boolean] Bloquear el hilo principal (loop).
     def subscribe(queue_name:, exchange_name:, routing_key:, exchange_type: 'direct', queue_opts: {}, block: true)
       x = session.exchange(name: exchange_name, type: exchange_type)
       q = session.queue(queue_name, queue_opts)
@@ -49,12 +40,6 @@ module BugBunny
 
     private
 
-    # Procesa el mensaje entrante.
-    #
-    # 1. Parsea la "URL" del header `type`.
-    # 2. Instancia el controlador dinámicamente.
-    # 3. Ejecuta la acción.
-    # 4. Envía respuesta RPC si `reply_to` está presente.
     def process_message(delivery_info, properties, body)
       if properties.type.nil? || properties.type.empty?
         BugBunny.configuration.logger.error("[Consumer] Missing 'type'. Rejected.")
@@ -62,21 +47,24 @@ module BugBunny
         return
       end
 
-      # Parseo robusto de la URL (Path + Query Params)
-      route_info = parse_route(properties.type)
+      # 1. Obtenemos el Verbo HTTP del header (Default: GET)
+      http_method = properties.headers ? (properties.headers['x-http-method'] || 'GET') : 'GET'
+
+      # 2. Despachamos la ruta (Router Inteligente)
+      route_info = router_dispatch(http_method, properties.type)
 
       headers = {
         type: properties.type,
+        http_method: http_method,
         controller: route_info[:controller],
         action: route_info[:action],
-        id: route_info[:id],            # ID extraído del path (ej: /users/show/12)
-        query_params: route_info[:params], # Hash de query params (ej: ?active=true)
+        id: route_info[:id],
+        query_params: route_info[:params],
         content_type: properties.content_type,
         correlation_id: properties.correlation_id,
         reply_to: properties.reply_to
       }
 
-      # Convention: "users" -> Rabbit::Controllers::UsersController (o namespace configurable)
       controller_class_name = "rabbit/controllers/#{route_info[:controller]}".camelize
       controller_class = controller_class_name.constantize
 
@@ -88,7 +76,7 @@ module BugBunny
 
       session.channel.ack(delivery_info.delivery_tag)
     rescue NameError => e
-      BugBunny.configuration.logger.error("[Consumer] Controller not found for route '#{properties.type}': #{e.message}")
+      BugBunny.configuration.logger.error("[Consumer] Controller/Action not found: #{e.message}")
       session.channel.reject(delivery_info.delivery_tag, false)
     rescue StandardError => e
       BugBunny.configuration.logger.error("[Consumer] Execution Error: #{e.message}")
@@ -96,6 +84,57 @@ module BugBunny
       if properties.reply_to
         reply({ error: e.message }, properties.reply_to, properties.correlation_id)
       end
+    end
+
+    # Simula el config/routes.rb de Rails.
+    # Infiere la acción basándose en Verbo + Estructura del Path.
+    #
+    # @param method [String] Verbo HTTP (GET, POST, etc).
+    # @param path [String] URL Path (users, users/1).
+    # @return [Hash] {controller, action, id, params}
+    def router_dispatch(method, path)
+      uri = URI.parse("http://dummy/#{path}")
+      segments = uri.path.split('/').reject(&:empty?) # ["users", "123"]
+      query_params = uri.query ? CGI.parse(uri.query).transform_values(&:first) : {}
+
+      controller_name = segments[0] # "users"
+      id = segments[1]              # "123" o nil (si hay 2 segmentos)
+
+      # Lógica de Inferencia Rails Standard
+      # GET users      -> index
+      # GET users/1    -> show
+      # POST users     -> create
+      # PUT users/1    -> update
+      # DELETE users/1 -> destroy
+      action = case method.to_s.upcase
+               when 'GET'
+                 id ? 'show' : 'index'
+               when 'POST'
+                 'create'
+               when 'PUT', 'PATCH'
+                 'update'
+               when 'DELETE'
+                 'destroy'
+               else
+                 id || 'index' # Fallback
+               end
+
+      # Soporte para Member Actions Custom (ej: POST users/1/activate)
+      # Segmentos: [users, 1, activate]
+      if segments.size >= 3
+         id = segments[1]
+         action = segments[2]
+      end
+
+      # Inyectar ID en params para acceso unificado
+      query_params['id'] = id if id
+
+      {
+        controller: controller_name,
+        action: action,
+        id: id,
+        params: query_params
+      }
     end
 
     def reply(payload, reply_to, correlation_id)
@@ -113,39 +152,6 @@ module BugBunny
       rescue StandardError
         session.close
       end.execute
-    end
-
-    # Analiza el string `type` como una URL.
-    #
-    # Soporta:
-    # * `users/index?active=true` -> {controller: users, action: index, params: {active: true}}
-    # * `users/show/12`           -> {controller: users, action: show, id: 12}
-    # * `users/update/12`         -> {controller: users, action: update, id: 12}
-    #
-    # @param route_string [String] El valor del header type.
-    # @return [Hash] Keys: :controller, :action, :id, :params.
-    def parse_route(route_string)
-      # Anteponemos un host dummy para usar URI estándar con paths relativos
-      uri = URI.parse("http://dummy/#{route_string}")
-      # 1. Query Params (?foo=bar)
-      query_params = uri.query ? CGI.parse(uri.query).transform_values(&:first) : {}
-
-      # 2. Path Segments (/users/show/12)
-      segments = uri.path.split('/').reject(&:empty?)
-
-      controller = segments[0] # "users"
-      action = segments[1]     # "index", "show", "update"
-      id = segments[2]         # "12" (opcional)
-
-      # Inyectamos el ID en los params si existe en la ruta para facilitar acceso unificado
-      query_params['id'] = id if id
-
-      {
-        controller: controller,
-        action: action || 'index',
-        id: id,
-        params: query_params
-      }
     end
   end
 end
