@@ -1,5 +1,26 @@
 # Changelog
 
+## [3.0.2] - 2026-02-12
+
+### 🚀 Features
+* **Automatic Parameter Wrapping:** `BugBunny::Resource` now automatically wraps the payload inside a root key derived from the model name (e.g., `Manager::Service` -> `{ service: { ... } }`). This mimics Rails form behavior and enables the use of `params.require(:service)` in controllers.
+    * Added `self.param_key = '...'` to `BugBunny::Resource` to allow custom root keys.
+* **Declarative Error Handling:** Added Rails-like `rescue_from` DSL to `BugBunny::Controller`. You can now register exception handlers at the class level without overriding methods manually.
+    ```ruby
+    rescue_from ActiveRecord::RecordNotFound do |e|
+      render status: :not_found, json: { error: e.message }
+    end
+    ```
+
+### 🐛 Bug Fixes
+* **RPC Timeouts on Crash:** Fixed a critical issue where the Client would hang until timeout (`BugBunny::RequestTimeout`) if the Consumer crashed or the route was not found.
+    * The Consumer now catches `NameError` (Route not found) and returns a **501 Not Implemented**.
+    * The Consumer catches unhandled `StandardError` (App crash) and returns a **500 Internal Server Error**.
+    * Ensures a reply is ALWAYS sent to the caller, preventing blocking processes.
+
+### 🛠 Improvements
+* **Controller:** Refactored `BugBunny::Controller` to include a default safety net that catches unhandled errors and logs them properly before returning a 500 status.
+
 ## [3.0.1] - 2026-02-10
 
 ### 🚀 Features: RESTful Architecture
