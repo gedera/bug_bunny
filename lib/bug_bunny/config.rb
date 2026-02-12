@@ -26,6 +26,10 @@ module BugBunny
     # @return [Logger] Instancia del logger para depuración (default: Logger a STDOUT).
     attr_accessor :logger
 
+    # @return [Logger] Logger específico para el driver Bunny (Conexión, Heartbeats, Frames).
+    # Se recomienda nivel WARN para evitar ruido.
+    attr_accessor :bunny_logger
+
     # @return [Boolean] Si `true`, Bunny intentará reconectar automáticamente ante fallos de red (default: true).
     attr_accessor :automatically_recover
 
@@ -58,7 +62,13 @@ module BugBunny
 
     # Inicializa la configuración con valores por defecto seguros.
     def initialize
+      # Logger de la Aplicación (BugBunny) -> INFO (Ves tus requests)
       @logger = Logger.new(STDOUT)
+      @logger.level = Logger::INFO
+
+      # Logger del Driver (Bunny) -> WARN (Oculta el ruido de "handle_frame")
+      @bunny_logger = Logger.new(STDOUT)
+      @bunny_logger.level = Logger::WARN
       @automatically_recover = true
       @network_recovery_interval = 5
       @connection_timeout = 10
