@@ -9,15 +9,21 @@ module BugBunny
   # Esta clase transforma operaciones CRUD estándar en peticiones RPC utilizando
   # verbos HTTP semánticos (GET, POST, PUT, DELETE) transportados sobre headers AMQP.
   #
-  # @example
+  # También gestiona la serialización automática de parámetros ("wrapping") para
+  # compatibilidad con Strong Parameters de Rails.
+  #
+  # @example Definición de un recurso
   #   class User < BugBunny::Resource
   #     self.exchange = 'app.topic'
   #     self.resource_name = 'users'
+  #     # Opcional: Personalizar la clave raíz del JSON
+  #     self.param_key = 'user_data' 
   #   end
   #
-  #   User.create(name: 'Gaby') # Envía POST 'users'
-  #   u = User.find(1)          # Envía GET 'users/1'
-  #   u.destroy                 # Envía DELETE 'users/1'
+  # @example Uso con contexto temporal
+  #   # La instancia 'user' recordará que debe usar la routing_key 'urgent'
+  #   user = User.with(routing_key: 'urgent').new(name: 'Gaby')
+  #   user.save # Enviará a la cola 'urgent' aunque estemos fuera del bloque .with
   class Resource
     include ActiveModel::API
     include ActiveModel::Dirty
@@ -26,17 +32,39 @@ module BugBunny
 
     define_model_callbacks :save, :create, :update, :destroy
 
+    # @return [HashWithIndifferentAccess] Contenedor de los atributos remotos (JSON crudo).
     attr_reader :remote_attributes
+    
+    # @return [Boolean] Indica si el objeto ha sido guardado en el servicio remoto.
     attr_accessor :persisted
 
-    class << self
-      attr_writer :connection_pool, :exchange, :exchange_type, :resource_name, :routing_key
+    # @return [String, nil] Routing Key capturada en el momento de la instanciación.
+    attr_accessor :routing_key
+    
+    # @return [String, nil] Exchange capturado en el momento de la instanciación.
+    attr_accessor :exchange
+    
+    # @return [String, nil] Tipo de Exchange capturado en el momento de la instanciación.
+    attr_accessor :exchange_type
 
-      # Resuelve la configuración buscando en la jerarquía de clases.
+    class << self
+      # Configuración heredable
+      attr_writer :connection_pool, :exchange, :exchange_type, :resource_name, :routing_key, :param_key
+
+      # Lee la configuración del Thread actual (usado por el scope .with).
+      # @api private
+      def thread_config(key)
+        Thread.current["bb_#{object_id}_#{key}"]
+      end
+
+      # Resuelve la configuración buscando en: 1. Thread (Scope), 2. Clase, 3. Herencia.
       # @api private
       def resolve_config(key, instance_var)
-        thread_key = "bb_#{object_id}_#{key}"
-        return Thread.current[thread_key] if Thread.current.key?(thread_key)
+        # 1. Prioridad: Contexto de hilo (.with)
+        val = thread_config(key)
+        return val if val
+
+        # 2. Prioridad: Jerarquía de clases
         target = self
         while target <= BugBunny::Resource
           value = target.instance_variable_get(instance_var)
@@ -46,15 +74,32 @@ module BugBunny
         nil
       end
 
+      # @return [ConnectionPool] El pool de conexiones asignado.
       def connection_pool; resolve_config(:pool, :@connection_pool); end
+      
+      # @return [String] El exchange configurado.
+      # @raise [ArgumentError] Si no se ha definido un exchange.
       def current_exchange; resolve_config(:exchange, :@exchange) || raise(ArgumentError, "Exchange not defined"); end
+      
+      # @return [String] El tipo de exchange (default: direct).
       def current_exchange_type; resolve_config(:exchange_type, :@exchange_type) || 'direct'; end
-
+      
+      # @return [String] El nombre del recurso (ej: 'users'). Se infiere del nombre de la clase si no existe.
       def resource_name
         resolve_config(:resource_name, :@resource_name) || name.demodulize.underscore.pluralize
       end
 
-      # Define middlewares para el cliente de este recurso.
+      # Define la clave raíz para envolver el payload JSON (Wrapping).
+      # 
+      # Por defecto utiliza `model_name.element`, lo que elimina los namespaces.
+      # Ej: `Manager::Service` -> `'service'`.
+      #
+      # @return [String] La clave paramétrica.
+      def param_key
+        resolve_config(:param_key, :@param_key) || model_name.element
+      end
+
+      # Define un middleware para el cliente HTTP/AMQP de este recurso.
       def client_middleware(&block)
         @client_middleware_stack ||= []
         @client_middleware_stack << block
@@ -72,6 +117,8 @@ module BugBunny
         stack
       end
 
+      # Instancia un cliente configurado con el pool y middlewares del recurso.
+      # @return [BugBunny::Client]
       def bug_bunny_client
         pool = connection_pool
         raise BugBunny::Error, "Connection pool missing for #{name}" unless pool
@@ -81,14 +128,22 @@ module BugBunny
         end
       end
 
+      # Ejecuta un bloque (o retorna un Proxy) con una configuración temporal.
+      # Útil para cambiar de exchange o routing_key para una operación específica.
+      #
+      # @example
+      #   User.with(routing_key: 'urgent').create(params)
       def with(exchange: nil, routing_key: nil, exchange_type: nil, pool: nil)
         keys = { exchange: "bb_#{object_id}_exchange", exchange_type: "bb_#{object_id}_exchange_type", pool: "bb_#{object_id}_pool", routing_key: "bb_#{object_id}_routing_key" }
         old_values = {}
         keys.each { |k, v| old_values[k] = Thread.current[v] }
+        
+        # Seteamos valores temporales
         Thread.current[keys[:exchange]] = exchange if exchange
         Thread.current[keys[:exchange_type]] = exchange_type if exchange_type
         Thread.current[keys[:pool]] = pool if pool
         Thread.current[keys[:routing_key]] = routing_key if routing_key
+
         if block_given?
           begin; yield; ensure; keys.each { |k, v| Thread.current[v] = old_values[k] }; end
         else
@@ -96,36 +151,41 @@ module BugBunny
         end
       end
       
+      # Proxy para permitir encadenamiento: User.with(...).find(1)
       class ScopeProxy < BasicObject
         def initialize(target, keys, old_values); @target = target; @keys = keys; @old_values = old_values; end
         def method_missing(method, *args, &block); @target.public_send(method, *args, &block); ensure; @keys.each { |k, v| ::Thread.current[v] = @old_values[k] }; end
       end
 
       # Calcula la Routing Key.
-      # @note En REST, por defecto es el resource_name (Topic 'users'), pero puede ser forzada.
+      # @return [String]
       def calculate_routing_key(id = nil)
-        manual_rk = Thread.current["bb_#{object_id}_routing_key"]
+        # 1. Contexto .with
+        manual_rk = thread_config(:routing_key)
         return manual_rk if manual_rk
+
+        # 2. Configuración estática
         static_rk = resolve_config(:routing_key, :@routing_key)
         return static_rk if static_rk.present?
+
+        # 3. Default: Resource name
         resource_name
       end
 
-      # @!group Acciones CRUD RESTful
+      # @!group Acciones CRUD RESTful (Clase)
 
-      # GET resource?query
-      #
-      # @param filters [Hash] Parámetros de consulta (Query params).
+      # Busca recursos que coincidan con los filtros.
+      # Envía: GET resource?query
       def where(filters = {})
         rk = calculate_routing_key
         path = resource_name
         path += "?#{URI.encode_www_form(filters)}" if filters.present?
 
-        # REST: GET collection
         response = bug_bunny_client.request(path, method: :get, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk)
 
         return [] unless response['body'].is_a?(Array)
         response['body'].map do |attrs|
+          # Al instanciar aquí, se captura el contexto si estamos dentro de un .with
           inst = new(attrs)
           inst.persisted = true
           inst.send(:clear_changes_information)
@@ -135,14 +195,12 @@ module BugBunny
 
       def all; where({}); end
 
-      # GET resource/id
-      #
-      # @param id [String, Integer] ID del recurso.
+      # Busca un recurso por ID.
+      # Envía: GET resource/id
       def find(id)
         rk = calculate_routing_key(id)
         path = "#{resource_name}/#{id}"
 
-        # REST: GET member
         response = bug_bunny_client.request(path, method: :get, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk)
 
         return nil if response.nil? || response['status'] == 404
@@ -156,6 +214,7 @@ module BugBunny
         instance
       end
 
+      # Crea un nuevo recurso.
       def create(payload)
         instance = new(payload)
         instance.save
@@ -165,17 +224,44 @@ module BugBunny
 
     # @!group Instancia
 
-    def current_exchange; self.class.current_exchange; end
-    def current_exchange_type; self.class.current_exchange_type; end
-    def calculate_routing_key(id=nil); self.class.calculate_routing_key(id); end
-    def bug_bunny_client; self.class.bug_bunny_client; end
-
+    # Inicializa una nueva instancia del recurso.
+    #
+    # **IMPORTANTE:** Captura la configuración del contexto actual (`.with`)
+    # y la guarda en la instancia. Esto permite que objetos creados dentro de un bloque `with`
+    # mantengan esa configuración (routing_key, exchange) durante todo su ciclo de vida,
+    # incluso si `save` se llama fuera del bloque.
+    #
+    # @param attributes [Hash] Atributos iniciales.
     def initialize(attributes = {})
       @remote_attributes = {}.with_indifferent_access
       @persisted = false
+      
+      # === CAPTURA DE CONTEXTO ===
+      @routing_key = self.class.thread_config(:routing_key)
+      @exchange = self.class.thread_config(:exchange)
+      @exchange_type = self.class.thread_config(:exchange_type)
+      
       assign_attributes(attributes)
       super()
     end
+
+    # Prioridad Routing Key: 1. Instancia (Capturada), 2. Clase
+    def calculate_routing_key(id=nil)
+      return @routing_key if @routing_key
+      self.class.calculate_routing_key(id)
+    end
+
+    # Prioridad Exchange: 1. Instancia (Capturada), 2. Clase
+    def current_exchange
+      @exchange || self.class.current_exchange
+    end
+
+    # Prioridad Exchange Type: 1. Instancia (Capturada), 2. Clase
+    def current_exchange_type
+      @exchange_type || self.class.current_exchange_type
+    end
+
+    def bug_bunny_client; self.class.bug_bunny_client; end
 
     def persisted?; !!@persisted; end
 
@@ -189,12 +275,13 @@ module BugBunny
       save
     end
 
+    # Retorna solo los atributos que han cambiado.
     def changes_to_send
       return changes.transform_values(&:last) unless changes.empty?
       @remote_attributes.except('id', 'ID', 'Id', '_id')
     end
 
-    # Magic Methods para atributos dinámicos
+    # Métodos mágicos para atributos.
     def method_missing(method_name, *args, &block)
       attribute_name = method_name.to_s
       if attribute_name.end_with?('=')
@@ -225,7 +312,13 @@ module BugBunny
 
     # @!group Persistencia RESTful
 
-    # Guarda el registro (POST si es nuevo, PUT si existe).
+    # Guarda el registro.
+    # Envía POST si es nuevo, PUT si ya existe.
+    #
+    # **AUTOMÁTICO:** Envuelve los parámetros en la clave del modelo (`param_key`).
+    # Ej: Manager::Service -> "service". Esto facilita `params.require(:service)`.
+    #
+    # @return [Boolean] true si se guardó correctamente.
     def save
       return false unless valid?
 
@@ -233,15 +326,22 @@ module BugBunny
         is_new = !persisted?
         rk = calculate_routing_key(id)
         
-        # Mapeo a verbos HTTP usando client.request(method: ...)
+        # 1. Obtenemos el payload plano (atributos modificados)
+        flat_payload = changes_to_send
+        
+        # 2. Wrappeamos automáticamente en la clave del modelo
+        key = self.class.param_key
+        wrapped_payload = { key => flat_payload }
+
+        # Mapeo a verbos HTTP
         if is_new
           # REST: POST resource (Create)
           path = self.class.resource_name
-          response = bug_bunny_client.request(path, method: :post, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk, body: changes_to_send)
+          response = bug_bunny_client.request(path, method: :post, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk, body: wrapped_payload)
         else
           # REST: PUT resource/id (Update)
           path = "#{self.class.resource_name}/#{id}"
-          response = bug_bunny_client.request(path, method: :put, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk, body: changes_to_send)
+          response = bug_bunny_client.request(path, method: :put, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk, body: wrapped_payload)
         end
 
         handle_save_response(response)
@@ -251,12 +351,12 @@ module BugBunny
       false
     end
 
-    # Elimina el registro (DELETE).
+    # Elimina el registro.
+    # Envía DELETE resource/id.
     def destroy
       return false unless persisted?
 
       run_callbacks(:destroy) do
-        # REST: DELETE resource/id
         path = "#{self.class.resource_name}/#{id}"
         rk = calculate_routing_key(id)
 

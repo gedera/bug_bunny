@@ -95,7 +95,7 @@ module BugBunny
       username:                  options[:username]                  || default.username,
       password:                  options[:password]                  || default.password,
       vhost:                     options[:vhost]                     || default.vhost,
-      logger:                    options[:logger]                    || default.logger,
+      logger:                    options[:logger]                    || default.bunny_logger,
       automatically_recover:     options[:automatically_recover]     || default.automatically_recover,
       network_recovery_interval: options[:network_recovery_interval] || default.network_recovery_interval,
       connection_timeout:        options[:connection_timeout]        || default.connection_timeout,

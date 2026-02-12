@@ -37,7 +37,14 @@ module BugBunny
       payload = serialize_message(request.body)
       opts = request.amqp_options
 
-      BugBunny.configuration.logger.info("[BugBunny] Publishing to #{request.exchange}/#{request.final_routing_key}")
+      # LOG ESTRUCTURADO Y LEGIBLE
+      # Muestra claramente: Verbo, Recurso, Exchange (y su tipo) y la Routing Key usada.
+      verb = request.method.to_s.upcase
+      target = request.path
+      ex_info = "'#{request.exchange}' (Type: #{request.exchange_type})"
+      rk = request.final_routing_key
+
+      BugBunny.configuration.logger.info("[BugBunny] [#{verb}] '/#{target}' | Exchange: #{ex_info} | Routing Key: '#{rk}'")
 
       x.publish(payload, opts.merge(routing_key: request.final_routing_key))
     end
@@ -76,7 +83,8 @@ module BugBunny
         response_payload = future.value(wait_timeout)
 
         if response_payload.nil?
-          raise BugBunny::RequestTimeout, "Timeout waiting for RPC: #{request.action}"
+          # CORRECCIÓN: Usamos request.path y request.method en lugar de request.action
+          raise BugBunny::RequestTimeout, "Timeout waiting for RPC: #{request.path} [#{request.method}]"
         end
 
         parse_response(response_payload)

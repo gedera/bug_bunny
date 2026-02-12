@@ -2,9 +2,7 @@
 
 **BugBunny** es un framework RPC para Ruby on Rails sobre **RabbitMQ**.
 
-Su filosofía es **"Active Record over AMQP"**. Abstrae la complejidad de colas y exchanges transformando patrones de mensajería en una arquitectura **RESTful simulada**.
-
-A diferencia de otros clientes de RabbitMQ, BugBunny viaja con **Verbos HTTP** (`GET`, `POST`, `PUT`, `DELETE`) inyectados en los headers AMQP. Esto permite construir una API semántica donde un **Router Inteligente** despacha los mensajes a controladores Rails estándar.
+Su filosofía es **"RESTful over AMQP"**. A diferencia de otros clientes de mensajería, BugBunny transforma patrones de colas en una arquitectura de recursos semántica. Los mensajes viajan con un **Verbo HTTP** (`GET`, `POST`, `PUT`, `DELETE`) y una **URL**, y son enrutados automáticamente a controladores Rails estándar.
 
 ---
 
@@ -22,7 +20,7 @@ Ejecuta el bundle:
 bundle install
 ```
 
-Corre el instalador para generar la configuración inicial:
+Genera los archivos de configuración iniciales:
 
 ```bash
 rails g bug_bunny:install
@@ -32,28 +30,45 @@ rails g bug_bunny:install
 
 ## ⚙️ Configuración
 
-Configura tus credenciales y el Pool de conexiones en el inicializador `config/initializers/bug_bunny.rb`.
+Configura tus credenciales y opciones en `config/initializers/bug_bunny.rb`.
+
+### Opciones Disponibles
 
 ```ruby
 BugBunny.configure do |config|
+  # --- Conexión ---
   config.host     = ENV.fetch('RABBITMQ_HOST', 'localhost')
   config.username = ENV.fetch('RABBITMQ_USER', 'guest')
   config.password = ENV.fetch('RABBITMQ_PASS', 'guest')
   config.vhost    = ENV.fetch('RABBITMQ_VHOST', '/')
 
-  # Timeouts y Recuperación
-  config.rpc_timeout = 10       # Segundos a esperar respuesta síncrona
-  config.network_recovery_interval = 5
-end
+  # --- Timeouts & Recuperación ---
+  config.rpc_timeout = 10               # Segundos máx para esperar respuesta síncrona
+  config.network_recovery_interval = 5  # Segundos antes de reintentar conexión
 
-# ⚠️ CRÍTICO: Definimos el Pool Global
-# Es vital usar ConnectionPool para garantizar la seguridad en entornos
-# multi-hilo como Puma o Sidekiq.
+  # --- Logging (Nuevo en v3.0.1) ---
+  # BugBunny Logger: Muestra tus requests (INFO recomendado)
+  config.logger = Logger.new(STDOUT)
+  config.logger.level = Logger::INFO
+
+  # Driver Logger (Bunny): Silencia el ruido de bajo nivel (WARN recomendado)
+  config.bunny_logger = Logger.new(STDOUT)
+  config.bunny_logger.level = Logger::WARN
+end
+```
+
+### Configuración del Pool (Crítico)
+
+Para entornos concurrentes como **Puma** o **Sidekiq**, debes definir un `ConnectionPool` global.
+
+```ruby
+# config/initializers/bug_bunny.rb
+
 BUG_BUNNY_POOL = ConnectionPool.new(size: ENV.fetch('RAILS_MAX_THREADS', 5).to_i, timeout: 5) do
   BugBunny.create_connection
 end
 
-# Inyectamos el pool por defecto a los recursos
+# Inyecta el pool a los recursos para que lo usen automáticamente
 BugBunny::Resource.connection_pool = BUG_BUNNY_POOL
 ```
 
@@ -61,208 +76,198 @@ BugBunny::Resource.connection_pool = BUG_BUNNY_POOL
 
 ## 🚀 Modo Resource (ORM / Active Record)
 
-Define modelos que actúan como proxies de recursos remotos. BugBunny separa la **Lógica de Transporte** (RabbitMQ) de la **Lógica de Aplicación** (Controladores).
+Define modelos que actúan como proxies de recursos remotos. BugBunny se encarga de serializar, enviar el verbo correcto y deserializar la respuesta.
 
 ### Definición del Modelo
 
 ```ruby
-class RemoteUser < BugBunny::Resource
+# app/models/remote_node.rb
+class RemoteNode < BugBunny::Resource
   # 1. Configuración de Transporte
-  self.exchange = 'app.topic'
-  self.exchange_type = 'topic'
+  self.exchange = 'cluster_manager'
+  self.exchange_type = 'direct'
   
-  # 2. Configuración Lógica (Routing)
-  # Define el nombre del recurso. Se usa para:
-  # - Routing Key automática: 'users' (Topic)
-  # - URL Base: 'users'
-  self.resource_name = 'users'
+  # 2. Configuración Lógica
+  # Define la URL base y la routing key por defecto.
+  self.resource_name = 'nodes' 
 
-  # Nota: BugBunny es Schema-less. No necesitas definir atributos.
-  # Soporta acceso dinámico: user.Name, user.email, etc.
+  # Nota: Es "Schema-less". No defines atributos, se leen dinámicamente del JSON.
 end
 ```
 
-### Consumiendo el Servicio (CRUD RESTful)
+### CRUD RESTful (Ejemplos)
 
-BugBunny traduce automáticamente las llamadas de Ruby a peticiones HTTP simuladas.
+Las operaciones de Active Record se traducen automáticamente a verbos HTTP sobre AMQP.
 
+#### 1. Leer (GET)
 ```ruby
-# --- READ COLLECTION (Index) ---
-# Envia: GET users?active=true
-# Routing Key: "users"
-users = RemoteUser.where(active: true)
+# GET nodes
+# Routing Key: 'nodes'
+nodes = RemoteNode.all
 
-# --- READ MEMBER (Show) ---
-# Envia: GET users/123
-# Routing Key: "users"
-user = RemoteUser.find(123)
-puts user.email 
+# GET nodes?role=worker
+workers = RemoteNode.where(role: 'worker')
 
-# --- CREATE ---
-# Envia: POST users
-# Routing Key: "users"
-# Body: { "email": "test@test.com", "role": "admin" }
-user = RemoteUser.create(email: "test@test.com", role: "admin")
+# GET nodes/123
+# Routing Key: 'nodes' (o lo que defina el modelo)
+node = RemoteNode.find('123')
 
-# --- UPDATE ---
-# Envia: PUT users/123
-# Routing Key: "users"
-user.update(email: "edit@test.com") 
-# Dirty Tracking: Solo se envían los campos modificados.
-
-# --- DESTROY ---
-# Envia: DELETE users/123
-# Routing Key: "users"
-user.destroy
+# Acceso a datos (Schema-less)
+puts node.hostname            # Accessor dinámico (si existe en el JSON)
+puts node.Description['IP']   # Acceso directo al Hash crudo
 ```
 
-### Estrategias de Routing
+#### 2. Crear (POST)
+```ruby
+# POST nodes
+# Body: { hostname: 'server-1', ip: '10.0.0.1' }
+node = RemoteNode.create(hostname: 'server-1', ip: '10.0.0.1')
+puts node.persisted? # => true
+```
 
-Tienes 3 formas de controlar la `routing_key` hacia donde se envían los mensajes:
+#### 3. Actualizar (PUT)
+```ruby
+# PUT nodes/123
+node = RemoteNode.find('123')
+node.update(ip: '10.0.0.2') # Solo envía los campos modificados
+```
 
-| Nivel | Método | Descripción | Ejemplo Config |
-| :--- | :--- | :--- | :--- |
-| **1. Dinámico** | `resource_name` | (Por defecto) Usa el nombre del recurso. | `self.resource_name = 'users'` -> Key `users` |
-| **2. Estático** | `routing_key` | Fuerza TODO a una sola cola. | `self.routing_key = 'cola_manager'` |
-| **3. Temporal** | `.with(...)` | Override solo para esa petición. | `User.with(routing_key: 'urgent').create` |
+#### 4. Eliminar (DELETE)
+```ruby
+# DELETE nodes/123
+node.destroy
+```
+
+### Contexto Dinámico (`.with`)
+
+Puedes cambiar la configuración (Exchange, Routing Key) para una operación específica sin afectar al modelo global.
+
+**Caso de Uso:** Guardar un objeto en una cola específica.
+
+```ruby
+# La instancia 'service' nace sabiendo que pertenece a la routing_key 'urgent'
+service = RemoteService.with(routing_key: 'urgent').new(name: 'nginx')
+
+# ... pasa el tiempo o cambia el scope ...
+
+# Al guardar, BugBunny recuerda el contexto y envía a 'urgent'
+service.save 
+# Log: [POST] Target: 'services' | Routing Key: 'urgent'
+```
 
 ---
 
 ## 🔌 Modo Publisher (Cliente Manual)
 
-Si no necesitas mapear un recurso o quieres enviar mensajes crudos, utiliza `BugBunny::Client`. Soporta semántica REST pasando el argumento `method:`.
+Si necesitas enviar mensajes crudos o invocar acciones que no encajan en un modelo CRUD, usa `BugBunny::Client`.
 
-### 1. Instanciar el Cliente
+### Instanciación
 
 ```ruby
 client = BugBunny::Client.new(pool: BUG_BUNNY_POOL) do |conn|
-  # Puedes inyectar middlewares aquí
   conn.use BugBunny::Middleware::JsonResponse
 end
 ```
 
-### 2. Request (RPC Síncrono)
+### Métodos Principales
 
-Envía el mensaje, **bloquea el hilo** y espera la respuesta JSON. Ideal para obtener datos.
+Ambos métodos aceptan el argumento `method:` (`:get`, `:post`, `:put`, `:delete`).
+
+#### A. Request (Síncrono / RPC)
+Envía el mensaje y **espera** la respuesta. Lanza `BugBunny::RequestTimeout` si tarda demasiado.
 
 ```ruby
-# GET (Leer)
-response = client.request('users/123', method: :get)
-puts response['body']
+# GET simple
+response = client.request('nodes/123', method: :get)
 
-# POST (Crear / Ejecutar)
-response = client.request('math/calc', method: :post, body: { a: 10, b: 20 })
+# POST con body y headers custom
+response = client.request('tasks/execute', 
+  method: :post, 
+  body: { script: 'backup.sh' },
+  headers: { 'X-Auth' => 'secret' },
+  timeout: 20 # Esperar hasta 20s
+)
 
-# PUT (Actualizar)
-client.request('users/123', method: :put, body: { active: true })
-
-# DELETE (Borrar)
-client.request('users/123', method: :delete)
+puts response['body'] # => { "status": "ok" }
 ```
 
-### 3. Publish (Asíncrono / Fire-and-Forget)
-
-Envía el mensaje y retorna inmediatamente. No espera respuesta. Por defecto usa `method: :post` si no se especifica.
+#### B. Publish (Asíncrono / Fire-and-Forget)
+Envía y retorna inmediatamente. No espera confirmación.
 
 ```ruby
-# Enviar log o evento
+# Enviar un evento
 client.publish('logs/error', method: :post, body: { msg: 'Disk full' })
 ```
 
-### 4. Configuración Avanzada (Bloques)
+### Configuración Avanzada (Bloques)
 
-Puedes usar un bloque para configurar opciones de bajo nivel de AMQP (prioridad, expiración, headers, app_id).
+Usa un bloque para acceso total a las opciones de AMQP (`expiration`, `priority`, `app_id`).
 
 ```ruby
-client.publish('jobs/process') do |req|
+client.publish('jobs/encode') do |req|
   req.method = :post
-  req.body = { image_id: 99 }
+  req.body = { video_id: 99 }
   
-  # Metadatos AMQP
-  req.priority = 9         # Alta prioridad (0-9)
-  req.expiration = '5000'  # TTL 5 segundos (ms)
-  req.app_id = 'web-frontend'
-  req.headers['X-Trace-Id'] = 'abc-123'
+  # Opciones AMQP 0.9.1
+  req.priority = 9         # Alta prioridad
+  req.expiration = '5000'  # TTL (ms)
+  req.app_id = 'video-service'
+  req.persistent = true    # Persistir en disco
 end
 ```
 
-### 5. Referencia de Opciones
-
-Estas opciones pueden pasarse como argumentos (`client.request(key: val)`) o dentro del bloque (`req.key = val`).
-
-| Opción / Atributo | Tipo | Descripción | Default |
-| :--- | :--- | :--- | :--- |
-| `body` | `Hash/String` | El contenido del mensaje. | `nil` |
-| `method` | `Symbol` | Verbo HTTP (`:get`, `:post`, `:put`, `:delete`). | `:get` (en request) |
-| `exchange` | `String` | Nombre del Exchange destino. | `''` (Default Ex) |
-| `routing_key` | `String` | Clave de ruteo. Si falta, usa el `path`. | `path` |
-| `headers` | `Hash` | Headers personalizados. | `{}` |
-| `timeout` | `Integer` | (Solo RPC) Segundos máx de espera. | Config global |
-| `app_id` | `String` | ID de la aplicación origen. | `nil` |
-| `priority` | `Integer` | Prioridad del mensaje (0-9). | `0` |
-| `expiration` | `String` | TTL del mensaje en ms. | `nil` |
-
 ---
 
-## 📡 Modo Servidor (El Worker)
+## 📡 Modo Servidor (Worker & Router)
 
-BugBunny incluye un **Router Inteligente** que funciona igual que el `config/routes.rb` de Rails. Infiere la acción basándose en el **Verbo HTTP** y la estructura de la **URL**.
+BugBunny incluye un **Router Inteligente** que despacha mensajes a controladores basándose en el Verbo y el Path, imitando a Rails.
 
-### 1. Definir Controladores
+### 1. Definir el Controlador
 
-Crea tus controladores en `app/rabbit/controllers/`. Heredan de `BugBunny::Controller`.
+Crea tus controladores en `app/rabbit/controllers/`.
 
 ```ruby
-# app/rabbit/controllers/users_controller.rb
-class UsersController < BugBunny::Controller
+# app/rabbit/controllers/nodes_controller.rb
+class NodesController < BugBunny::Controller
 
-  # GET users
+  # GET nodes
   def index
-    users = User.where(active: params[:active])
-    render status: 200, json: users
+    # params incluye query params y body mezclados
+    nodes = Node.where(role: params[:role])
+    render status: 200, json: nodes
   end
 
-  # GET users/123
+  # GET nodes/123
   def show
-    user = User.find(params[:id])
-    render status: 200, json: user
+    # params[:id] se extrae automágicamente de la URL
+    node = Node.find(params[:id])
+    render status: 200, json: node
   end
 
-  # POST users
+  # POST nodes
   def create
-    user = User.new(params)
-    if user.save
-      render status: 201, json: user
+    node = Node.new(params)
+    if node.save
+      render status: 201, json: node
     else
-      # Estos errores se propagan como BugBunny::UnprocessableEntity
-      render status: 422, json: { errors: user.errors }
+      render status: 422, json: { errors: node.errors }
     end
-  end
-  
-  # PUT users/123
-  def update
-    # ...
-  end
-
-  # DELETE users/123
-  def destroy
-    # ...
   end
 end
 ```
 
 ### 2. Tabla de Ruteo (Convención)
 
-El Router despacha automáticamente según esta tabla:
+El Router infiere la acción automáticamente:
 
-| Header `x-http-method` | Header `type` (URL) | Controlador | Acción |
+| Verbo | URL Pattern | Controlador | Acción |
 | :--- | :--- | :--- | :--- |
-| `GET` | `users` | `UsersController` | `index` |
-| `GET` | `users/12` | `UsersController` | `show` |
-| `POST` | `users` | `UsersController` | `create` |
-| `PUT` | `users/12` | `UsersController` | `update` |
-| `DELETE` | `users/12` | `UsersController` | `destroy` |
-| `POST` | `users/12/promote` | `UsersController` | `promote` (Custom) |
+| `GET` | `nodes` | `NodesController` | `index` |
+| `GET` | `nodes/12` | `NodesController` | `show` |
+| `POST` | `nodes` | `NodesController` | `create` |
+| `PUT` | `nodes/12` | `NodesController` | `update` |
+| `DELETE` | `nodes/12` | `NodesController` | `destroy` |
+| `POST` | `nodes/12/restart` | `NodesController` | `restart` (Custom) |
 
 ### 3. Ejecutar el Worker
 
@@ -274,39 +279,19 @@ bundle exec rake bug_bunny:work
 
 ## 🏗 Arquitectura REST-over-AMQP
 
-BugBunny desacopla el transporte de la lógica usando headers AMQP estándar.
+BugBunny desacopla el transporte de la lógica usando headers estándar.
 
-| Concepto | REST (HTTP) | BugBunny (AMQP) |
-| :--- | :--- | :--- |
-| **Recurso** | `POST /users` | Header `type`: `users` + Header `x-http-method`: `POST` |
-| **Parametros** | Query String / Body | Header `type` (Query) + Body (Payload) |
-| **Destino** | DNS / IP | Routing Key (ej: `users`) |
-| **Status** | HTTP Code (200, 404) | JSON Response `status` |
+1.  **Transporte:** El mensaje viaja por RabbitMQ usando `exchange` y `routing_key`.
+2.  **Semántica:** El mensaje lleva headers `type` (URL) y `x-http-method` (Verbo).
+3.  **Ruteo:** El consumidor lee la semántica y ejecuta el controlador correspondiente.
 
----
+### Logs Estructurados
 
-## 🛠 Middlewares
+BugBunny 3.0.1 introduce logs detallados para facilitar el debugging:
 
-BugBunny usa una pila de middlewares para procesar peticiones y respuestas, permitiendo logging, manejo de errores y transformación de datos.
-
-```ruby
-# Configuración global en el Resource
-BugBunny::Resource.client_middleware do |conn|
-  # 1. Lanza excepciones Ruby para errores 4xx/5xx
-  conn.use BugBunny::Middleware::RaiseError
-
-  # 2. Parsea JSON a HashWithIndifferentAccess
-  conn.use BugBunny::Middleware::JsonResponse
-end
+```text
+[BugBunny] [POST] Target: 'services' | Exchange: 'cluster' (Type: direct) | Routing Key: 'node-1'
 ```
-
-### Excepciones Soportadas
-
-* `BugBunny::BadRequest` (400)
-* `BugBunny::NotFound` (404)
-* `BugBunny::RequestTimeout` (408)
-* `BugBunny::UnprocessableEntity` (422) - Incluye errores de validación.
-* `BugBunny::InternalServerError` (500)
 
 ---
 
