@@ -4,41 +4,58 @@ require 'concurrent'
 require 'json'
 require 'uri'
 require 'cgi'
+require 'rack/utils' # Necesario para parse_nested_query
 
 module BugBunny
-  # Consumidor de mensajes y Router RPC estilo REST.
+  # Consumidor de mensajes AMQP que actúa como un Router RESTful.
   #
-  # Esta clase se encarga de escuchar una cola específica, deserializar los mensajes,
-  # interpretar los headers REST (`x-http-method`, `type`) y despacharlos al
-  # controlador correspondiente.
+  # Esta clase es el corazón del procesamiento de mensajes en el lado del servidor/worker.
+  # Sus responsabilidades son:
+  # 1. Escuchar una cola específica.
+  # 2. Deserializar el mensaje y sus headers.
+  # 3. Enrutar el mensaje a un Controlador (`BugBunny::Controller`) basándose en el "path" y el verbo HTTP.
+  # 4. Gestionar el ciclo de respuesta RPC (Request-Response) para evitar timeouts en el cliente.
   #
-  # También gestiona el ciclo de vida de la respuesta RPC, asegurando que siempre
-  # se envíe una contestación (éxito o error) para evitar timeouts en el cliente.
+  # @example Suscripción manual
+  #   connection = BugBunny.create_connection
+  #   BugBunny::Consumer.subscribe(
+  #     connection: connection,
+  #     queue_name: 'my_app_queue',
+  #     exchange_name: 'my_exchange',
+  #     routing_key: 'users.#'
+  #   )
   class Consumer
-    # @return [BugBunny::Session] La sesión de RabbitMQ wrapper.
+    # @return [BugBunny::Session] La sesión wrapper de RabbitMQ que gestiona el canal.
     attr_reader :session
 
     # Método de conveniencia para instanciar y suscribir en un solo paso.
-    # @param connection [Bunny::Session] Conexión activa.
-    # @param args [Hash] Argumentos para {#subscribe}.
+    #
+    # @param connection [Bunny::Session] Una conexión TCP activa a RabbitMQ.
+    # @param args [Hash] Argumentos que se pasarán al método {#subscribe}.
+    # @return [BugBunny::Consumer] La instancia del consumidor creada.
     def self.subscribe(connection:, **args)
       new(connection).subscribe(**args)
     end
 
-    # Inicializa el consumidor.
+    # Inicializa un nuevo consumidor.
+    #
     # @param connection [Bunny::Session] Conexión nativa de Bunny.
     def initialize(connection)
       @session = BugBunny::Session.new(connection)
     end
 
-    # Inicia la suscripción a la cola y el procesamiento de mensajes.
+    # Inicia la suscripción a la cola y comienza el bucle de procesamiento.
+    #
+    # Declara el exchange y la cola (si no existen), realiza el "binding" y
+    # se queda escuchando mensajes entrantes.
     #
     # @param queue_name [String] Nombre de la cola a escuchar.
-    # @param exchange_name [String] Exchange al que se bindeará la cola.
-    # @param routing_key [String] Routing key para el binding.
-    # @param exchange_type [String] Tipo de exchange ('direct', 'topic', etc).
-    # @param queue_opts [Hash] Opciones de declaración de la cola (durable, auto_delete).
-    # @param block [Boolean] Si es true, bloquea el hilo principal (loop).
+    # @param exchange_name [String] Nombre del exchange al cual enlazar la cola.
+    # @param routing_key [String] Patrón de enrutamiento (ej: 'users.*').
+    # @param exchange_type [String] Tipo de exchange ('direct', 'topic', 'fanout').
+    # @param queue_opts [Hash] Opciones adicionales para la cola (durable, auto_delete).
+    # @param block [Boolean] Si es `true`, bloquea el hilo actual (loop infinito).
+    # @return [void]
     def subscribe(queue_name:, exchange_name:, routing_key:, exchange_type: 'direct', queue_opts: {}, block: true)
       x = session.exchange(name: exchange_name, type: exchange_type)
       q = session.queue(queue_name, queue_opts)
@@ -58,26 +75,25 @@ module BugBunny
 
     private
 
-    # Procesa un mensaje individual.
+    # Procesa un mensaje individual recibido de la cola.
     #
-    # 1. Parsea headers y body.
-    # 2. Enruta al controlador/acción.
-    # 3. Envía la respuesta RPC si es necesario.
-    # 4. Maneja excepciones y envía errores formateados al cliente.
+    # Realiza la orquestación completa: Parsing -> Routing -> Ejecución -> Respuesta.
     #
-    # @param delivery_info [Bunny::DeliveryInfo] Metadatos de entrega.
-    # @param properties [Bunny::MessageProperties] Headers y propiedades AMQP.
-    # @param body [String] Payload del mensaje.
+    # @param delivery_info [Bunny::DeliveryInfo] Metadatos de entrega (tag, redelivered, etc).
+    # @param properties [Bunny::MessageProperties] Headers y propiedades AMQP (reply_to, correlation_id).
+    # @param body [String] El payload crudo del mensaje.
+    # @return [void]
     def process_message(delivery_info, properties, body)
       if properties.type.nil? || properties.type.empty?
-        BugBunny.configuration.logger.error("[Consumer] Missing 'type'. Rejected.")
+        BugBunny.configuration.logger.error("[Consumer] Missing 'type' header. Message rejected.")
         session.channel.reject(delivery_info.delivery_tag, false)
         return
       end
 
+      # 1. Determinar Verbo HTTP (Default: GET)
       http_method = properties.headers ? (properties.headers['x-http-method'] || 'GET') : 'GET'
 
-      # Inferencia de rutas (Router)
+      # 2. Router: Inferencia de Controlador y Acción
       route_info = router_dispatch(http_method, properties.type)
 
       headers = {
@@ -92,55 +108,57 @@ module BugBunny
         reply_to: properties.reply_to
       }
 
-      # Instanciación dinámica del controlador
+      # 3. Instanciación Dinámica del Controlador
       # Ej: "users" -> Rabbit::Controllers::UsersController
       controller_class_name = "rabbit/controllers/#{route_info[:controller]}".camelize
       controller_class = controller_class_name.constantize
 
-      # Ejecución del pipeline del controlador
+      # 4. Ejecución del Pipeline (Filtros -> Acción)
       response_payload = controller_class.call(headers: headers, body: body)
 
-      # Respuesta RPC (Éxito)
+      # 5. Respuesta RPC (Si se solicita respuesta)
       if properties.reply_to
         reply(response_payload, properties.reply_to, properties.correlation_id)
       end
 
+      # 6. Acknowledge (Confirmación de procesado)
       session.channel.ack(delivery_info.delivery_tag)
 
     rescue NameError => e
-      # Caso: Controlador o Acción no existen (404/501)
+      # Error 501/404: El controlador o la acción no existen.
       BugBunny.configuration.logger.error("[Consumer] Routing Error: #{e.message}")
-
-      # FIX CRÍTICO: Responder con error para evitar Timeout en el cliente
-      if properties.reply_to
-        error_payload = { status: 501, body: { error: "Routing Error", detail: e.message } }
-        reply(error_payload, properties.reply_to, properties.correlation_id)
-      end
-
+      handle_fatal_error(properties, 501, "Routing Error", e.message)
       session.channel.reject(delivery_info.delivery_tag, false)
 
     rescue StandardError => e
-      # Caso: Crash interno de la aplicación (500)
+      # Error 500: Crash interno de la aplicación.
       BugBunny.configuration.logger.error("[Consumer] Execution Error: #{e.message}")
-
-      # FIX CRÍTICO: Responder con 500 para evitar Timeout
-      if properties.reply_to
-        error_payload = { status: 500, body: { error: "Internal Server Error", detail: e.message } }
-        reply(error_payload, properties.reply_to, properties.correlation_id)
-      end
-
+      handle_fatal_error(properties, 500, "Internal Server Error", e.message)
       session.channel.reject(delivery_info.delivery_tag, false)
     end
 
-    # Simula el Router de Rails.
-    # Convierte Verbo + Path en Controlador + Acción + ID.
+    # Interpreta la URL y el verbo para decidir qué controlador ejecutar.
     #
-    # @return [Hash] { controller, action, id, params }
+    # Utiliza `Rack::Utils.parse_nested_query` para soportar parámetros anidados
+    # como `q[service]=rabbit`.
+    #
+    # @param method [String] Verbo HTTP (GET, POST, etc).
+    # @param path [String] URL virtual del recurso (ej: 'users/1?active=true').
+    # @return [Hash] Estructura con keys {:controller, :action, :id, :params}.
     def router_dispatch(method, path)
+      # Usamos URI para separar path de query string
       uri = URI.parse("http://dummy/#{path}")
       segments = uri.path.split('/').reject(&:empty?)
-      query_params = uri.query ? CGI.parse(uri.query).transform_values(&:first) : {}
 
+      # --- FIX: Uso de Rack para soportar params anidados ---
+      query_params = uri.query ? Rack::Utils.parse_nested_query(uri.query) : {}
+
+      # Si estamos en Rails, convertimos a HashWithIndifferentAccess para comodidad
+      if defined?(ActiveSupport::HashWithIndifferentAccess)
+        query_params = query_params.with_indifferent_access
+      end
+
+      # Lógica de Ruteo Convencional
       controller_name = segments[0]
       id = segments[1]
 
@@ -152,18 +170,24 @@ module BugBunny
                else id || 'index'
                end
 
-      # Soporte para Custom Member Actions (POST users/1/promote)
+      # Soporte para rutas miembro custom (POST users/1/promote)
       if segments.size >= 3
          id = segments[1]
          action = segments[2]
       end
 
+      # Inyectamos el ID en los params si existe en la ruta
       query_params['id'] = id if id
 
       { controller: controller_name, action: action, id: id, params: query_params }
     end
 
-    # Envía la respuesta a la cola temporal del cliente (Direct Reply-to).
+    # Envía una respuesta al cliente RPC utilizando Direct Reply-to.
+    #
+    # @param payload [Hash] Cuerpo de la respuesta ({ status: ..., body: ... }).
+    # @param reply_to [String] Cola de respuesta (generalmente pseudo-cola amq.rabbitmq.reply-to).
+    # @param correlation_id [String] ID para correlacionar la respuesta con la petición original.
+    # @return [void]
     def reply(payload, reply_to, correlation_id)
       session.channel.default_exchange.publish(
         payload.to_json,
@@ -173,11 +197,29 @@ module BugBunny
       )
     end
 
-    # Tarea de fondo para asegurar que la cola sigue existiendo.
+    # Maneja errores fatales asegurando que el cliente reciba una respuesta.
+    # Evita que el cliente RPC se quede esperando hasta el timeout.
+    #
+    # @api private
+    def handle_fatal_error(properties, status, error_title, detail)
+      return unless properties.reply_to
+
+      error_payload = {
+        status: status,
+        body: { error: error_title, detail: detail }
+      }
+      reply(error_payload, properties.reply_to, properties.correlation_id)
+    end
+
+    # Tarea de fondo (Heartbeat lógico) para verificar la salud del canal.
+    # Si la cola desaparece o la conexión se cierra, fuerza una reconexión.
+    #
+    # @param q_name [String] Nombre de la cola a monitorear.
     def start_health_check(q_name)
-      Concurrent::TimerTask.new(execution_interval: 60) do
+      Concurrent::TimerTask.new(execution_interval: BugBunny.configuration.health_check_interval) do
         session.channel.queue_declare(q_name, passive: true)
       rescue StandardError
+        BugBunny.configuration.logger.warn("[Consumer] Queue check failed. Reconnecting session...")
         session.close
       end.execute
     end
