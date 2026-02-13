@@ -1,4 +1,10 @@
 # Changelog
+## [3.0.3] - 2026-02-13
+
+### 🐛 Bug Fixes
+* **Nested Query Serialization:** Fixed an issue where passing nested hashes to `Resource.where` (e.g., `where(q: { service: 'rabbit' })`) produced invalid URL strings (Ruby's `to_s` format) instead of standard HTTP query parameters.
+    * **Resource:** Now uses `Rack::Utils.build_nested_query` to generate correct URLs (e.g., `?q[service]=rabbit`).
+    * **Consumer:** Now uses `Rack::Utils.parse_nested_query` to correctly reconstruct nested hashes from the query string.
 
 ## [3.0.2] - 2026-02-12
 
