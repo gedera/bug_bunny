@@ -17,7 +17,7 @@ module BugBunny
   #     self.exchange = 'app.topic'
   #     self.resource_name = 'users'
   #     # Opcional: Personalizar la clave raíz del JSON
-  #     self.param_key = 'user_data' 
+  #     self.param_key = 'user_data'
   #   end
   #
   # @example Uso con contexto temporal
@@ -34,16 +34,16 @@ module BugBunny
 
     # @return [HashWithIndifferentAccess] Contenedor de los atributos remotos (JSON crudo).
     attr_reader :remote_attributes
-    
+
     # @return [Boolean] Indica si el objeto ha sido guardado en el servicio remoto.
     attr_accessor :persisted
 
     # @return [String, nil] Routing Key capturada en el momento de la instanciación.
     attr_accessor :routing_key
-    
+
     # @return [String, nil] Exchange capturado en el momento de la instanciación.
     attr_accessor :exchange
-    
+
     # @return [String, nil] Tipo de Exchange capturado en el momento de la instanciación.
     attr_accessor :exchange_type
 
@@ -76,21 +76,21 @@ module BugBunny
 
       # @return [ConnectionPool] El pool de conexiones asignado.
       def connection_pool; resolve_config(:pool, :@connection_pool); end
-      
+
       # @return [String] El exchange configurado.
       # @raise [ArgumentError] Si no se ha definido un exchange.
       def current_exchange; resolve_config(:exchange, :@exchange) || raise(ArgumentError, "Exchange not defined"); end
-      
+
       # @return [String] El tipo de exchange (default: direct).
       def current_exchange_type; resolve_config(:exchange_type, :@exchange_type) || 'direct'; end
-      
+
       # @return [String] El nombre del recurso (ej: 'users'). Se infiere del nombre de la clase si no existe.
       def resource_name
         resolve_config(:resource_name, :@resource_name) || name.demodulize.underscore.pluralize
       end
 
       # Define la clave raíz para envolver el payload JSON (Wrapping).
-      # 
+      #
       # Por defecto utiliza `model_name.element`, lo que elimina los namespaces.
       # Ej: `Manager::Service` -> `'service'`.
       #
@@ -122,7 +122,7 @@ module BugBunny
       def bug_bunny_client
         pool = connection_pool
         raise BugBunny::Error, "Connection pool missing for #{name}" unless pool
-        
+
         BugBunny::Client.new(pool: pool) do |conn|
           resolve_middleware_stack.each { |block| block.call(conn) }
         end
@@ -137,7 +137,7 @@ module BugBunny
         keys = { exchange: "bb_#{object_id}_exchange", exchange_type: "bb_#{object_id}_exchange_type", pool: "bb_#{object_id}_pool", routing_key: "bb_#{object_id}_routing_key" }
         old_values = {}
         keys.each { |k, v| old_values[k] = Thread.current[v] }
-        
+
         # Seteamos valores temporales
         Thread.current[keys[:exchange]] = exchange if exchange
         Thread.current[keys[:exchange_type]] = exchange_type if exchange_type
@@ -150,7 +150,7 @@ module BugBunny
           ScopeProxy.new(self, keys, old_values)
         end
       end
-      
+
       # Proxy para permitir encadenamiento: User.with(...).find(1)
       class ScopeProxy < BasicObject
         def initialize(target, keys, old_values); @target = target; @keys = keys; @old_values = old_values; end
@@ -179,13 +179,14 @@ module BugBunny
       def where(filters = {})
         rk = calculate_routing_key
         path = resource_name
-        path += "?#{URI.encode_www_form(filters)}" if filters.present?
+
+        # Usamos Rack para serializar anidamiento (q[service]=val)
+        path += "?#{Rack::Utils.build_nested_query(filters)}" if filters.present?
 
         response = bug_bunny_client.request(path, method: :get, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk)
 
         return [] unless response['body'].is_a?(Array)
         response['body'].map do |attrs|
-          # Al instanciar aquí, se captura el contexto si estamos dentro de un .with
           inst = new(attrs)
           inst.persisted = true
           inst.send(:clear_changes_information)
@@ -204,7 +205,7 @@ module BugBunny
         response = bug_bunny_client.request(path, method: :get, exchange: current_exchange, exchange_type: current_exchange_type, routing_key: rk)
 
         return nil if response.nil? || response['status'] == 404
-        
+
         attributes = response['body']
         return nil unless attributes.is_a?(Hash)
 
@@ -235,12 +236,12 @@ module BugBunny
     def initialize(attributes = {})
       @remote_attributes = {}.with_indifferent_access
       @persisted = false
-      
+
       # === CAPTURA DE CONTEXTO ===
       @routing_key = self.class.thread_config(:routing_key)
       @exchange = self.class.thread_config(:exchange)
       @exchange_type = self.class.thread_config(:exchange_type)
-      
+
       assign_attributes(attributes)
       super()
     end
@@ -269,7 +270,7 @@ module BugBunny
       return if new_attributes.nil?
       new_attributes.each { |k, v| public_send("#{k}=", v) }
     end
-    
+
     def update(attributes)
       assign_attributes(attributes)
       save
@@ -325,10 +326,10 @@ module BugBunny
       run_callbacks(:save) do
         is_new = !persisted?
         rk = calculate_routing_key(id)
-        
+
         # 1. Obtenemos el payload plano (atributos modificados)
         flat_payload = changes_to_send
-        
+
         # 2. Wrappeamos automáticamente en la clave del modelo
         key = self.class.param_key
         wrapped_payload = { key => flat_payload }
