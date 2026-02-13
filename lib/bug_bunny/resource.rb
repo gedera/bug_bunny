@@ -2,6 +2,7 @@
 require 'active_model'
 require 'active_support/core_ext/string/inflections'
 require 'uri'
+require 'rack/utils'
 
 module BugBunny
   # Clase base para modelos remotos que implementan **Active Record over AMQP (RESTful)**.
