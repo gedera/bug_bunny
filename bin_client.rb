@@ -1,51 +1,46 @@
+# frozen_string_literal: true
+
 # bin_client.rb
-require_relative 'lib/bug_bunny'
-$stdout.sync = true # <--- Agrega esto
+require 'bundler/setup'
+require 'bug_bunny'
 
-# 1. Configuración
+# 1. Configurar
 BugBunny.configure do |config|
-  config.host = 'localhost'
-  config.username = 'wisproMQ'
-  config.password = 'wisproMQ'
-  config.vhost = 'sync.devel'
-  config.logger = Logger.new(STDOUT)
-  config.rpc_timeout = 5
+  config.logger = Logger.new($stdout)
+  config.logger.level = Logger::INFO
 end
 
-# 2. Pool
-POOL = ConnectionPool.new(size: 2, timeout: 5) do
-  BugBunny.create_connection
-end
+# 2. Crear Pool de Conexiones
+pool = BugBunny.create_connection_pool
 
-# 3. Cliente
-client = BugBunny.new(pool: POOL)
+# 3. Instanciar Cliente
+client = BugBunny::Client.new(pool: pool)
 
-# --- PRUEBA 1: Publish ---
-puts "\n[1] Enviando mensaje asíncrono (Publish)..."
-
-# AGREGADO: exchange_type: 'topic'
-client.publish('test/ping', exchange: 'test_exchange', exchange_type: 'topic', routing_key: 'test.ping') do |req|
-  req.body = { msg: 'Hola, soy invisible' }
-end
-
-puts "    -> Enviado."
-sleep 1
-
-# --- PRUEBA 2: RPC ---
-puts "\n[2] Enviando petición síncrona (Request)..."
+puts '🚀 Enviando Petición RPC...'
 
 begin
-  # AGREGADO: exchange_type: 'topic'
-  response = client.request('test/123/ping', exchange: 'test_exchange', exchange_type: 'topic', routing_key: 'test.ping') do |req|
-    req.body = { data: 'Importante' }
-    req.timeout = 3
-    req.headers['X-Source'] = 'Terminal'
+  # 4. Realizar Request Síncrono (RPC)
+  # GET users/123/ping
+  # Exchange: 'test_exchange' (Topic)
+  # Routing Key: 'test.ping'
+  #
+  # Nota: El bloque opcional permite configurar el objeto Request antes de enviarlo
+  response = client.request('test/123/ping', exchange: 'test_exchange',
+                                             exchange_type: 'topic', routing_key: 'test.ping') do |req|
+    req.headers['x-custom-token'] = 'secret-123'
+    puts '    -> Request configurado (Headers custom agregados).'
   end
 
-  puts "    -> ✅ RESPUESTA RECIBIDA:"
-  puts "       Status: #{response['status']}"
-  puts "       Body:   #{response['body']}"
+  puts '    -> Enviado.'
 
+  # 5. Procesar Respuesta
+  if response
+    puts '    -> ✅ RESPUESTA RECIBIDA:'
+    puts "       Status: #{response['status']}"
+    puts "       Body:   #{response['body']}"
+  end
 rescue BugBunny::RequestTimeout
-  puts "    -> ❌ Error: Timeout esperando respuesta."
+  puts '    -> ❌ Error: Timeout esperando respuesta.'
+rescue StandardError => e
+  puts "    -> ❌ Error: #{e.message}"
 end
