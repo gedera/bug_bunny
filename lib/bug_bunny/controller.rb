@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-# lib/bug_bunny/controller.rb
 require 'active_model'
 require 'rack'
 
@@ -61,14 +60,6 @@ module BugBunny
     # @param klasses [Class] Clases de excepción a capturar.
     # @param with [Symbol] Nombre del método manejador.
     # @param block [Proc] Bloque manejador.
-    #
-    # @example Con método
-    #   rescue_from User::NotAuthorized, with: :deny_access
-    #
-    # @example Con bloque
-    #   rescue_from ActiveRecord::RecordNotFound do |e|
-    #     render status: :not_found, json: { error: e.message }
-    #   end
     def self.rescue_from(*klasses, with: nil, &block)
       handler = with || block
       raise ArgumentError, "Need a handler. Supply 'with: :method' or a block." unless handler
@@ -101,7 +92,7 @@ module BugBunny
       action_name = headers[:action].to_sym
 
       # 1. Ejecutar Before Actions (si retorna false, hubo render/halt)
-      return rendered_response unless run_before_actions(action_name)
+      return rendered_response unless before_actions_successful?(action_name)
 
       # 2. Ejecutar Acción
       raise NameError, "Action '#{action_name}' not found in #{self.class.name}" unless respond_to?(action_name)
@@ -119,25 +110,30 @@ module BugBunny
     # Busca un manejador registrado para la excepción y lo ejecuta.
     # Si no hay ninguno, loguea y devuelve 500.
     def handle_exception(exception)
-      # Buscamos el primer handler compatible con la clase del error
-      handler_entry = self.class.rescue_handlers.find { |klass, _| exception.is_a?(klass) }
+      handler_entry = find_rescue_handler(exception)
 
       if handler_entry
-        _, handler = handler_entry
-
-        # Ejecutamos el handler en el contexto de la INSTANCIA
-        if handler.is_a?(Symbol)
-          send(handler, exception)
-        elsif handler.respond_to?(:call)
-          instance_exec(exception, &handler)
-        end
-
-        # Si el handler hizo render, retornamos esa respuesta
+        execute_handler(handler_entry, exception)
         return rendered_response if rendered_response
       end
 
-      # === FALLBACK POR DEFECTO ===
-      # Si el error no fue rescatado por el usuario, actuamos como red de seguridad.
+      handle_fatal_error(exception)
+    end
+
+    def find_rescue_handler(exception)
+      self.class.rescue_handlers.find { |klass, _| exception.is_a?(klass) }
+    end
+
+    def execute_handler(entry, exception)
+      _, handler = entry
+      if handler.is_a?(Symbol)
+        send(handler, exception)
+      elsif handler.respond_to?(:call)
+        instance_exec(exception, &handler)
+      end
+    end
+
+    def handle_fatal_error(exception)
       BugBunny.configuration.logger.error("Controller Error (#{exception.class}): #{exception.message}")
       BugBunny.configuration.logger.error(exception.backtrace.join("\n"))
 
@@ -145,7 +141,8 @@ module BugBunny
     end
 
     # Ejecuta la cadena de filtros before_action.
-    def run_before_actions(action_name)
+    # Retorna true si todos pasaron, false si alguno detuvo la ejecución.
+    def before_actions_successful?(action_name)
       chain = (self.class.before_actions[:_all_actions] || []) +
               (self.class.before_actions[action_name] || [])
 
@@ -170,22 +167,38 @@ module BugBunny
     # Prioridad: Body > ID Ruta > Query Params.
     def prepare_params(body)
       self.params = {}.with_indifferent_access
+      merge_header_params
+      merge_body_params(body)
+    end
 
+    def merge_header_params
       params.merge!(headers[:query_params]) if headers[:query_params].present?
       params[:id] = headers[:id] if headers[:id].present?
+    end
 
+    def merge_body_params(body)
       if body.is_a?(Hash)
         params.merge!(body)
-      elsif body.is_a?(String) && headers[:content_type].to_s.include?('json')
-        parsed = begin
-          JSON.parse(body)
-        rescue StandardError
-          nil
-        end
-        params.merge!(parsed) if parsed
+      elsif body.is_a?(String) && json_content_type?
+        merge_json_body(body)
       else
         self.raw_string = body
       end
+    end
+
+    def json_content_type?
+      headers[:content_type].to_s.include?('json')
+    end
+
+    def merge_json_body(body)
+      parsed = parse_json_safely(body)
+      params.merge!(parsed) if parsed
+    end
+
+    def parse_json_safely(json_string)
+      JSON.parse(json_string)
+    rescue StandardError
+      nil
     end
   end
 end
