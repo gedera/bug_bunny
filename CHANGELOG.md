@@ -1,4 +1,13 @@
 # Changelog
+## [3.0.4] - 2026-02-16
+
+### ♻️ Refactoring & Architecture
+* **Middleware Architecture Overhaul:** Refactored the internal middleware stack to follow the **Template Method** pattern (Faraday-style).
+    * **New Base Class:** Introduced `BugBunny::Middleware` to standardize the execution flow (`call`, `app.call`).
+    * **Lifecycle Hooks:** Middlewares can now simply implement `on_request(env)` and/or `on_complete(response)` methods, eliminating the need to manually manage the execution chain.
+    * **Core Middlewares:** Refactored `RaiseError` and `JsonResponse` to use this new pattern, resulting in cleaner and more maintainable code.
+    * This change is **fully backward compatible** and paves the way for future middlewares (Loggers, Tracing, Headers injection).
+
 ## [3.0.3] - 2026-02-13
 
 ### 🐛 Bug Fixes
