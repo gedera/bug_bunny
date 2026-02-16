@@ -1,73 +1,62 @@
 # lib/bug_bunny/middleware/json_response.rb
+# frozen_string_literal: true
+
 require 'json'
+require_relative '../middleware'
 
 module BugBunny
   module Middleware
     # Middleware encargado de parsear automáticamente el cuerpo de la respuesta.
     #
-    # Este middleware intercepta la respuesta proveniente del servicio remoto. Si el `body`
-    # es un String JSON válido, lo convierte a un Hash o Array de Ruby.
+    # Convierte strings JSON en Hashes de Ruby. Si está disponible ActiveSupport,
+    # aplica HashWithIndifferentAccess.
     #
-    # **Integración con Rails:**
-    # Si `ActiveSupport` está cargado en el entorno, convierte los Hashes resultantes
-    # a `HashWithIndifferentAccess`. Esto permite a los desarrolladores acceder a las claves
-    # usando símbolos o strings indistintamente (ej: `body[:id]` o `body['id']`),
-    # comportamiento estándar en Rails.
-    #
-    # @example Uso en la configuración del cliente
-    #   client = BugBunny::Client.new(pool: POOL) do |conn|
-    #     # Se recomienda ponerlo después de RaiseError para tener el body parseado en las excepciones
-    #     conn.use BugBunny::Middleware::RaiseError
-    #     conn.use BugBunny::Middleware::JsonResponse
-    #   end
-    class JsonResponse
-      # Inicializa el middleware.
+    # @see BugBunny::Middleware
+    class JsonResponse < BugBunny::Middleware
+      # Hook de ciclo de vida: Ejecutado después de recibir la respuesta.
       #
-      # @param app [Object] El siguiente middleware o el productor final en el stack.
-      def initialize(app)
-        @app = app
+      # Intercepta el body y lo reemplaza por su versión parseada.
+      #
+      # @param response [Hash] La respuesta cruda.
+      # @return [void]
+      def on_complete(response)
+        response['body'] = parse_body(response['body'])
       end
 
-      # Ejecuta el middleware.
-      #
-      # Invoca al siguiente eslabón (`@app.call`) y espera su retorno.
-      # Una vez recibida la respuesta, procesa el `body` antes de devolverla hacia arriba en la cadena.
-      #
-      # @param env [BugBunny::Request] El objeto request actual (el entorno).
-      # @return [Hash] La respuesta con el campo 'body' transformado (si era JSON).
-      def call(env)
-        response = @app.call(env)
-        # Parseamos el body DESPUÉS de recibir la respuesta (Post-processing)
-        response['body'] = parse_body(response['body'])
-        response
-      end
+      private
 
       # Intenta convertir el cuerpo de la respuesta a una estructura Ruby nativa.
       #
-      # @param body [String, Hash, Array, nil] El cuerpo original de la respuesta.
-      # @return [Object] El cuerpo parseado (Hash/Array) o el objeto original si falla el parseo.
-      # @api private
+      # @param body [String, Hash, Array, nil] El cuerpo original.
+      # @return [Object] El cuerpo parseado o el original si falla.
       def parse_body(body)
-        return nil if body.nil? || body.empty?
+        return nil if body.nil? || (body.respond_to?(:empty?) && body.empty?)
 
-        # Si ya es un objeto (ej: tests o mocks), lo dejamos pasar, si es String intentamos parsear.
-        parsed = body.is_a?(String) ? JSON.parse(body) : body
+        # Si ya es un objeto (ej: mocks), lo dejamos pasar; si es String, parseamos.
+        parsed = body.is_a?(String) ? safe_json_parse(body) : body
 
         # Rails Magic: Indifferent Access
-        # Si estamos en un entorno Rails, aplicamos la conversión para UX del desarrollador.
-        if defined?(ActiveSupport)
-          if parsed.is_a?(Array)
-            parsed.map! { |e| e.try(:with_indifferent_access) || e }
-          elsif parsed.is_a?(Hash)
-            parsed = parsed.with_indifferent_access
-          end
-        end
+        apply_indifferent_access(parsed)
+      end
 
-        parsed
+      # Parsea JSON de forma segura, retornando el original si falla.
+      def safe_json_parse(json_string)
+        JSON.parse(json_string)
       rescue JSON::ParserError
-        # Si el body no es un JSON válido (ej: texto plano o error del servidor),
-        # devolvemos el string original sin lanzar excepción.
-        body
+        json_string
+      end
+
+      # Aplica ActiveSupport::HashWithIndifferentAccess si es posible.
+      def apply_indifferent_access(data)
+        return data unless defined?(ActiveSupport)
+
+        if data.is_a?(Array)
+          data.map! { |e| e.try(:with_indifferent_access) || e }
+        elsif data.is_a?(Hash)
+          data.with_indifferent_access
+        else
+          data
+        end
       end
     end
   end
