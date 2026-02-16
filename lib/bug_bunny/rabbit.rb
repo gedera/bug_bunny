@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # lib/bug_bunny/rabbit.rb
 
 module BugBunny
@@ -49,7 +51,7 @@ module BugBunny
 
         @connection.close if @connection.open?
         @connection = nil
-        BugBunny.configuration.logger.info("[BugBunny] Global connection closed.")
+        BugBunny.configuration.logger.info('[BugBunny] Global connection closed.')
       end
 
       # Helper de conveniencia para instanciar y ejecutar un Consumidor (Worker).

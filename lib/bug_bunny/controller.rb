@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # lib/bug_bunny/controller.rb
 require 'active_model'
 require 'rack'
@@ -102,15 +104,12 @@ module BugBunny
       return rendered_response unless run_before_actions(action_name)
 
       # 2. Ejecutar Acción
-      if respond_to?(action_name)
-        public_send(action_name)
-      else
-        raise NameError, "Action '#{action_name}' not found in #{self.class.name}"
-      end
+      raise NameError, "Action '#{action_name}' not found in #{self.class.name}" unless respond_to?(action_name)
+
+      public_send(action_name)
 
       # 3. Respuesta por defecto (204 No Content) si la acción no llamó a render
       rendered_response || { status: 204, body: nil }
-
     rescue StandardError => e
       handle_exception(e)
     end
@@ -178,7 +177,11 @@ module BugBunny
       if body.is_a?(Hash)
         params.merge!(body)
       elsif body.is_a?(String) && headers[:content_type].to_s.include?('json')
-        parsed = JSON.parse(body) rescue nil
+        parsed = begin
+          JSON.parse(body)
+        rescue StandardError
+          nil
+        end
         params.merge!(parsed) if parsed
       else
         self.raw_string = body

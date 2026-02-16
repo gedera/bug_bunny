@@ -1,8 +1,10 @@
+# frozen_string_literal: true
+
 require_relative 'test_helper'
 
 class TestUser < BugBunny::Resource
   # Configuración del Pool
-  self.connection_pool = -> { nil || TEST_POOL }
+  self.connection_pool = -> { TEST_POOL }
 
   # Configuración del Exchange
   self.exchange = -> { ENV['IS_STAGING'] ? 'test_exchange' : 'test_exchange' }

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # lib/bug_bunny/session.rb
 
 module BugBunny
@@ -34,7 +36,7 @@ module BugBunny
     # @param connection [Bunny::Session] Una conexión abierta.
     # @raise [BugBunny::Error] Si la conexión es nil o está cerrada.
     def initialize(connection)
-      raise BugBunny::Error, "Connection is closed or nil" unless connection&.open?
+      raise BugBunny::Error, 'Connection is closed or nil' unless connection&.open?
 
       @connection = connection
       # Creamos canal nuevo para esta sesión (Thread-safe dentro del contexto del Pool)

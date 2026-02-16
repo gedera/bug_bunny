@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # lib/bug_bunny/request.rb
 
 module BugBunny
@@ -15,14 +17,7 @@ module BugBunny
   # @attr routing_key [String] La routing key específica. Si es nil, se usará {#path}.
   # @attr timeout [Integer] Tiempo máximo en segundos para timeout RPC.
   class Request
-    attr_accessor :body
-    attr_accessor :headers
-    attr_accessor :path
-    attr_accessor :method
-    attr_accessor :exchange
-    attr_accessor :exchange_type
-    attr_accessor :routing_key
-    attr_accessor :timeout
+    attr_accessor :body, :headers, :path, :method, :exchange, :exchange_type, :routing_key, :timeout
 
     # Metadatos AMQP Estándar
     attr_accessor :app_id, :content_type, :content_encoding, :priority,

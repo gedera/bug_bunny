@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # lib/bug_bunny/consumer.rb
 require 'active_support/core_ext/string/inflections'
 require 'concurrent'
@@ -117,23 +119,19 @@ module BugBunny
       response_payload = controller_class.call(headers: headers, body: body)
 
       # 5. Respuesta RPC (Si se solicita respuesta)
-      if properties.reply_to
-        reply(response_payload, properties.reply_to, properties.correlation_id)
-      end
+      reply(response_payload, properties.reply_to, properties.correlation_id) if properties.reply_to
 
       # 6. Acknowledge (Confirmación de procesado)
       session.channel.ack(delivery_info.delivery_tag)
-
     rescue NameError => e
       # Error 501/404: El controlador o la acción no existen.
       BugBunny.configuration.logger.error("[Consumer] Routing Error: #{e.message}")
-      handle_fatal_error(properties, 501, "Routing Error", e.message)
+      handle_fatal_error(properties, 501, 'Routing Error', e.message)
       session.channel.reject(delivery_info.delivery_tag, false)
-
     rescue StandardError => e
       # Error 500: Crash interno de la aplicación.
       BugBunny.configuration.logger.error("[Consumer] Execution Error: #{e.message}")
-      handle_fatal_error(properties, 500, "Internal Server Error", e.message)
+      handle_fatal_error(properties, 500, 'Internal Server Error', e.message)
       session.channel.reject(delivery_info.delivery_tag, false)
     end
 
@@ -154,9 +152,7 @@ module BugBunny
       query_params = uri.query ? Rack::Utils.parse_nested_query(uri.query) : {}
 
       # Si estamos en Rails, convertimos a HashWithIndifferentAccess para comodidad
-      if defined?(ActiveSupport::HashWithIndifferentAccess)
-        query_params = query_params.with_indifferent_access
-      end
+      query_params = query_params.with_indifferent_access if defined?(ActiveSupport::HashWithIndifferentAccess)
 
       # Lógica de Ruteo Convencional
       controller_name = segments[0]
@@ -172,8 +168,8 @@ module BugBunny
 
       # Soporte para rutas miembro custom (POST users/1/promote)
       if segments.size >= 3
-         id = segments[1]
-         action = segments[2]
+        id = segments[1]
+        action = segments[2]
       end
 
       # Inyectamos el ID en los params si existe en la ruta
@@ -219,7 +215,7 @@ module BugBunny
       Concurrent::TimerTask.new(execution_interval: BugBunny.configuration.health_check_interval) do
         session.channel.queue_declare(q_name, passive: true)
       rescue StandardError
-        BugBunny.configuration.logger.warn("[Consumer] Queue check failed. Reconnecting session...")
+        BugBunny.configuration.logger.warn('[Consumer] Queue check failed. Reconnecting session...')
         session.close
       end.execute
     end

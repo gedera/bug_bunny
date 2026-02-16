@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # lib/bug_bunny/middleware/stack.rb
 
 module BugBunny

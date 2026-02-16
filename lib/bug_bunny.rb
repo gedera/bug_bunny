@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'bunny'
 require 'logger'
 require 'connection_pool'
@@ -92,18 +94,18 @@ module BugBunny
     default = configuration
 
     bunny = Bunny.new(
-      host:                      options[:host]                      || default.host,
-      username:                  options[:username]                  || default.username,
-      password:                  options[:password]                  || default.password,
-      vhost:                     options[:vhost]                     || default.vhost,
-      logger:                    options[:logger]                    || default.bunny_logger,
-      automatically_recover:     options[:automatically_recover]     || default.automatically_recover,
+      host: options[:host] || default.host,
+      username: options[:username]                  || default.username,
+      password: options[:password]                  || default.password,
+      vhost: options[:vhost] || default.vhost,
+      logger: options[:logger] || default.bunny_logger,
+      automatically_recover: options[:automatically_recover] || default.automatically_recover,
       network_recovery_interval: options[:network_recovery_interval] || default.network_recovery_interval,
-      connection_timeout:        options[:connection_timeout]        || default.connection_timeout,
-      read_timeout:              options[:read_timeout]              || default.read_timeout,
-      write_timeout:             options[:write_timeout]             || default.write_timeout,
-      heartbeat:                 options[:heartbeat]                 || default.heartbeat,
-      continuation_timeout:      options[:continuation_timeout]      || default.continuation_timeout
+      connection_timeout: options[:connection_timeout] || default.connection_timeout,
+      read_timeout: options[:read_timeout] || default.read_timeout,
+      write_timeout: options[:write_timeout] || default.write_timeout,
+      heartbeat: options[:heartbeat] || default.heartbeat,
+      continuation_timeout: options[:continuation_timeout] || default.continuation_timeout
     )
 
     bunny.start

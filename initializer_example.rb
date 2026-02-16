@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # config/initializers/bug_bunny.rb
 
 # 1. Configuración Global de Conexión (Credenciales)

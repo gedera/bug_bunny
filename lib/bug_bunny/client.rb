@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # lib/bug_bunny/client.rb
 require_relative 'middleware/stack'
 
@@ -26,6 +28,7 @@ module BugBunny
     # @raise [ArgumentError] Si no se proporciona un `pool`.
     def initialize(pool:)
       raise ArgumentError, "BugBunny::Client requiere un 'pool:'" if pool.nil?
+
       @pool = pool
       @stack = BugBunny::Middleware::Stack.new
       yield(@stack) if block_given?

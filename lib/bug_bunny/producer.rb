@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'concurrent'
 require 'json'
 require 'securerandom'
@@ -108,7 +110,7 @@ module BugBunny
     def parse_response(payload)
       JSON.parse(payload)
     rescue JSON::ParserError
-      raise BugBunny::InternalServerError, "Invalid JSON response"
+      raise BugBunny::InternalServerError, 'Invalid JSON response'
     end
 
     # Inicia el consumidor de respuestas RPC de forma perezosa (Lazy Initialization).

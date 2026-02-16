@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # test_controller.rb
 require 'active_support/all'
 require 'rack'
@@ -12,15 +14,15 @@ module Rabbit
       def show
         puts " [API] 🔍 Buscando usuario ID: #{params[:id]}"
         if params[:id].to_i == 999
-           # Simulamos un 404
-           render status: 404, json: { error: "User not found" }
+          # Simulamos un 404
+          render status: 404, json: { error: 'User not found' }
         else
-           render status: 200, json: {
-             id: params[:id].to_i,
-             name: "Gabriel",
-             email: "gabriel@test.com",
-             persisted: true
-           }
+          render status: 200, json: {
+            id: params[:id].to_i,
+            name: 'Gabriel',
+            email: 'gabriel@test.com',
+            persisted: true
+          }
         end
       end
 
@@ -42,7 +44,7 @@ module Rabbit
 
       # Acción custom (RPC manual)
       def ping
-        render status: 200, json: { message: "Pong!" }
+        render status: 200, json: { message: 'Pong!' }
       end
     end
   end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # lib/bug_bunny/config.rb
 require 'logger'
 
@@ -63,11 +65,11 @@ module BugBunny
     # Inicializa la configuración con valores por defecto seguros.
     def initialize
       # Logger de la Aplicación (BugBunny) -> INFO (Ves tus requests)
-      @logger = Logger.new(STDOUT)
+      @logger = Logger.new($stdout)
       @logger.level = Logger::INFO
 
       # Logger del Driver (Bunny) -> WARN (Oculta el ruido de "handle_frame")
-      @bunny_logger = Logger.new(STDOUT)
+      @bunny_logger = Logger.new($stdout)
       @bunny_logger.level = Logger::WARN
       @automatically_recover = true
       @network_recovery_interval = 5

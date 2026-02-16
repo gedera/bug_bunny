@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # lib/bug_bunny/exception.rb
 require 'json'
 
