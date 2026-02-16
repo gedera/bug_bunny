@@ -37,31 +37,16 @@ module BugBunny
     def fire(request)
       x = @session.exchange(name: request.exchange, type: request.exchange_type)
       payload = serialize_message(request.body)
-      opts = request.amqp_options
 
-      # LOG ESTRUCTURADO Y LEGIBLE
-      # Muestra claramente: Verbo, Recurso, Exchange (y su tipo) y la Routing Key usada.
-      verb = request.method.to_s.upcase
-      target = request.path
-      ex_info = "'#{request.exchange}' (Type: #{request.exchange_type})"
-      rk = request.final_routing_key
+      log_request(request)
 
-      BugBunny.configuration.logger.info("[BugBunny] [#{verb}] '/#{target}' | Exchange: #{ex_info} | Routing Key: '#{rk}'")
-
-      x.publish(payload, opts.merge(routing_key: request.final_routing_key))
+      x.publish(payload, request.amqp_options.merge(routing_key: request.final_routing_key))
     end
 
     # Envía un mensaje y bloquea el hilo actual esperando una respuesta (RPC).
     #
     # Implementa el mecanismo "Direct Reply-to" de RabbitMQ (`amq.rabbitmq.reply-to`)
-    # para recibir la respuesta directamente sin necesidad de crear colas temporales
-    # por cada petición, lo cual mejora significativamente el rendimiento.
-    #
-    # El flujo es:
-    # 1. Asegura que hay un consumidor escuchando en `amq.rabbitmq.reply-to`.
-    # 2. Genera un `correlation_id` único.
-    # 3. Crea una promesa (`Concurrent::IVar`) y la registra.
-    # 4. Publica el mensaje y bloquea esperando que la promesa se resuelva.
+    # para recibir la respuesta directamente sin necesidad de crear colas temporales.
     #
     # @param request [BugBunny::Request] Objeto request configurado.
     # @return [Hash] El cuerpo de la respuesta parseado desde JSON.
@@ -69,44 +54,53 @@ module BugBunny
     # @raise [BugBunny::InternalServerError] Si la respuesta no es un JSON válido.
     def rpc(request)
       ensure_reply_listener!
+      prepare_rpc_request(request)
 
-      request.correlation_id ||= SecureRandom.uuid
-      request.reply_to = 'amq.rabbitmq.reply-to'
-      wait_timeout = request.timeout || BugBunny.configuration.rpc_timeout
-
-      # Creamos un futuro (IVar) que actuará como semáforo
       future = Concurrent::IVar.new
       @pending_requests[request.correlation_id] = future
 
       begin
         fire(request)
-
-        # Bloqueamos el hilo aquí hasta que llegue la respuesta o expire el timeout
-        response_payload = future.value(wait_timeout)
-
-        if response_payload.nil?
-          # CORRECCIÓN: Usamos request.path y request.method en lugar de request.action
-          raise BugBunny::RequestTimeout, "Timeout waiting for RPC: #{request.path} [#{request.method}]"
-        end
-
-        parse_response(response_payload)
+        wait_for_response(future, request)
       ensure
-        # Limpieza vital para evitar fugas de memoria en el mapa
         @pending_requests.delete(request.correlation_id)
       end
     end
 
     private
 
+    def prepare_rpc_request(request)
+      request.correlation_id ||= SecureRandom.uuid
+      request.reply_to = 'amq.rabbitmq.reply-to'
+    end
+
+    def wait_for_response(future, request)
+      timeout = request.timeout || BugBunny.configuration.rpc_timeout
+      response_payload = future.value(timeout)
+
+      if response_payload.nil?
+        raise BugBunny::RequestTimeout, "Timeout waiting for RPC: #{request.path} [#{request.method}]"
+      end
+
+      parse_response(response_payload)
+    end
+
+    def log_request(req)
+      verb = req.method.to_s.upcase
+      ex_info = "'#{req.exchange}' (Type: #{req.exchange_type})"
+      rk = req.final_routing_key
+
+      BugBunny.configuration.logger.info(
+        "[BugBunny] [#{verb}] '/#{req.path}' | Exchange: #{ex_info} | Routing Key: '#{rk}'"
+      )
+    end
+
     # Serializa el mensaje para su transporte.
-    # @param msg [Hash, String, Object] El mensaje a serializar.
-    # @return [String] Cadena JSON o string crudo.
     def serialize_message(msg)
       msg.is_a?(Hash) ? msg.to_json : msg.to_s
     end
 
     # Intenta parsear la respuesta recibida.
-    # @raise [BugBunny::InternalServerError] Si el payload no es JSON válido.
     def parse_response(payload)
       JSON.parse(payload)
     rescue JSON::ParserError
@@ -116,24 +110,24 @@ module BugBunny
     # Inicia el consumidor de respuestas RPC de forma perezosa (Lazy Initialization).
     #
     # Utiliza un patrón de "Double-Checked Locking" con Mutex para asegurar que
-    # solo se crea un listener por instancia de Producer, incluso en entornos multi-hilo.
-    #
-    # Escucha en la pseudo-cola `amq.rabbitmq.reply-to`. Cuando llega un mensaje,
-    # busca el `correlation_id` en el mapa de pendientes y completa el futuro (`IVar`),
-    # desbloqueando así al hilo que llamó a {#rpc}.
+    # solo se crea un listener por instancia de Producer.
     def ensure_reply_listener!
       return if @reply_listener_started
 
       @reply_listener_mutex.synchronize do
         return if @reply_listener_started
 
-        # Consumimos sin ack (auto-ack) porque reply-to no soporta acks manuales de forma estándar
-        @session.channel.basic_consume('amq.rabbitmq.reply-to', '', true, false, nil) do |_, props, body|
-          if (future = @pending_requests[props.correlation_id])
-            future.set(body)
-          end
-        end
+        start_reply_consumer
         @reply_listener_started = true
+      end
+    end
+
+    def start_reply_consumer
+      # Consumimos sin ack (auto-ack) porque reply-to no soporta acks manuales de forma estándar
+      @session.channel.basic_consume('amq.rabbitmq.reply-to', '', true, false, nil) do |_, props, body|
+        if (future = @pending_requests[props.correlation_id])
+          future.set(body)
+        end
       end
     end
   end
