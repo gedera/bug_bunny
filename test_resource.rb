@@ -1,21 +1,18 @@
 # frozen_string_literal: true
 
-require_relative 'test_helper'
+require_relative 'lib/bug_bunny'
 
+# Clase de prueba para simular un usuario Active Record.
 class TestUser < BugBunny::Resource
-  # Configuración del Pool
-  self.connection_pool = -> { TEST_POOL }
+  self.resource_name = 'test_user'
 
-  # Configuración del Exchange
-  self.exchange = -> { ENV['IS_STAGING'] ? 'test_exchange' : 'test_exchange' }
+  # Simplificado: ya no usamos el ternario redundante si ambos ramas devuelven lo mismo.
+  self.exchange = 'test_exchange'
+
   self.exchange_type = 'topic'
+  self.routing_key = 'test_user'
 
-  # ACTUALIZADO v3.0: Usamos resource_name
-  self.resource_name = 'test_users'
+  attr_accessor :name, :email
 
-  # ELIMINADO: attribute :id, :integer (Causa crash en v3)
-  # ELIMINADO: attribute :name, :string (Causa crash en v3)
-
-  # Las validaciones siguen funcionando igual
   validates :name, presence: true
 end

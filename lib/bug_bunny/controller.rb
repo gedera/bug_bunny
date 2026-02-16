@@ -2,21 +2,19 @@
 
 require 'active_model'
 require 'rack'
+require_relative 'controller/callbacks'
 
 module BugBunny
   # Clase base para Controladores de Mensajes.
-  #
-  # Provee una abstracción similar a ActionController para manejar peticiones RPC.
-  # Incluye soporte para `before_action`, manejo de excepciones declarativo (`rescue_from`)
-  # y normalización de parámetros.
   class Controller
     include ActiveModel::Model
     include ActiveModel::Attributes
+    include Callbacks
 
     # @return [Hash] Metadatos del mensaje (headers AMQP, routing info).
     attribute :headers
 
-    # @return [ActiveSupport::HashWithIndifferentAccess] Parámetros unificados (Body + Query + Route).
+    # @return [ActiveSupport::HashWithIndifferentAccess] Parámetros unificados.
     attribute :params
 
     # @return [String] Cuerpo crudo si el payload no es JSON.
@@ -25,68 +23,12 @@ module BugBunny
     # @return [Hash, nil] La respuesta renderizada { status, body }.
     attr_reader :rendered_response
 
-    # --- INFRAESTRUCTURA DE FILTROS (Before Actions) ---
-
-    # @api private
-    def self.before_actions
-      @before_actions ||= Hash.new { |h, k| h[k] = [] }
-    end
-
-    # Registra un callback que se ejecutará antes de las acciones.
-    #
-    # @param method_name [Symbol] Nombre del método a ejecutar.
-    # @param options [Hash] Opciones de filtro (:only).
-    # @example
-    #   before_action :set_user, only: [:show, :update]
-    def self.before_action(method_name, **options)
-      only = Array(options[:only]).map(&:to_sym)
-      target_actions = only.empty? ? [:_all_actions] : only
-
-      target_actions.each do |action|
-        before_actions[action] << method_name
-      end
-    end
-
-    # --- INFRAESTRUCTURA DE MANEJO DE ERRORES (Rescue From) ---
-
-    # @api private
-    def self.rescue_handlers
-      @rescue_handlers ||= []
-    end
-
-    # Registra un manejador para una o más excepciones.
-    # Los manejadores se evalúan en orden inverso (el último registrado tiene prioridad).
-    #
-    # @param klasses [Class] Clases de excepción a capturar.
-    # @param with [Symbol] Nombre del método manejador.
-    # @param block [Proc] Bloque manejador.
-    def self.rescue_from(*klasses, with: nil, &block)
-      handler = with || block
-      raise ArgumentError, "Need a handler. Supply 'with: :method' or a block." unless handler
-
-      klasses.each do |klass|
-        # Insertamos al principio para que las últimas definiciones tengan prioridad (LIFO)
-        rescue_handlers.unshift([klass, handler])
-      end
-    end
-
-    # --- PIPELINE DE EJECUCIÓN ---
-
     # Punto de entrada principal llamado por el Consumer.
-    # Instancia el controlador y procesa el mensaje.
-    #
-    # @param headers [Hash] Metadatos del mensaje.
-    # @param body [Hash, String] Payload deserializado.
-    # @return [Hash] La respuesta final { status, body }.
     def self.call(headers:, body: {})
       new(headers: headers).process(body)
     end
 
     # Ejecuta el ciclo de vida de la petición: Params -> Filtros -> Acción.
-    # Captura cualquier error y delega al sistema `rescue_from`.
-    #
-    # @param body [Hash, String] Payload.
-    # @return [Hash] Respuesta RPC.
     def process(body)
       prepare_params(body)
       action_name = headers[:action].to_sym
@@ -107,64 +49,13 @@ module BugBunny
 
     private
 
-    # Busca un manejador registrado para la excepción y lo ejecuta.
-    # Si no hay ninguno, loguea y devuelve 500.
-    def handle_exception(exception)
-      handler_entry = find_rescue_handler(exception)
-
-      if handler_entry
-        execute_handler(handler_entry, exception)
-        return rendered_response if rendered_response
-      end
-
-      handle_fatal_error(exception)
-    end
-
-    def find_rescue_handler(exception)
-      self.class.rescue_handlers.find { |klass, _| exception.is_a?(klass) }
-    end
-
-    def execute_handler(entry, exception)
-      _, handler = entry
-      if handler.is_a?(Symbol)
-        send(handler, exception)
-      elsif handler.respond_to?(:call)
-        instance_exec(exception, &handler)
-      end
-    end
-
-    def handle_fatal_error(exception)
-      BugBunny.configuration.logger.error("Controller Error (#{exception.class}): #{exception.message}")
-      BugBunny.configuration.logger.error(exception.backtrace.join("\n"))
-
-      { status: 500, body: { error: exception.message, type: exception.class.name } }
-    end
-
-    # Ejecuta la cadena de filtros before_action.
-    # Retorna true si todos pasaron, false si alguno detuvo la ejecución.
-    def before_actions_successful?(action_name)
-      chain = (self.class.before_actions[:_all_actions] || []) +
-              (self.class.before_actions[action_name] || [])
-
-      chain.uniq.each do |method_name|
-        send(method_name)
-        # Si un filtro llamó a 'render', detenemos la cadena (halt)
-        return false if rendered_response
-      end
-      true
-    end
-
     # Construye la respuesta RPC normalizada.
-    #
-    # @param status [Symbol, Integer] Código HTTP (ej: :ok, 200, :not_found).
-    # @param json [Object] Objeto a serializar en el body.
     def render(status:, json: nil)
       code = Rack::Utils::SYMBOL_TO_STATUS_CODE[status] || 200
       @rendered_response = { status: code, body: json }
     end
 
     # Normaliza y fusiona parámetros de múltiples fuentes.
-    # Prioridad: Body > ID Ruta > Query Params.
     def prepare_params(body)
       self.params = {}.with_indifferent_access
       merge_header_params
