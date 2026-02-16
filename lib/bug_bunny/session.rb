@@ -1,82 +1,65 @@
-# lib/bug_bunny/session.rb
+# frozen_string_literal: true
 
 module BugBunny
-  # Clase interna que encapsula una unidad de trabajo sobre una conexión RabbitMQ.
+  # Wrapper alrededor de la sesión (Channel) de Bunny.
   #
-  # Su responsabilidad principal es gestionar el ciclo de vida de un `Bunny::Channel`.
-  # En RabbitMQ, las conexiones TCP son costosas, pero los canales son ligeros.
-  # Esta clase toma una conexión abierta del Pool, abre un canal exclusivo para esta sesión,
-  # configura el QoS y facilita la creación de Exchanges y Colas.
-  #
-  # @api private
+  # Provee una capa de abstracción para gestionar la creación de exchanges y colas,
+  # asegurando que siempre se use un canal abierto y gestionando opciones por defecto.
   class Session
-    # Opciones por defecto para Exchanges: No durables, No auto-borrables.
-    DEFAULT_EXCHANGE_OPTIONS = { durable: false, auto_delete: false }.freeze
+    # Mapeo de tipos de exchange permitidos a sus métodos de creación en Bunny.
+    EXCHANGE_TYPES = {
+      'topic' => :topic,
+      'fanout' => :fanout,
+      'headers' => :headers,
+      'direct' => :direct
+    }.freeze
 
-    # Opciones por defecto para Colas: No exclusivas, No durables, Auto-borrables.
-    # @note Por defecto las colas son volátiles (`auto_delete: true`). Para workers persistentes,
-    #   se debe pasar explícitamente `durable: true, auto_delete: false`.
-    DEFAULT_QUEUE_OPTIONS = { exclusive: false, durable: false, auto_delete: true }.freeze
+    private_constant :EXCHANGE_TYPES
 
-    # @return [Bunny::Session] La conexión TCP subyacente.
-    attr_reader :connection
-
-    # @return [Bunny::Channel] El canal AMQP abierto para esta sesión.
+    # @return [Bunny::Channel] El canal AMQP subyacente.
     attr_reader :channel
 
     # Inicializa una nueva sesión.
     #
-    # 1. Verifica que la conexión esté viva.
-    # 2. Abre un nuevo canal.
-    # 3. Habilita "Publisher Confirms" para garantizar que los mensajes lleguen al broker.
-    # 4. Configura el "Prefetch" (QoS) global para este canal.
-    #
-    # @param connection [Bunny::Session] Una conexión abierta.
-    # @raise [BugBunny::Error] Si la conexión es nil o está cerrada.
+    # @param connection [Bunny::Session] Una conexión TCP activa a RabbitMQ.
     def initialize(connection)
-      raise BugBunny::Error, "Connection is closed or nil" unless connection&.open?
-
       @connection = connection
-      # Creamos canal nuevo para esta sesión (Thread-safe dentro del contexto del Pool)
       @channel = connection.create_channel
-      @channel.confirm_select
-      @channel.prefetch(BugBunny.configuration.channel_prefetch)
     end
 
-    # Factory method para declarar o recuperar un Exchange.
+    # Declara o recupera un Exchange.
     #
-    # @param name [String, nil] El nombre del exchange. Si es nil/vacío, retorna el Default Exchange.
-    # @param type [String, Symbol] El tipo de exchange (:direct, :topic, :fanout, :headers).
-    # @param opts [Hash] Opciones de configuración (durable, auto_delete, arguments).
-    # @return [Bunny::Exchange] La instancia del exchange.
+    # @param name [String, nil] Nombre del exchange. Si es nil, retorna el default exchange.
+    # @param type [String] Tipo de exchange ('direct', 'topic', 'fanout', 'headers').
+    #   Si el tipo no es reconocido, se usará 'direct' por defecto.
+    # @param opts [Hash] Opciones adicionales de declaración (durable, auto_delete, etc).
+    # @return [Bunny::Exchange] La instancia del exchange declarado.
     def exchange(name: nil, type: 'direct', opts: {})
       return channel.default_exchange if name.nil? || name.empty?
 
-      merged_opts = DEFAULT_EXCHANGE_OPTIONS.merge(opts)
-      case type.to_sym
-      when :topic   then channel.topic(name, merged_opts)
-      when :direct  then channel.direct(name, merged_opts)
-      when :fanout  then channel.fanout(name, merged_opts)
-      when :headers then channel.headers(name, merged_opts)
-      else channel.direct(name, merged_opts)
-      end
+      # Resolvemos el método a llamar usando el Hash (reduce AbcSize y elimina DuplicateBranch)
+      method_name = EXCHANGE_TYPES.fetch(type.to_s, :direct)
+      options = { durable: true }.merge(opts)
+
+      channel.public_send(method_name, name, options)
     end
 
-    # Factory method para declarar o recuperar una Cola.
+    # Declara o recupera una Cola.
     #
-    # @param name [String] El nombre de la cola.
-    # @param opts [Hash] Opciones de configuración (durable, auto_delete, exclusive, arguments).
-    # @return [Bunny::Queue] La instancia de la cola.
+    # @param name [String] Nombre de la cola.
+    # @param opts [Hash] Opciones de la cola (durable, exclusive, arguments, etc).
+    # @return [Bunny::Queue] La instancia de la cola declarada.
     def queue(name, opts = {})
-      channel.queue(name.to_s, DEFAULT_QUEUE_OPTIONS.merge(opts))
+      options = { durable: true }.merge(opts)
+      channel.queue(name, options)
     end
 
-    # Cierra el canal asociado a esta sesión.
-    # No cierra la conexión TCP (ya que esta pertenece al Pool), solo libera el canal virtual.
+    # Cierra el canal actual.
+    # Es importante cerrar los canales cuando ya no se necesitan para liberar recursos en RabbitMQ.
     #
     # @return [void]
     def close
-      @channel.close if @channel&.open?
+      channel.close if channel.open?
     end
   end
 end

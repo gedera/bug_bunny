@@ -1,48 +1,56 @@
-# test_controller.rb
-require 'active_support/all'
-require 'rack'
+# frozen_string_literal: true
+
 require_relative 'lib/bug_bunny'
+require_relative 'test_resource'
 
 module Rabbit
   module Controllers
-    # Nota: BugBunny buscará "TestUser" -> Rabbit::Controllers::TestUser
+    # Controlador de prueba para verificar el enrutamiento y despacho.
     class TestUser < BugBunny::Controller
-      # GET /show (Simulado)
-      # Usado por TestUser.find(1)
+      # Acción ping (GET /test_user/ping)
+      def ping
+        render status: 200, json: { message: 'Pong!' }
+      end
+
+      # Acción show (GET /test_user/:id)
+      # Se refactorizó para cumplir con Metrics/MethodLength
       def show
-        puts " [API] 🔍 Buscando usuario ID: #{params[:id]}"
-        if params[:id].to_i == 999
-           # Simulamos un 404
-           render status: 404, json: { error: "User not found" }
+        id = params[:id].to_i
+        # Simulamos una base de datos
+        if id == 123
+          render_found_user(id)
         else
-           render status: 200, json: {
-             id: params[:id].to_i,
-             name: "Gabriel",
-             email: "gabriel@test.com",
-             persisted: true
-           }
+          render status: 404, json: { error: 'User not found' }
         end
       end
 
-      # POST /create
-      # Usado por TestUser.create(...)
+      # Acción create (POST /test_user)
       def create
-        puts " [API] 💾 Creando usuario: #{params.inspect}"
+        # SIMULACIÓN: Rechazar emails que terminen en .org aunque sean válidos localmente
+        # Esto permite probar el manejo de errores 422 en el cliente.
+        if params[:test_user][:email].end_with?('.org')
+          render status: 422, json: { errors: { email: ['no se permiten .org'] } }
+          return
+        end
 
-        # Simulamos guardado
-        new_id = rand(1000..9999)
-
-        render status: 201, json: {
-          id: new_id,
-          name: params[:name],
-          email: params[:email],
-          created_at: Time.now
-        }
+        user = ::TestUser.new(params[:test_user])
+        if user.valid?
+          user.id = rand(1000..9999) # Simular ID autogenerado
+          render status: 201, json: user.remote_attributes
+        else
+          render status: 422, json: { errors: user.errors.messages }
+        end
       end
 
-      # Acción custom (RPC manual)
-      def ping
-        render status: 200, json: { message: "Pong!" }
+      private
+
+      def render_found_user(id)
+        render status: 200, json: {
+          id: id,
+          name: 'Gabriel',
+          email: 'gab.edera@gmail.com',
+          created_at: Time.now.iso8601
+        }
       end
     end
   end

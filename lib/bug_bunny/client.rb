@@ -1,4 +1,5 @@
-# lib/bug_bunny/client.rb
+# frozen_string_literal: true
+
 require_relative 'middleware/stack'
 
 module BugBunny
@@ -13,6 +14,10 @@ module BugBunny
   # @example Publicación Fire-and-Forget (POST)
   #   client.publish('logs', method: :post, body: { msg: 'Error' })
   class Client
+    # Atributos que se pueden asignar directamente desde los argumentos.
+    MAPPABLE_ATTRS = %i[method body exchange exchange_type routing_key timeout].freeze
+    private_constant :MAPPABLE_ATTRS
+
     # @return [ConnectionPool] El pool de conexiones subyacente a RabbitMQ.
     attr_reader :pool
 
@@ -26,6 +31,7 @@ module BugBunny
     # @raise [ArgumentError] Si no se proporciona un `pool`.
     def initialize(pool:)
       raise ArgumentError, "BugBunny::Client requiere un 'pool:'" if pool.nil?
+
       @pool = pool
       @stack = BugBunny::Middleware::Stack.new
       yield(@stack) if block_given?
@@ -63,40 +69,52 @@ module BugBunny
 
     private
 
-    # Ejecuta la lógica de envío dentro del contexto del Pool.
-    # Mapea los argumentos al objeto Request y ejecuta la cadena de middlewares.
+    # Orquesta la ejecución de la petición.
+    # 1. Construye el request.
+    # 2. Aplica configuración de usuario.
+    # 3. Ejecuta dentro del pool.
     def run_in_pool(method_name, url, args)
-      # 1. Builder del Request
-      req = BugBunny::Request.new(url)
+      req = build_request(url, args)
 
-      # 2. Syntactic Sugar: Mapeo de argumentos a atributos del Request
-      req.method        = args[:method]        if args[:method]
-      req.body          = args[:body]          if args[:body]
-      req.exchange      = args[:exchange]      if args[:exchange]
-      req.exchange_type = args[:exchange_type] if args[:exchange_type]
-      req.routing_key   = args[:routing_key]   if args[:routing_key]
-      req.timeout       = args[:timeout]       if args[:timeout]
-      req.headers.merge!(args[:headers])       if args[:headers]
-
-      # 3. Configuración del usuario (bloque específico por request)
+      # Configuración del usuario (bloque específico por request)
       yield req if block_given?
 
-      # 4. Ejecución dentro del Pool
       @pool.with do |conn|
-        session = BugBunny::Session.new(conn)
-        producer = BugBunny::Producer.new(session)
-
-        begin
-          # Onion Architecture: La acción final es llamar al Producer real.
-          final_action = ->(env) { producer.send(method_name, env) }
-
-          # Construimos y ejecutamos la cadena de middlewares
-          app = @stack.build(final_action)
-          app.call(req)
-        ensure
-          session.close
-        end
+        execute_request(conn, method_name, req)
       end
+    end
+
+    # Construye el objeto Request mapeando los argumentos dinámicamente.
+    # Itera sobre MAPPABLE_ATTRS para reducir la complejidad ciclomática y AbcSize.
+    #
+    # @param url [String] URL/Path del recurso.
+    # @param args [Hash] Hash de argumentos.
+    # @return [BugBunny::Request] Objeto request inicializado.
+    def build_request(url, args)
+      BugBunny::Request.new(url).tap do |req|
+        MAPPABLE_ATTRS.each do |key|
+          value = args[key]
+          req.public_send("#{key}=", value) unless value.nil?
+        end
+
+        req.headers.merge!(args[:headers]) if args[:headers]
+      end
+    end
+
+    # Ejecuta la cadena de middlewares dentro de una sesión activa.
+    # Gestiona el ciclo de vida de la sesión (cierre en ensure).
+    def execute_request(conn, method_name, req)
+      session = BugBunny::Session.new(conn)
+      producer = BugBunny::Producer.new(session)
+
+      # Onion Architecture: La acción final es llamar al Producer real.
+      final_action = ->(env) { producer.send(method_name, env) }
+
+      # Construimos y ejecutamos la cadena de middlewares
+      app = @stack.build(final_action)
+      app.call(req)
+    ensure
+      session.close
     end
   end
 end

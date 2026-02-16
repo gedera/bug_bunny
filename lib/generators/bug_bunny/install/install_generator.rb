@@ -20,7 +20,7 @@ module BugBunny
       # @api private
       source_root File.expand_path('templates', __dir__)
 
-      desc "Instala la configuración inicial de BugBunny y crea la estructura de directorios."
+      desc 'Instala la configuración inicial de BugBunny y crea la estructura de directorios.'
 
       # Genera el archivo de configuración inicial.
       # Copia la plantilla `initializer.rb` a `config/initializers/bug_bunny.rb` en la app destino.
@@ -38,10 +38,10 @@ module BugBunny
       #
       # @return [void]
       def create_directories
-        empty_directory "app/rabbit/controllers"
-        create_file "app/rabbit/controllers/.keep", ""
+        empty_directory 'app/rabbit/controllers'
+        create_file 'app/rabbit/controllers/.keep', ''
 
-        puts "🐰 BugBunny structure created successfully!"
+        puts '🐰 BugBunny structure created successfully!'
       end
     end
   end

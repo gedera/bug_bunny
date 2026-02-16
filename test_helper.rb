@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # test_helper.rb
 require_relative 'lib/bug_bunny'
 
@@ -9,7 +11,7 @@ BugBunny.configure do |config|
   config.username = 'wisproMQ'
   config.password = 'wisproMQ'
   config.vhost = 'sync.devel'
-  config.logger = Logger.new(STDOUT)
+  config.logger = Logger.new($stdout)
   config.logger.level = Logger::WARN # Menos ruido, solo errores importantes
   config.rpc_timeout = 5
 end

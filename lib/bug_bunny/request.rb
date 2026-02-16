@@ -1,88 +1,96 @@
-# lib/bug_bunny/request.rb
+# frozen_string_literal: true
 
 module BugBunny
-  # Encapsula toda la información necesaria para realizar una petición o publicación.
+  # Objeto Value (Value Object) que encapsula los datos de una petición saliente.
   #
-  # Actúa como el objeto "Environment" en la arquitectura de middlewares.
-  # Contiene el cuerpo del mensaje, la configuración de enrutamiento y el **Verbo HTTP**.
-  #
-  # @attr body [Object] El cuerpo del mensaje (Hash, Array o String).
-  # @attr headers [Hash] Cabeceras personalizadas (Headers AMQP).
-  # @attr path [String] La ruta lógica del recurso (ej: 'users', 'users/123').
-  # @attr method [Symbol, String] El verbo HTTP (:get, :post, :put, :delete). Default: :get.
-  # @attr exchange [String] El nombre del Exchange destino.
-  # @attr exchange_type [String] El tipo de exchange ('direct', 'topic', 'fanout').
-  # @attr routing_key [String] La routing key específica. Si es nil, se usará {#path}.
-  # @attr timeout [Integer] Tiempo máximo en segundos para timeout RPC.
+  # Normaliza la información necesaria para que el {Producer} pueda enviar el mensaje
+  # correctamente, ya sea en modo "Fire-and-Forget" o RPC.
   class Request
-    attr_accessor :body
-    attr_accessor :headers
-    attr_accessor :path
+    # @return [String] URL o path del recurso (ej: 'users/123').
+    attr_accessor :url
+
+    # @return [Symbol] Verbo HTTP simulado (:get, :post, :put, :delete).
     attr_accessor :method
+
+    # @return [Object] Cuerpo del mensaje (serializable a JSON).
+    attr_accessor :body
+
+    # @return [Hash] Headers AMQP adicionales.
+    attr_accessor :headers
+
+    # @return [String] Nombre del Exchange destino.
     attr_accessor :exchange
+
+    # @return [String] Tipo de Exchange ('direct', 'topic', etc).
     attr_accessor :exchange_type
+
+    # @return [String] Routing Key específica.
     attr_accessor :routing_key
+
+    # @return [Integer, nil] Tiempo máximo de espera en segundos (para RPC).
     attr_accessor :timeout
 
-    # Metadatos AMQP Estándar
-    attr_accessor :app_id, :content_type, :content_encoding, :priority,
-                  :timestamp, :expiration, :persistent, :reply_to,
-                  :correlation_id, :type
+    # @return [String, nil] Cola de respuesta (para RPC).
+    attr_accessor :reply_to
 
-    # Inicializa un nuevo Request.
-    #
-    # @param path [String] La ruta del recurso o acción (ej: 'users/123').
-    def initialize(path)
-      @path = path
-      @method = :get # Verbo por defecto
+    # @return [String, nil] ID de correlación único (para RPC).
+    attr_accessor :correlation_id
+
+    # Inicializa una nueva petición.
+    # @param url [String] La ruta del recurso.
+    def initialize(url)
+      @url = url
+      @method = :get
       @headers = {}
-      @content_type = 'application/json'
-      @timestamp = Time.now.to_i
-      @persistent = false
+      @exchange = ''
       @exchange_type = 'direct'
+      @routing_key = ''
+      @timeout = nil
     end
 
-    # Calcula la Routing Key final que se usará en RabbitMQ.
+    # Calcula la routing key final basándose en la configuración o la URL.
     #
-    # Principio: "Convention over Configuration".
-    # Si no se define una `routing_key` manual, se asume que el `path` actúa como tal.
+    # Si no se especifica una routing key explícita, intenta inferirla de la URL
+    # reemplazando barras por puntos (convención REST a AMQP).
     #
     # @return [String] La routing key definitiva.
     def final_routing_key
-      routing_key || path
+      return routing_key unless routing_key.nil? || routing_key.empty?
+
+      # Convierte 'users/123/active' -> 'users.123.active'
+      url.tr('/', '.')
     end
 
-    # Calcula el valor para el header AMQP 'type'.
-    # En esta arquitectura REST, el 'type' es la URL del recurso (el path).
-    #
-    # @return [String] El tipo de mensaje definitivo.
-    def final_type
-      type || path
+    # Separa el path de la query string si existe.
+    # @return [String] El path limpio sin parámetros GET.
+    def path
+      url.split('?').first
     end
 
-    # Genera el Hash de opciones limpio para la gema Bunny.
+    # Genera las opciones formateadas para la librería Bunny.
+    # Incluye headers de protocolo y metadatos RPC si son necesarios.
     #
-    # **Importante:** Inyecta el verbo HTTP en los headers bajo la clave `x-http-method`.
-    # Esto permite al Consumer enrutar correctamente a la acción del controlador.
-    #
-    # @return [Hash] Opciones listas para pasar a `exchange.publish`.
+    # @return [Hash] Opciones para `exchange.publish`.
     def amqp_options
-      # Inyectamos el verbo HTTP en los headers para el Router del Consumer
-      final_headers = headers.merge('x-http-method' => method.to_s.upcase)
+      opts = {
+        app_id: 'bug_bunny',
+        type: url, # El "path" viaja en el header 'type' estándar de AMQP
+        content_type: 'application/json',
+        headers: headers.merge('x-http-method' => method.to_s.upcase)
+      }
 
-      {
-        type: final_type,
-        app_id: app_id,
-        content_type: content_type,
-        content_encoding: content_encoding,
-        priority: priority,
-        timestamp: timestamp,
-        expiration: expiration,
-        persistent: persistent,
-        headers: final_headers,
-        reply_to: reply_to,
-        correlation_id: correlation_id
-      }.compact
+      add_rpc_options(opts)
+      opts
+    end
+
+    private
+
+    # Agrega opciones de respuesta solo si es una petición RPC.
+    def add_rpc_options(opts)
+      return unless reply_to
+
+      opts[:reply_to] = reply_to
+      opts[:correlation_id] = correlation_id
     end
   end
 end

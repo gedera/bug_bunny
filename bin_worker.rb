@@ -1,20 +1,24 @@
+# frozen_string_literal: true
+
 # bin_worker.rb
-require_relative 'test_helper'
-require_relative 'test_controller'
+require 'bundler/setup'
+require 'bug_bunny'
+require_relative 'test_controller' # Cargamos los controladores
 
-puts "🐰 WORKER INICIADO (Exchange: Topic)..."
+puts '🐰 WORKER INICIADO (Exchange: Topic)...'
 
-# Creamos la conexión (o usamos una del pool si quisieras)
-connection = BugBunny.create_connection
+# Configuración básica
+BugBunny.configure do |config|
+  config.logger = Logger.new($stdout)
+  config.logger.level = Logger::DEBUG
+end
 
-# Usamos el método de clase directo.
-# Al no pasar 'block: false', esto bloqueará la ejecución aquí mismo eternamente.
-BugBunny::Consumer.subscribe(
-  connection: connection,
-  queue_name: 'test_users_queue',
-  exchange_name: 'test_exchange',
+# Iniciar el Consumidor
+# Escucha en la cola 'bug_bunny_queue', atada al exchange 'test_exchange' con routing key '#' (todo)
+BugBunny::Rabbit.run_consumer(
+  connection: BugBunny.create_connection,
+  exchange: 'test_exchange',
   exchange_type: 'topic',
-  routing_key: 'test_user.#'
+  queue_name: 'bug_bunny_test_queue',
+  routing_key: '#' # Wildcard para recibir todo en este test
 )
-
-# ¡Ya no necesitas el loop! El subscribe mantiene vivo el proceso.

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # lib/bug_bunny/railtie.rb
 require 'rails'
 
@@ -15,7 +17,7 @@ module BugBunny
     # Agrega el directorio `app/rabbit` a los paths de carga automática.
     # Esto permite que Rails encuentre automáticamente los controladores definidos por el usuario
     # (ej: `Rabbit::Controllers::Users`) sin necesidad de `require` manuales.
-    initializer "bug_bunny.add_autoload_paths" do |app|
+    initializer 'bug_bunny.add_autoload_paths' do |app|
       rabbit_path = File.join(app.root, 'app', 'rabbit')
       if Dir.exist?(rabbit_path)
         app.config.autoload_paths << rabbit_path
