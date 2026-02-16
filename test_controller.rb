@@ -26,6 +26,13 @@ module Rabbit
 
       # Acción create (POST /test_user)
       def create
+        # SIMULACIÓN: Rechazar emails que terminen en .org aunque sean válidos localmente
+        # Esto permite probar el manejo de errores 422 en el cliente.
+        if params[:test_user][:email].end_with?('.org')
+          render status: 422, json: { errors: { email: ['no se permiten .org'] } }
+          return
+        end
+
         user = ::TestUser.new(params[:test_user])
         if user.valid?
           user.id = rand(1000..9999) # Simular ID autogenerado
