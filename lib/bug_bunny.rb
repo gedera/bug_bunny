@@ -13,6 +13,7 @@ require_relative 'bug_bunny/resource'
 require_relative 'bug_bunny/rabbit'
 require_relative 'bug_bunny/consumer'
 require_relative 'bug_bunny/controller'
+require_relative 'bug_bunny/middleware'
 
 require_relative 'bug_bunny/middleware/stack'
 require_relative 'bug_bunny/middleware/raise_error'
