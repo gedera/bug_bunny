@@ -60,6 +60,9 @@ BugBunny.configure do |config|
   # Logger de Bunny (Driver): Silencia el ruido de bajo nivel (WARN)
   config.bunny_logger = Logger.new(STDOUT)
   config.bunny_logger.level = Logger::WARN
+
+  # Controller Namaspeace
+  config.controller_namespace = 'MyApp::AsyncHandlers' # Default: 'Rabbit::Controllers'
 end
 ```
 
@@ -147,6 +150,68 @@ svc = Manager::Service.with(routing_key: 'urgent').new(name: 'redis')
 # Al guardar, BugBunny recuerda el contexto y envía a 'urgent'
 svc.save
 # Log: [BugBunny] [POST] '/services' | Routing Key: 'urgent'
+```
+
+### 🔌 Manipulación de Headers (Middleware)
+
+BugBunny permite interceptar y modificar las peticiones antes de que se envíen a RabbitMQ utilizando `client_middleware`. Esto es ideal para inyectar trazas, autenticación o metadatos de contexto.
+
+Existen 3 formas principales de usarlo:
+
+#### 1. Definición Inline (Rápida)
+Ideal para inyectar headers estáticos específicos de un recurso.
+```ruby
+class Payment < BugBunny::Resource
+  client_middleware do |stack|
+    stack.use(Class.new(BugBunny::Middleware::Base) do
+      def on_request(env)
+        env.headers['X-Service-Version'] = 'v2'
+        env.headers['Content-Type'] = 'application/json'
+      end
+    end)
+  end
+end
+```
+
+#### 2. Clase Reutilizable (Recomendada)
+Si tienes lógica compartida (ej: Autenticación), define una clase y úsala en múltiples recursos.
+
+```ruby
+# app/middleware/auth_middleware.rb
+class AuthMiddleware < BugBunny::Middleware::Base
+  def on_request(env)
+    env.headers['Authorization'] = "Bearer #{ENV['API_KEY']}"
+  end
+end
+
+# app/models/user.rb
+class User < BugBunny::Resource
+  client_middleware do |stack|
+    stack.use AuthMiddleware
+  end
+end
+```
+
+#### 3. Contexto Dinámico (Pro)
+Permite inyectar valores que cambian en cada petición (como el Usuario actual o Tenant), leyendo de variables globales thread-safe (como CurrentAttributes en Rails).
+
+```ruby
+# Middleware que lee el Tenant actual
+# app/middleware/tenant_middleware.rb
+class TenantMiddleware < BugBunny::Middleware::Base
+  def on_request(env)
+    # Ejemplo usando Rails CurrentAttributes
+    if Current.tenant_id
+      env.headers['X-Tenant-ID'] = Current.tenant_id
+    end
+  end
+end
+
+class Order < BugBunny::Resource
+  client_middleware do |stack|
+    stack.use TenantMiddleware
+  end
+end
 ```
 
 ---

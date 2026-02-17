@@ -84,20 +84,28 @@ module BugBunny
     # @param body [String] El payload crudo del mensaje.
     # @return [void]
     def process_message(delivery_info, properties, body)
-      if properties.type.nil? || properties.type.empty?
-        BugBunny.configuration.logger.error("[Consumer] Missing 'type' header. Message rejected.")
+
+      # 1. Recuperación Robusta del Path (Ruta)
+      path = properties.type
+      if path.nil? || path.empty?
+        path = properties.headers ? properties.headers['path'] : nil
+      end
+
+      if path.nil? || path.empty?
+        BugBunny.configuration.logger.error("[Consumer] Missing 'type' or 'path' header. Message rejected.")
         session.channel.reject(delivery_info.delivery_tag, false)
         return
       end
 
-      # 1. Determinar Verbo HTTP (Default: GET)
-      http_method = properties.headers ? (properties.headers['x-http-method'] || 'GET') : 'GET'
+      # 2. Recuperación Robusta del Verbo HTTP
+      headers_hash = properties.headers || {}
+      http_method = headers_hash['x-http-method'] || headers_hash['method'] || 'GET'
 
-      # 2. Router: Inferencia de Controlador y Acción
-      route_info = router_dispatch(http_method, properties.type)
+      # 3. Router: Inferencia de Controlador y Acción
+      route_info = router_dispatch(http_method, path)
 
-      headers = {
-        type: properties.type,
+      request_metadata = {
+        type: path,
         http_method: http_method,
         controller: route_info[:controller],
         action: route_info[:action],
@@ -106,32 +114,37 @@ module BugBunny
         content_type: properties.content_type,
         correlation_id: properties.correlation_id,
         reply_to: properties.reply_to
-      }
+      }.merge(properties.headers)
 
-      # 3. Instanciación Dinámica del Controlador
-      # Ej: "users" -> Rabbit::Controllers::UsersController
-      controller_class_name = "rabbit/controllers/#{route_info[:controller]}".camelize
-      controller_class = controller_class_name.constantize
+      # 4. Instanciación Dinámica del Controlador
+      # Utilizamos el namespace configurado en lugar de hardcodear "Rabbit::Controllers"
+      begin
+        namespace = BugBunny.configuration.controller_namespace
+        controller_name = route_info[:controller].camelize
 
-      # 4. Ejecución del Pipeline (Filtros -> Acción)
-      response_payload = controller_class.call(headers: headers, body: body)
+        # Construcción: "Messaging::Handlers" + "::" + "Users"
+        controller_class_name = "#{namespace}::#{controller_name}"
 
-      # 5. Respuesta RPC (Si se solicita respuesta)
+        controller_class = controller_class_name.constantize
+      rescue NameError => _e
+        BugBunny.configuration.logger.error("[Consumer] Controller not found: #{controller_class_name}")
+        handle_fatal_error(properties, 404, "Not Found", "Controller #{controller_class_name} not found")
+        session.channel.reject(delivery_info.delivery_tag, false)
+        return
+      end
+
+      # 5. Ejecución del Pipeline (Middleware + Acción)
+      response_payload = controller_class.call(headers: request_metadata, body: body)
+
+      # 6. Respuesta RPC
       if properties.reply_to
         reply(response_payload, properties.reply_to, properties.correlation_id)
       end
 
-      # 6. Acknowledge (Confirmación de procesado)
+      # 7. Acknowledge
       session.channel.ack(delivery_info.delivery_tag)
 
-    rescue NameError => e
-      # Error 501/404: El controlador o la acción no existen.
-      BugBunny.configuration.logger.error("[Consumer] Routing Error: #{e.message}")
-      handle_fatal_error(properties, 501, "Routing Error", e.message)
-      session.channel.reject(delivery_info.delivery_tag, false)
-
     rescue StandardError => e
-      # Error 500: Crash interno de la aplicación.
       BugBunny.configuration.logger.error("[Consumer] Execution Error: #{e.message}")
       handle_fatal_error(properties, 500, "Internal Server Error", e.message)
       session.channel.reject(delivery_info.delivery_tag, false)
