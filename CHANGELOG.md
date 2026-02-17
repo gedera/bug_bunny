@@ -1,4 +1,12 @@
 # Changelog
+## [3.0.5] - 2026-02-17
+
+### 🐛 Bug Fixes
+* **Load Error Resolution:** Fixed `TypeError: Middleware is not a module` by converting `BugBunny::Middleware` into a proper module and introducing `BugBunny::Middleware::Base`.
+
+### 🛠 Improvements
+* **Standardized Middleware Architecture:** Consolidated the Template Method pattern across all internal interceptors (`RaiseError`, `JsonResponse`).
+
 ## [3.0.4] - 2026-02-16
 
 ### ♻️ Refactoring & Architecture
