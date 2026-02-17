@@ -1,4 +1,13 @@
 # Changelog
+## [3.0.6] - 2026-02-17
+
+### ♻️ Refactor & Standards
+* **Architectural Cleanup:** Removed the `BugBunny::Rabbit` intermediate class. Connection management logic (`disconnect`) has been moved directly to the main `BugBunny` module for simplicity.
+* **Rails Standardization:** Renamed `lib/bug_bunny/config.rb` to `lib/bug_bunny/configuration.rb` and the class from `Config` to `Configuration`. This ensures full compliance with Zeitwerk autoloading standards.
+
+### 🛡 Stability
+* **Fork Safety:** Enhanced `Railtie` to robustly handle process forking. Added support for `ActiveSupport::ForkTracker` (Rails 7.1+) and guarded Puma event hooks to prevent `NoMethodError` on newer Puma versions.
+
 ## [3.0.5] - 2026-02-17
 
 ### 🐛 Bug Fixes
