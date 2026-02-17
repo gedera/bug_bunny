@@ -1,15 +1,15 @@
 # lib/bug_bunny/middleware/raise_error.rb
 # frozen_string_literal: true
 
-require_relative '../middleware'
+require_relative '../middleware/base'
 
 module BugBunny
   module Middleware
     # Middleware que inspecciona el status de la respuesta y lanza excepciones
     # si se encuentran errores (4xx o 5xx).
     #
-    # @see BugBunny::Middleware
-    class RaiseError < BugBunny::Middleware
+    # @see BugBunny::Middleware::Base
+    class RaiseError < BugBunny::Middleware::Base
       # Hook de ciclo de vida: Ejecutado después de recibir la respuesta.
       #
       # Verifica el código de estado y lanza la excepción correspondiente.

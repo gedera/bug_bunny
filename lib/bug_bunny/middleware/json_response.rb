@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require 'json'
-require_relative '../middleware'
+require_relative '../middleware/base'
 
 module BugBunny
   module Middleware
@@ -11,8 +11,8 @@ module BugBunny
     # Convierte strings JSON en Hashes de Ruby. Si está disponible ActiveSupport,
     # aplica HashWithIndifferentAccess.
     #
-    # @see BugBunny::Middleware
-    class JsonResponse < BugBunny::Middleware
+    # @see BugBunny::Middleware::Base
+    class JsonResponse < BugBunny::Middleware::Base
       # Hook de ciclo de vida: Ejecutado después de recibir la respuesta.
       #
       # Intercepta el body y lo reemplaza por su versión parseada.
