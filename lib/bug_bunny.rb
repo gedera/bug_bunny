@@ -1,113 +1,104 @@
+# frozen_string_literal: true
+
 require 'bunny'
 require 'logger'
-require 'connection_pool'
-
 require_relative 'bug_bunny/version'
-require_relative 'bug_bunny/config'
 require_relative 'bug_bunny/exception'
-require_relative 'bug_bunny/request'
-require_relative 'bug_bunny/session'
-require_relative 'bug_bunny/producer'
-require_relative 'bug_bunny/client'
-require_relative 'bug_bunny/resource'
-require_relative 'bug_bunny/rabbit'
-require_relative 'bug_bunny/consumer'
-require_relative 'bug_bunny/controller'
+require_relative 'bug_bunny/config'
 require_relative 'bug_bunny/middleware/base'
 require_relative 'bug_bunny/middleware/stack'
 require_relative 'bug_bunny/middleware/raise_error'
 require_relative 'bug_bunny/middleware/json_response'
+require_relative 'bug_bunny/client'
+require_relative 'bug_bunny/session'
+require_relative 'bug_bunny/consumer'
+require_relative 'bug_bunny/request'
+require_relative 'bug_bunny/producer'
+require_relative 'bug_bunny/resource'
+require_relative 'bug_bunny/controller'
+require_relative 'bug_bunny/railtie' if defined?(Rails)
 
-# Punto de entrada principal y Namespace de la gema BugBunny.
-#
-# BugBunny es un framework ligero sobre RabbitMQ diseñado para simplificar
-# patrones de mensajería (RPC y Fire-and-Forget) en aplicaciones Ruby on Rails.
-#
-# @see BugBunny::Client Para enviar mensajes.
-# @see BugBunny::Resource Para mapear modelos remotos.
-# @see BugBunny::Consumer Para procesar mensajes entrantes.
+# Módulo principal de la gema BugBunny.
+# Actúa como espacio de nombres y punto de configuración global.
 module BugBunny
-  # Factory method (Alias) para instanciar un nuevo Cliente.
-  #
-  # @param args [Hash] Argumentos pasados al constructor de {BugBunny::Client}.
-  # @return [BugBunny::Client] Una nueva instancia del cliente.
-  def self.new(**args)
-    BugBunny::Client.new(**args)
+  class << self
+    # @return [BugBunny::Configuration] La configuración global actual.
+    attr_accessor :configuration
+
+    # @return [Bunny::Session, nil] La conexión global (Singleton) usada por procesos Rails.
+    attr_accessor :global_connection
   end
 
-  # Configura la librería globalmente.
+  # Configura la librería BugBunny.
+  # Si no se ha configurado previamente, inicializa una nueva configuración por defecto.
   #
-  # @example Configuración típica en un initializer
-  #   BugBunny.configure do |config|
-  #     config.host = 'localhost'
-  #     config.username = 'guest'
-  #     config.rpc_timeout = 5
-  #   end
-  #
-  # @yield [config] Bloque de configuración.
-  # @yieldparam config [BugBunny::Config] Objeto de configuración global.
-  # @return [BugBunny::Config] La configuración actualizada.
+  # @yieldparam config [BugBunny::Configuration] El objeto de configuración para modificar.
+  # @return [void]
   def self.configure
-    self.configuration ||= Config.new
+    self.configuration ||= Configuration.new
     yield(configuration)
   end
 
-  # Accesor al objeto de configuración global (Singleton).
-  #
-  # @return [BugBunny::Config] La instancia de configuración actual.
-  def self.configuration
-    @configuration ||= Config.new
-  end
-
-  # Cierra la conexión global mantenida por {BugBunny::Rabbit}.
-  # Útil para liberar recursos en scripts o tareas Rake al finalizar.
-  #
-  # @see BugBunny::Rabbit.disconnect
-  # @return [void]
-  def self.disconnect
-    BugBunny::Rabbit.disconnect
-  end
-
-  # Crea una nueva conexión a RabbitMQ (Bunny Session).
-  #
-  # Este método fusiona la configuración global por defecto con las opciones
-  # pasadas explícitamente como argumentos, dando prioridad a estas últimas.
-  #
-  # Maneja automáticamente el inicio de la conexión (`start`) y captura errores
-  # de red comunes envolviéndolos en excepciones de BugBunny.
+  # Crea e inicia una nueva conexión a RabbitMQ utilizando la gema Bunny.
+  # Mezcla las opciones pasadas explícitamente con la configuración global por defecto.
   #
   # @param options [Hash] Opciones de conexión que sobrescriben la configuración global.
-  # @option options [String] :host Host de RabbitMQ.
-  # @option options [String] :vhost Virtual Host.
-  # @option options [String] :username Usuario.
-  # @option options [String] :password Contraseña.
-  # @option options [Logger] :logger Logger personalizado.
-  # @option options [Boolean] :automatically_recover (true/false).
-  # @option options [Integer] :network_recovery_interval Intervalo de reconexión.
-  # @option options [Integer] :connection_timeout Timeout de conexión TCP.
-  # @return [Bunny::Session] Una sesión de Bunny iniciada y lista para usar.
-  # @raise [BugBunny::CommunicationError] Si no se puede establecer la conexión TCP.
+  # @option options [String] :host ('127.0.0.1') Host del servidor RabbitMQ.
+  # @option options [Integer] :port (5672) Puerto del servidor.
+  # @option options [String] :username ('guest') Usuario de conexión.
+  # @option options [String] :password ('guest') Contraseña.
+  # @option options [String] :vhost ('/') Virtual Host.
+  # @option options [Logger] :logger Logger para la conexión interna de Bunny.
+  # @option options [Boolean] :automatically_recover (true) Si debe reconectar automáticamente.
+  # @option options [Integer] :connection_timeout (10) Tiempo de espera para conectar.
+  # @option options [Integer] :read_timeout (10) Tiempo de espera para lectura.
+  # @option options [Integer] :write_timeout (10) Tiempo de espera para escritura.
+  # @option options [Integer] :heartbeat (15) Intervalo de latidos en segundos.
+  # @option options [Integer] :continuation_timeout (15000) Timeout para operaciones RPC internas.
+  #
+  # @return [Bunny::Session] Una sesión de Bunny ya iniciada (`start` ya invocado).
+  # @raise [Bunny::TCPConnectionFailed] Si no se puede conectar al servidor.
   def self.create_connection(**options)
-    default = configuration
-
-    bunny = Bunny.new(
-      host:                      options[:host]                      || default.host,
-      username:                  options[:username]                  || default.username,
-      password:                  options[:password]                  || default.password,
-      vhost:                     options[:vhost]                     || default.vhost,
-      logger:                    options[:logger]                    || default.bunny_logger,
-      automatically_recover:     options[:automatically_recover]     || default.automatically_recover,
-      network_recovery_interval: options[:network_recovery_interval] || default.network_recovery_interval,
-      connection_timeout:        options[:connection_timeout]        || default.connection_timeout,
-      read_timeout:              options[:read_timeout]              || default.read_timeout,
-      write_timeout:             options[:write_timeout]             || default.write_timeout,
-      heartbeat:                 options[:heartbeat]                 || default.heartbeat,
-      continuation_timeout:      options[:continuation_timeout]      || default.continuation_timeout
-    )
-
-    bunny.start
-    bunny
-  rescue Timeout::Error, Bunny::ConnectionError => e
-    raise BugBunny::CommunicationError, e.message
+    conn_options = merge_connection_options(options)
+    Bunny.new(conn_options).tap(&:start)
   end
+
+  # Cierra la conexión global si existe.
+  #
+  # Este método es utilizado principalmente por el Railtie para asegurar que
+  # los procesos hijos (forks) de servidores como Puma o Spring no hereden
+  # la conexión TCP del proceso padre, forzando una reconexión limpia ("Lazy").
+  #
+  # @return [void]
+  def self.disconnect
+    return unless @global_connection
+
+    @global_connection.close if @global_connection.open?
+    @global_connection = nil
+    configuration.logger.info('[BugBunny] Global connection closed.')
+  end
+
+  # @api private
+  # Fusiona las opciones del usuario con los valores por defecto de la configuración.
+  def self.merge_connection_options(options)
+    # .compact elimina los valores nil de options para no sobrescribir los defaults
+    default_connection_options.merge(options.compact)
+  end
+
+  # @api private
+  # Genera el hash de opciones por defecto basado en la configuración global.
+  # Extraído para reducir la métrica AbcSize de merge_connection_options.
+  def self.default_connection_options
+    cfg = configuration || Configuration.new
+    {
+      host: cfg.host, port: cfg.port,
+      username: cfg.username, password: cfg.password, vhost: cfg.vhost,
+      logger: cfg.bunny_logger, automatically_recover: cfg.automatically_recover,
+      connection_timeout: cfg.connection_timeout, read_timeout: cfg.read_timeout,
+      write_timeout: cfg.write_timeout, heartbeat: cfg.heartbeat,
+      continuation_timeout: cfg.continuation_timeout
+    }
+  end
+
+  private_class_method :merge_connection_options, :default_connection_options
 end
