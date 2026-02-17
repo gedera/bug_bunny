@@ -1,4 +1,5 @@
-# lib/bug_bunny/railtie.rb
+# frozen_string_literal: true
+
 require 'rails'
 
 module BugBunny
@@ -11,11 +12,7 @@ module BugBunny
   # @see https://guides.rubyonrails.org/engines.html#railtie
   class Railtie < ::Rails::Railtie
     # 1. Configuración de Autoload
-    #
-    # Agrega el directorio `app/rabbit` a los paths de carga automática.
-    # Esto permite que Rails encuentre automáticamente los controladores definidos por el usuario
-    # (ej: `Rabbit::Controllers::Users`) sin necesidad de `require` manuales.
-    initializer "bug_bunny.add_autoload_paths" do |app|
+    initializer 'bug_bunny.add_autoload_paths' do |app|
       rabbit_path = File.join(app.root, 'app', 'rabbit')
       if Dir.exist?(rabbit_path)
         app.config.autoload_paths << rabbit_path
@@ -23,31 +20,29 @@ module BugBunny
       end
     end
 
-    # 2. Hook de Puma (Servidor Web)
+    # 2. Gestión de Forks (Puma / Spring / otros)
     #
-    # Detecta cuando Puma arranca un nuevo "worker" en modo clúster.
     # Es vital cerrar la conexión heredada del proceso padre (Master) antes de que
     # el hijo empiece a trabajar, para evitar compartir el mismo socket TCP.
-    #
-    # La nueva conexión se creará perezosamente (Lazy) cuando el worker la necesite.
     config.after_initialize do
-      if defined?(Puma)
+      # Estrategia 1: Rails 7.1+ ForkTracker (La forma estándar moderna)
+      if defined?(ActiveSupport::ForkTracker)
+        ActiveSupport::ForkTracker.after_fork { BugBunny.disconnect }
+      end
+
+      # Estrategia 2: Hook específico de Puma (Legacy)
+      # Solo intentamos usarlo si la API 'events' está disponible (Puma < 5).
+      if defined?(Puma) && Puma.respond_to?(:events)
         Puma.events.on_worker_boot do
-          BugBunny::Rabbit.disconnect
+          BugBunny.disconnect
         end
       end
     end
 
     # 3. Hook de Spring (Preloader)
-    #
-    # Spring mantiene una instancia de la aplicación en memoria y hace `fork` para
-    # ejecutar comandos (rails c, rspec, etc) rápidamente.
-    #
-    # Al igual que con Puma, debemos desconectar la conexión al RabbitMQ justo después
-    # del fork para asegurar que el nuevo proceso tenga su propio socket limpio.
     if defined?(Spring)
       Spring.after_fork do
-        BugBunny::Rabbit.disconnect
+        BugBunny.disconnect
       end
     end
   end
