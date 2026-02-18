@@ -234,6 +234,45 @@ class Order < BugBunny::Resource
   end
 end
 ```
+---
+
+## 🔌 Modo Publisher (Cliente Manual)
+
+Si necesitas enviar mensajes crudos fuera de la lógica Resource, usa `BugBunny::Client`.
+
+```ruby
+client = BugBunny::Client.new(pool: BUG_BUNNY_POOL)
+
+# --- REQUEST (Síncrono / RPC) ---
+# Espera la respuesta. Lanza BugBunny::RequestTimeout si falla.
+response = client.request('services/123/logs',
+  method: :get,
+  exchange: 'logs_exchange',
+  timeout: 5
+)
+puts response['body']
+
+# --- PUBLISH (Asíncrono / Fire-and-Forget) ---
+# No espera respuesta.
+client.publish('audit/events',
+  method: :post,
+  body: { event: 'login', user_id: 1 }
+)
+```
+
+### ⚠️ Consideraciones sobre RPC (Direct Reply-To)
+
+BugBunny utiliza el mecanismo nativo `amq.rabbitmq.reply-to` para las peticiones RPC. Esto maximiza el rendimiento eliminando la necesidad de crear colas temporales por cada petición.
+
+**Trade-off:**
+Al usar este mecanismo, las respuestas son efímeras. Si el proceso Cliente (tu aplicación Rails/Sidekiq) se reinicia abruptamente justo después de enviar la petición pero milisegundos antes de procesar la respuesta, **esa respuesta se perderá**.
+
+**Recomendación:**
+Diseña tus acciones de Controlador RPC (`POST`, `PUT`) para que sean **idempotentes**.
+* *Mal diseño:* "Crear pago" (si se reintenta, cobra doble).
+* *Buen diseño:* "Crear pago con ID X" (si se reintenta y ya existe, devuelve el recibo existente).
+
+Esto permite que, ante un `BugBunny::RequestTimeout` por caída del cliente, puedas reintentar la operación de forma segura.
 
 ---
 
@@ -439,46 +478,6 @@ end
 ```text
 [d41d8cd9...] [WORKER] [Tenant-55] [Console] Creando usuario...
 ```
-
----
-
-## 🔌 Modo Publisher (Cliente Manual)
-
-Si necesitas enviar mensajes crudos fuera de la lógica Resource, usa `BugBunny::Client`.
-
-```ruby
-client = BugBunny::Client.new(pool: BUG_BUNNY_POOL)
-
-# --- REQUEST (Síncrono / RPC) ---
-# Espera la respuesta. Lanza BugBunny::RequestTimeout si falla.
-response = client.request('services/123/logs',
-  method: :get,
-  exchange: 'logs_exchange',
-  timeout: 5
-)
-puts response['body']
-
-# --- PUBLISH (Asíncrono / Fire-and-Forget) ---
-# No espera respuesta.
-client.publish('audit/events',
-  method: :post,
-  body: { event: 'login', user_id: 1 }
-)
-```
-
-### ⚠️ Consideraciones sobre RPC (Direct Reply-To)
-
-BugBunny utiliza el mecanismo nativo `amq.rabbitmq.reply-to` para las peticiones RPC. Esto maximiza el rendimiento eliminando la necesidad de crear colas temporales por cada petición.
-
-**Trade-off:**
-Al usar este mecanismo, las respuestas son efímeras. Si el proceso Cliente (tu aplicación Rails/Sidekiq) se reinicia abruptamente justo después de enviar la petición pero milisegundos antes de procesar la respuesta, **esa respuesta se perderá**.
-
-**Recomendación:**
-Diseña tus acciones de Controlador RPC (`POST`, `PUT`) para que sean **idempotentes**.
-* *Mal diseño:* "Crear pago" (si se reintenta, cobra doble).
-* *Buen diseño:* "Crear pago con ID X" (si se reintenta y ya existe, devuelve el recibo existente).
-
-Esto permite que, ante un `BugBunny::RequestTimeout` por caída del cliente, puedas reintentar la operación de forma segura.
 
 ---
 
