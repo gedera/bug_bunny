@@ -132,7 +132,7 @@ module BugBunny
         controller_name = route_info[:controller].camelize
 
         # Construcción: "Messaging::Handlers" + "::" + "Users"
-        controller_class_name = "#{namespace}::#{controller_name}"
+        controller_class_name = "#{namespace}::#{controller_name}Controller"
 
         controller_class = controller_class_name.constantize
 
