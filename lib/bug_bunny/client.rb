@@ -1,14 +1,16 @@
-# lib/bug_bunny/client.rb
+# frozen_string_literal: true
+
 require_relative 'middleware/stack'
 
 module BugBunny
   # Cliente principal para realizar peticiones a RabbitMQ.
   #
   # Implementa el patrón "Onion Middleware" (Arquitectura de Cebolla) similar a Faraday.
-  # Mantiene una interfaz flexible donde el verbo HTTP se pasa como opción.
+  # Mantiene una interfaz flexible donde el verbo HTTP se pasa como opción y permite
+  # configurar la infraestructura AMQP de forma granular por petición.
   #
-  # @example Petición RPC (GET)
-  #   client.request('users/123', method: :get)
+  # @example Petición RPC (GET) con opciones de infraestructura
+  #   client.request('users/123', method: :get, exchange_options: { durable: true })
   #
   # @example Publicación Fire-and-Forget (POST)
   #   client.publish('logs', method: :post, body: { msg: 'Error' })
@@ -41,6 +43,8 @@ module BugBunny
     # @option args [Object] :body El cuerpo del mensaje.
     # @option args [Hash] :headers Headers AMQP adicionales.
     # @option args [Integer] :timeout Tiempo máximo de espera.
+    # @option args [Hash] :exchange_options Opciones específicas para la declaración del Exchange.
+    # @option args [Hash] :queue_options Opciones específicas para la declaración de la Cola.
     # @yield [req] Bloque para configurar el objeto Request directamente.
     # @return [Hash] La respuesta del servidor.
     def request(url, **args)
@@ -65,18 +69,28 @@ module BugBunny
 
     # Ejecuta la lógica de envío dentro del contexto del Pool.
     # Mapea los argumentos al objeto Request y ejecuta la cadena de middlewares.
+    #
+    # @param method_name [Symbol] El método del productor a llamar (:rpc o :fire).
+    # @param url [String] La ruta destino.
+    # @param args [Hash] Argumentos pasados a los métodos públicos.
+    # @yield [req] Bloque para configuración adicional del Request.
     def run_in_pool(method_name, url, args)
       # 1. Builder del Request
       req = BugBunny::Request.new(url)
 
       # 2. Syntactic Sugar: Mapeo de argumentos a atributos del Request
-      req.method        = args[:method]        if args[:method]
-      req.body          = args[:body]          if args[:body]
-      req.exchange      = args[:exchange]      if args[:exchange]
-      req.exchange_type = args[:exchange_type] if args[:exchange_type]
-      req.routing_key   = args[:routing_key]   if args[:routing_key]
-      req.timeout       = args[:timeout]       if args[:timeout]
-      req.headers.merge!(args[:headers])       if args[:headers]
+      req.method           = args[:method]           if args[:method]
+      req.body             = args[:body]             if args[:body]
+      req.exchange         = args[:exchange]         if args[:exchange]
+      req.exchange_type    = args[:exchange_type]    if args[:exchange_type]
+      req.routing_key      = args[:routing_key]      if args[:routing_key]
+      req.timeout          = args[:timeout]          if args[:timeout]
+
+      # Inyección de opciones de infraestructura (Nivel 3 de la cascada)
+      req.exchange_options = args[:exchange_options] if args[:exchange_options]
+      req.queue_options    = args[:queue_options]    if args[:queue_options]
+
+      req.headers.merge!(args[:headers])             if args[:headers]
 
       # 3. Configuración del usuario (bloque específico por request)
       yield req if block_given?
@@ -94,6 +108,7 @@ module BugBunny
           app = @stack.build(final_action)
           app.call(req)
         ensure
+          # Aseguramos el cierre del canal pero mantenemos la conexión del pool
           session.close
         end
       end

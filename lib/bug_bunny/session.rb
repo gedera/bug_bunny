@@ -1,17 +1,22 @@
-# lib/bug_bunny/session.rb
+# frozen_string_literal: true
 
 module BugBunny
   # Clase interna que encapsula una unidad de trabajo sobre una conexión RabbitMQ.
   #
-  # Gestiona el ciclo de vida de un `Bunny::Channel` implementando:
-  # 1. Carga Perezosa (Lazy Loading): El canal solo se abre al usarse.
-  # 2. Resiliencia: Intenta recuperar la conexión TCP si está cerrada.
+  # Implementa la lógica de "Configuración en Cascada" para Exchanges y Colas,
+  # gestionando el ciclo de vida de un `Bunny::Channel` con resiliencia y carga perezosa.
   #
   # @api private
   class Session
-    # Opciones por defecto (Mantenemos las que tenías en tu repo)
+    # @!group Opciones por Defecto (Nivel 1: Gema)
+
+    # Opciones predeterminadas de la gema para Exchanges.
     DEFAULT_EXCHANGE_OPTIONS = { durable: false, auto_delete: false }.freeze
+
+    # Opciones predeterminadas de la gema para Colas.
     DEFAULT_QUEUE_OPTIONS = { exclusive: false, durable: false, auto_delete: true }.freeze
+
+    # @!endgroup
 
     # @return [Bunny::Session] La conexión TCP subyacente.
     attr_reader :connection
@@ -42,30 +47,50 @@ module BugBunny
       @channel
     end
 
-    # Factory method para declarar o recuperar un Exchange.
-    # Usa el método robusto `channel` internamente.
+    # Factory method para declarar o recuperar un Exchange aplicando la cascada de configuración.
+    #
+    # Jerarquía de fusión:
+    # 1. Defaults de la gema (`DEFAULT_EXCHANGE_OPTIONS`)
+    # 2. Configuración global (`BugBunny.configuration.exchange_options`)
+    # 3. Opciones específicas pasadas como argumento (`opts`)
     #
     # @param name [String, nil] Nombre del exchange.
-    # @param type [String, Symbol] Tipo de exchange.
-    # @param opts [Hash] Opciones adicionales.
+    # @param type [String, Symbol] Tipo de exchange ('direct', 'topic', 'fanout').
+    # @param opts [Hash] Opciones específicas de infraestructura para este intercambio.
+    # @return [Bunny::Exchange] El objeto exchange de Bunny configurado.
     def exchange(name: nil, type: 'direct', opts: {})
       return channel.default_exchange if name.nil? || name.empty?
 
-      merged_opts = DEFAULT_EXCHANGE_OPTIONS.merge(opts)
-      # public_send permite llamar a :topic, :direct, etc. dinámicamente
+      # Aplicación de la lógica de fusión en cascada
+      merged_opts = DEFAULT_EXCHANGE_OPTIONS
+                    .merge(BugBunny.configuration.exchange_options || {})
+                    .merge(opts)
+
+      # public_send permite llamar a :topic, :direct, etc. dinámicamente según el tipo
       channel.public_send(type, name, merged_opts)
     end
 
-    # Factory method para declarar o recuperar una Cola.
-    # Usa el método robusto `channel` internamente.
+    # Factory method para declarar o recuperar una Cola aplicando la cascada de configuración.
+    #
+    # Jerarquía de fusión:
+    # 1. Defaults de la gema (`DEFAULT_QUEUE_OPTIONS`)
+    # 2. Configuración global (`BugBunny.configuration.queue_options`)
+    # 3. Opciones específicas pasadas como argumento (`opts`)
     #
     # @param name [String] Nombre de la cola.
-    # @param opts [Hash] Opciones adicionales.
+    # @param opts [Hash] Opciones específicas de infraestructura para esta cola.
+    # @return [Bunny::Queue] El objeto cola de Bunny configurado.
     def queue(name, opts = {})
-      channel.queue(name.to_s, DEFAULT_QUEUE_OPTIONS.merge(opts))
+      # Aplicación de la lógica de fusión en cascada
+      merged_opts = DEFAULT_QUEUE_OPTIONS
+                    .merge(BugBunny.configuration.queue_options || {})
+                    .merge(opts)
+
+      channel.queue(name.to_s, merged_opts)
     end
 
     # Cierra el canal asociado a esta sesión de forma segura.
+    # @return [void]
     def close
       @channel&.close if @channel&.open?
       @channel = nil
@@ -73,8 +98,10 @@ module BugBunny
 
     private
 
-    # Crea y configura un nuevo canal.
+    # Crea y configura un nuevo canal con las preferencias globales.
     # Asume que la conexión ya ha sido verificada por `ensure_connection!`.
+    #
+    # @raise [BugBunny::CommunicationError] Si falla la creación del canal.
     def create_channel!
       @channel = @connection.create_channel
 
@@ -90,6 +117,8 @@ module BugBunny
 
     # Garantiza que la conexión TCP esté abierta.
     # Si está cerrada, intenta reconectarla (Reconexión Transparente).
+    #
+    # @raise [BugBunny::CommunicationError] Si falla la reconexión.
     def ensure_connection!
       return if @connection.open?
 
