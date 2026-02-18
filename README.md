@@ -54,11 +54,20 @@ BugBunny.configure do |config|
 
   # --- Logging (Niveles recomendados) ---
   # Logger de BugBunny: Muestra tus requests (INFO)
-  config.logger = Logger.new(STDOUT)
-  config.logger.level = Logger::INFO
+  rails_logger = Rails.logger
+
+  if defined?(ActiveSupport::TaggedLogging) && !rails_logger.respond_to?(:tagged)
+    config.logger = ActiveSupport::TaggedLogging.new(rails_logger)
+  else
+    config.logger = rails_logger
+  end
 
   # Logger de Bunny (Driver): Silencia el ruido de bajo nivel (WARN)
-  config.bunny_logger = Logger.new(STDOUT)
+  if defined?(ActiveSupport::TaggedLogging) && !rails_logger.respond_to?(:tagged)
+    config.bunny_logger = ActiveSupport::TaggedLogging.new(rails_logger)
+  else
+    config.bunny_logger = rails_logger
+  end
   config.bunny_logger.level = Logger::WARN
 
   # Controller Namaspeace
