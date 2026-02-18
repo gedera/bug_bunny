@@ -57,10 +57,16 @@ module BugBunny
     # @return [Integer] Intervalo en segundos para verificar la salud de la cola.
     attr_accessor :health_check_interval
 
+    # @return [String] Namespace base donde se buscarán los controladores (default: 'Rabbit::Controllers').
+    attr_accessor :controller_namespace
+
+    # @return [Array<Symbol, Proc, String>]
+    attr_accessor :log_tags
+
     # Inicializa la configuración con valores por defecto seguros.
     def initialize
-      @host = '127.0.0.1' # Valor por defecto explícito
-      @port = 5672        # <--- AGREGADO (Default RabbitMQ Port)
+      @host = '127.0.0.1'
+      @port = 5672
       @username = 'guest'
       @password = 'guest'
       @vhost = '/'
@@ -80,6 +86,11 @@ module BugBunny
       @channel_prefetch = 1
       @rpc_timeout = 10
       @health_check_interval = 60
+
+      # Configuración por defecto para mantener compatibilidad
+      @controller_namespace = 'Rabbit::Controllers'
+
+      @log_tags = [:uuid]
     end
 
     # Construye la URL de conexión AMQP basada en los atributos configurados.

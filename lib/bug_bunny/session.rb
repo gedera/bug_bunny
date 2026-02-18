@@ -3,80 +3,101 @@
 module BugBunny
   # Clase interna que encapsula una unidad de trabajo sobre una conexión RabbitMQ.
   #
-  # Su responsabilidad principal es gestionar el ciclo de vida de un `Bunny::Channel`.
-  # En RabbitMQ, las conexiones TCP son costosas, pero los canales son ligeros.
-  # Esta clase toma una conexión abierta del Pool, abre un canal exclusivo para esta sesión,
-  # configura el QoS y facilita la creación de Exchanges y Colas.
+  # Gestiona el ciclo de vida de un `Bunny::Channel` implementando:
+  # 1. Carga Perezosa (Lazy Loading): El canal solo se abre al usarse.
+  # 2. Resiliencia: Intenta recuperar la conexión TCP si está cerrada.
   #
   # @api private
   class Session
-    # Opciones por defecto para Exchanges: No durables, No auto-borrables.
+    # Opciones por defecto (Mantenemos las que tenías en tu repo)
     DEFAULT_EXCHANGE_OPTIONS = { durable: false, auto_delete: false }.freeze
-
-    # Opciones por defecto para Colas: No exclusivas, No durables, Auto-borrables.
-    # @note Por defecto las colas son volátiles (`auto_delete: true`). Para workers persistentes,
-    #   se debe pasar explícitamente `durable: true, auto_delete: false`.
     DEFAULT_QUEUE_OPTIONS = { exclusive: false, durable: false, auto_delete: true }.freeze
 
     # @return [Bunny::Session] La conexión TCP subyacente.
     attr_reader :connection
 
-    # @return [Bunny::Channel] El canal AMQP abierto para esta sesión.
-    attr_reader :channel
-
-    # Inicializa una nueva sesión.
+    # Inicializa una nueva sesión sin abrir canales todavía.
     #
-    # 1. Verifica que la conexión esté viva.
-    # 2. Abre un nuevo canal.
-    # 3. Habilita "Publisher Confirms" para garantizar que los mensajes lleguen al broker.
-    # 4. Configura el "Prefetch" (QoS) global para este canal.
-    #
-    # @param connection [Bunny::Session] Una conexión abierta.
-    # @raise [BugBunny::Error] Si la conexión es nil o está cerrada.
+    # @param connection [Bunny::Session] Una conexión (puede estar abierta o cerrada temporalmente).
     def initialize(connection)
-      raise BugBunny::Error, "Connection is closed or nil" unless connection&.open?
-
       @connection = connection
-      # Creamos canal nuevo para esta sesión (Thread-safe dentro del contexto del Pool)
-      @channel = connection.create_channel
-      @channel.confirm_select
-      @channel.prefetch(BugBunny.configuration.channel_prefetch)
+      @channel = nil
+    end
+
+    # Obtiene el canal actual o crea uno nuevo si es necesario.
+    #
+    # Este método es el punto central de la robustez. Verifica la salud
+    # de la conexión y del canal antes de devolverlo.
+    #
+    # @return [Bunny::Channel] Un canal abierto y configurado.
+    # @raise [BugBunny::CommunicationError] Si no se puede restablecer la conexión.
+    def channel
+      # Si el canal existe y está abierto, lo devolvemos rápido.
+      return @channel if @channel&.open?
+
+      # Si no, intentamos asegurar la conexión y crear el canal.
+      ensure_connection!
+      create_channel!
+
+      @channel
     end
 
     # Factory method para declarar o recuperar un Exchange.
+    # Usa el método robusto `channel` internamente.
     #
-    # @param name [String, nil] El nombre del exchange. Si es nil/vacío, retorna el Default Exchange.
-    # @param type [String, Symbol] El tipo de exchange (:direct, :topic, :fanout, :headers).
-    # @param opts [Hash] Opciones de configuración (durable, auto_delete, arguments).
-    # @return [Bunny::Exchange] La instancia del exchange.
+    # @param name [String, nil] Nombre del exchange.
+    # @param type [String, Symbol] Tipo de exchange.
+    # @param opts [Hash] Opciones adicionales.
     def exchange(name: nil, type: 'direct', opts: {})
       return channel.default_exchange if name.nil? || name.empty?
 
       merged_opts = DEFAULT_EXCHANGE_OPTIONS.merge(opts)
-      case type.to_sym
-      when :topic   then channel.topic(name, merged_opts)
-      when :direct  then channel.direct(name, merged_opts)
-      when :fanout  then channel.fanout(name, merged_opts)
-      when :headers then channel.headers(name, merged_opts)
-      else channel.direct(name, merged_opts)
-      end
+      # public_send permite llamar a :topic, :direct, etc. dinámicamente
+      channel.public_send(type, name, merged_opts)
     end
 
     # Factory method para declarar o recuperar una Cola.
+    # Usa el método robusto `channel` internamente.
     #
-    # @param name [String] El nombre de la cola.
-    # @param opts [Hash] Opciones de configuración (durable, auto_delete, exclusive, arguments).
-    # @return [Bunny::Queue] La instancia de la cola.
+    # @param name [String] Nombre de la cola.
+    # @param opts [Hash] Opciones adicionales.
     def queue(name, opts = {})
       channel.queue(name.to_s, DEFAULT_QUEUE_OPTIONS.merge(opts))
     end
 
-    # Cierra el canal asociado a esta sesión.
-    # No cierra la conexión TCP (ya que esta pertenece al Pool), solo libera el canal virtual.
-    #
-    # @return [void]
+    # Cierra el canal asociado a esta sesión de forma segura.
     def close
-      @channel.close if @channel&.open?
+      @channel&.close if @channel&.open?
+      @channel = nil
+    end
+
+    private
+
+    # Crea y configura un nuevo canal.
+    # Asume que la conexión ya ha sido verificada por `ensure_connection!`.
+    def create_channel!
+      @channel = @connection.create_channel
+
+      # Configuraciones globales de BugBunny
+      @channel.confirm_select
+
+      if BugBunny.configuration.channel_prefetch
+        @channel.prefetch(BugBunny.configuration.channel_prefetch)
+      end
+    rescue StandardError => e
+      raise BugBunny::CommunicationError, "Failed to create channel: #{e.message}"
+    end
+
+    # Garantiza que la conexión TCP esté abierta.
+    # Si está cerrada, intenta reconectarla (Reconexión Transparente).
+    def ensure_connection!
+      return if @connection.open?
+
+      BugBunny.configuration.logger.warn("[BugBunny] Connection lost. Attempting to reconnect...")
+      @connection.start
+    rescue StandardError => e
+      BugBunny.configuration.logger.error("[BugBunny] Critical connection failure: #{e.message}")
+      raise BugBunny::CommunicationError, "Could not reconnect to RabbitMQ: #{e.message}"
     end
   end
 end

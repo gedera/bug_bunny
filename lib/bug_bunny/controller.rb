@@ -1,115 +1,133 @@
-# lib/bug_bunny/controller.rb
+# frozen_string_literal: true
+
 require 'active_model'
 require 'rack'
+require 'active_support/core_ext/class/attribute'
 
 module BugBunny
-  # Clase base para Controladores de Mensajes.
+  # Clase base para todos los Controladores de Mensajes en BugBunny.
   #
-  # Provee una abstracción similar a ActionController para manejar peticiones RPC.
-  # Incluye soporte para `before_action`, manejo de excepciones declarativo (`rescue_from`)
-  # y normalización de parámetros.
+  # @author Gabriel
+  # @since 3.0.6
   class Controller
     include ActiveModel::Model
     include ActiveModel::Attributes
 
-    # @return [Hash] Metadatos del mensaje (headers AMQP, routing info).
+    # @return [Hash] Metadatos del mensaje entrante.
     attribute :headers
 
-    # @return [ActiveSupport::HashWithIndifferentAccess] Parámetros unificados (Body + Query + Route).
+    # @return [ActiveSupport::HashWithIndifferentAccess] Parámetros unificados.
     attribute :params
 
-    # @return [String] Cuerpo crudo si el payload no es JSON.
+    # @return [String] Cuerpo crudo.
     attribute :raw_string
 
-    # @return [Hash, nil] La respuesta renderizada { status, body }.
+    # @return [Hash] Headers de respuesta.
+    attr_reader :response_headers
+
+    # @return [Hash, nil] Respuesta renderizada.
     attr_reader :rendered_response
 
-    # --- INFRAESTRUCTURA DE FILTROS (Before Actions) ---
+    # --- INFRAESTRUCTURA DE FILTROS (DEFINICIÓN) ---
+    # Deben definirse ANTES de ser usados por la configuración de logs.
 
     # @api private
     def self.before_actions
       @before_actions ||= Hash.new { |h, k| h[k] = [] }
     end
 
-    # Registra un callback que se ejecutará antes de las acciones.
-    #
-    # @param method_name [Symbol] Nombre del método a ejecutar.
-    # @param options [Hash] Opciones de filtro (:only).
-    # @example
-    #   before_action :set_user, only: [:show, :update]
-    def self.before_action(method_name, **options)
-      only = Array(options[:only]).map(&:to_sym)
-      target_actions = only.empty? ? [:_all_actions] : only
-
-      target_actions.each do |action|
-        before_actions[action] << method_name
-      end
+    # @api private
+    def self.around_actions
+      @around_actions ||= Hash.new { |h, k| h[k] = [] }
     end
 
-    # --- INFRAESTRUCTURA DE MANEJO DE ERRORES (Rescue From) ---
+    # Registra un filtro que se ejecutará **antes** de la acción.
+    def self.before_action(method_name, **options)
+      register_callback(before_actions, method_name, options)
+    end
+
+    # Registra un filtro que **envuelve** la ejecución de la acción.
+    def self.around_action(method_name, **options)
+      register_callback(around_actions, method_name, options)
+    end
+
+    # Helper interno para registrar callbacks.
+    def self.register_callback(collection, method_name, options)
+      only = Array(options[:only]).map(&:to_sym)
+      target_actions = only.empty? ? [:_all_actions] : only
+      target_actions.each { |action| collection[action] << method_name }
+    end
+
+    # --- CONFIGURACIÓN DE LOGGING ---
+
+    # Define los tags que se antepondrán a cada línea de log.
+    class_attribute :log_tags
+    self.log_tags = []
+
+    # AHORA SÍ: Podemos llamar a around_action porque ya fue definido arriba.
+    around_action :apply_log_tags
+
+    # --- INICIALIZACIÓN ---
+
+    def initialize(attributes = {})
+      super
+      @response_headers = {}
+    end
+
+    # --- MANEJO DE ERRORES ---
 
     # @api private
     def self.rescue_handlers
       @rescue_handlers ||= []
     end
 
-    # Registra un manejador para una o más excepciones.
-    # Los manejadores se evalúan en orden inverso (el último registrado tiene prioridad).
-    #
-    # @param klasses [Class] Clases de excepción a capturar.
-    # @param with [Symbol] Nombre del método manejador.
-    # @param block [Proc] Bloque manejador.
-    #
-    # @example Con método
-    #   rescue_from User::NotAuthorized, with: :deny_access
-    #
-    # @example Con bloque
-    #   rescue_from ActiveRecord::RecordNotFound do |e|
-    #     render status: :not_found, json: { error: e.message }
-    #   end
     def self.rescue_from(*klasses, with: nil, &block)
       handler = with || block
       raise ArgumentError, "Need a handler. Supply 'with: :method' or a block." unless handler
 
       klasses.each do |klass|
-        # Insertamos al principio para que las últimas definiciones tengan prioridad (LIFO)
         rescue_handlers.unshift([klass, handler])
       end
     end
 
     # --- PIPELINE DE EJECUCIÓN ---
 
-    # Punto de entrada principal llamado por el Consumer.
-    # Instancia el controlador y procesa el mensaje.
-    #
-    # @param headers [Hash] Metadatos del mensaje.
-    # @param body [Hash, String] Payload deserializado.
-    # @return [Hash] La respuesta final { status, body }.
     def self.call(headers:, body: {})
       new(headers: headers).process(body)
     end
 
-    # Ejecuta el ciclo de vida de la petición: Params -> Filtros -> Acción.
-    # Captura cualquier error y delega al sistema `rescue_from`.
-    #
-    # @param body [Hash, String] Payload.
-    # @return [Hash] Respuesta RPC.
     def process(body)
       prepare_params(body)
-      action_name = headers[:action].to_sym
 
-      # 1. Ejecutar Before Actions (si retorna false, hubo render/halt)
-      return rendered_response unless run_before_actions(action_name)
-
-      # 2. Ejecutar Acción
-      if respond_to?(action_name)
-        public_send(action_name)
-      else
-        raise NameError, "Action '#{action_name}' not found in #{self.class.name}"
+      # Inyección de configuración global de logs si no hay específica
+      if self.class.log_tags.empty? && BugBunny.configuration.log_tags.any?
+        self.class.log_tags = BugBunny.configuration.log_tags
       end
 
-      # 3. Respuesta por defecto (204 No Content) si la acción no llamó a render
-      rendered_response || { status: 204, body: nil }
+      action_name = headers[:action].to_sym
+      current_arounds = resolve_callbacks(self.class.around_actions, action_name)
+
+      # Definir el núcleo de ejecución
+      core_execution = lambda do
+        return unless run_before_actions(action_name)
+
+        if respond_to?(action_name)
+          public_send(action_name)
+        else
+          raise NameError, "Action '#{action_name}' not found in #{self.class.name}"
+        end
+      end
+
+      # Construir la cadena de responsabilidad
+      execution_chain = current_arounds.reverse.inject(core_execution) do |next_step, method_name|
+        lambda { send(method_name, &next_step) }
+      end
+
+      # Ejecutar la cadena
+      execution_chain.call
+
+      # Respuesta final
+      rendered_response || { status: 204, headers: response_headers, body: nil }
 
     rescue StandardError => e
       handle_exception(e)
@@ -117,61 +135,59 @@ module BugBunny
 
     private
 
-    # Busca un manejador registrado para la excepción y lo ejecuta.
-    # Si no hay ninguno, loguea y devuelve 500.
-    def handle_exception(exception)
-      # Buscamos el primer handler compatible con la clase del error
-      handler_entry = self.class.rescue_handlers.find { |klass, _| exception.is_a?(klass) }
+    # --- HELPERS INTERNOS ---
 
-      if handler_entry
-        _, handler = handler_entry
-
-        # Ejecutamos el handler en el contexto de la INSTANCIA
-        if handler.is_a?(Symbol)
-          send(handler, exception)
-        elsif handler.respond_to?(:call)
-          instance_exec(exception, &handler)
-        end
-
-        # Si el handler hizo render, retornamos esa respuesta
-        return rendered_response if rendered_response
-      end
-
-      # === FALLBACK POR DEFECTO ===
-      # Si el error no fue rescatado por el usuario, actuamos como red de seguridad.
-      BugBunny.configuration.logger.error("Controller Error (#{exception.class}): #{exception.message}")
-      BugBunny.configuration.logger.error(exception.backtrace.join("\n"))
-
-      { status: 500, body: { error: exception.message, type: exception.class.name } }
+    def resolve_callbacks(collection, action_name)
+      (collection[:_all_actions] || []) + (collection[action_name] || [])
     end
 
-    # Ejecuta la cadena de filtros before_action.
     def run_before_actions(action_name)
-      chain = (self.class.before_actions[:_all_actions] || []) +
-              (self.class.before_actions[action_name] || [])
-
-      chain.uniq.each do |method_name|
+      current_befores = resolve_callbacks(self.class.before_actions, action_name)
+      current_befores.uniq.each do |method_name|
         send(method_name)
-        # Si un filtro llamó a 'render', detenemos la cadena (halt)
         return false if rendered_response
       end
       true
     end
 
-    # Construye la respuesta RPC normalizada.
-    #
-    # @param status [Symbol, Integer] Código HTTP (ej: :ok, 200, :not_found).
-    # @param json [Object] Objeto a serializar en el body.
-    def render(status:, json: nil)
-      code = Rack::Utils::SYMBOL_TO_STATUS_CODE[status] || 200
-      @rendered_response = { status: code, body: json }
+    def handle_exception(exception)
+      handler_entry = self.class.rescue_handlers.find do |klass, _|
+        if klass.is_a?(String)
+          exception.class.name == klass
+        else
+          exception.is_a?(klass)
+        end
+      end
+
+      if handler_entry
+        _, handler = handler_entry
+        if handler.is_a?(Symbol); send(handler, exception)
+        elsif handler.respond_to?(:call); instance_exec(exception, &handler)
+        end
+        return rendered_response if rendered_response
+      end
+
+      BugBunny.configuration.logger.error("Controller Error (#{exception.class}): #{exception.message}")
+      BugBunny.configuration.logger.error(exception.backtrace.join("\n"))
+
+      {
+        status: 500,
+        headers: response_headers,
+        body: { error: exception.message, type: exception.class.name }
+      }
     end
 
-    # Normaliza y fusiona parámetros de múltiples fuentes.
-    # Prioridad: Body > ID Ruta > Query Params.
+    def render(status:, json: nil)
+      code = Rack::Utils::SYMBOL_TO_STATUS_CODE[status] || 200
+      @rendered_response = {
+        status: code,
+        headers: response_headers,
+        body: json
+      }
+    end
+
     def prepare_params(body)
       self.params = {}.with_indifferent_access
-
       params.merge!(headers[:query_params]) if headers[:query_params].present?
       params[:id] = headers[:id] if headers[:id].present?
 
@@ -183,6 +199,34 @@ module BugBunny
       else
         self.raw_string = body
       end
+    end
+
+    # --- LÓGICA DE LOGGING ENCAPSULADA ---
+
+    def apply_log_tags
+      tags = compute_tags
+      if defined?(Rails) && Rails.logger.respond_to?(:tagged) && tags.any?
+        Rails.logger.tagged(*tags) { yield }
+      else
+        yield
+      end
+    end
+
+    def compute_tags
+      self.class.log_tags.map do |tag|
+        case tag
+        when Proc
+          tag.call(self)
+        when Symbol
+          respond_to?(tag, true) ? send(tag) : tag
+        else
+          tag
+        end
+      end.compact
+    end
+
+    def uuid
+      headers[:correlation_id] || headers['X-Request-Id']
     end
   end
 end

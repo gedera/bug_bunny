@@ -71,10 +71,11 @@ module BugBunny
       request.correlation_id ||= SecureRandom.uuid
       request.reply_to = 'amq.rabbitmq.reply-to'
       wait_timeout = request.timeout || BugBunny.configuration.rpc_timeout
+      cid = request.correlation_id.to_s
 
       # Creamos un futuro (IVar) que actuará como semáforo
       future = Concurrent::IVar.new
-      @pending_requests[request.correlation_id] = future
+      @pending_requests[cid] = future
 
       begin
         fire(request)
@@ -90,7 +91,7 @@ module BugBunny
         parse_response(response_payload)
       ensure
         # Limpieza vital para evitar fugas de memoria en el mapa
-        @pending_requests.delete(request.correlation_id)
+        @pending_requests.delete(cid)
       end
     end
 
@@ -125,10 +126,16 @@ module BugBunny
       @reply_listener_mutex.synchronize do
         return if @reply_listener_started
 
+        BugBunny.configuration.logger.debug("[Producer] 👂 Iniciando escucha en amq.rabbitmq.reply-to...")
+
         # Consumimos sin ack (auto-ack) porque reply-to no soporta acks manuales de forma estándar
         @session.channel.basic_consume('amq.rabbitmq.reply-to', '', true, false, nil) do |_, props, body|
-          if (future = @pending_requests[props.correlation_id])
+          BugBunny.configuration.logger.debug("[Producer] 📥 RESPUESTA RECIBIDA | ID: #{props.correlation_id}")
+          incoming_cid = props.correlation_id.to_s
+          if (future = @pending_requests[incoming_cid])
             future.set(body)
+            else
+              BugBunny.configuration.logger.warn("[Producer] ⚠️ ID #{incoming_cid} no encontrado en pendientes: #{@pending_requests.keys}")
           end
         end
         @reply_listener_started = true

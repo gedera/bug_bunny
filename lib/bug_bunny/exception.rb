@@ -10,6 +10,10 @@ module BugBunny
   # Suele envolver excepciones nativas de la gema `bunny` (ej: TCP connection failure).
   class CommunicationError < Error; end
 
+  # Error lanzado cuando ocurren un acceso no permitido a controladores.
+  # Suele envolver excepciones nativas de la gema `bunny` (ej: TCP connection failure).
+  class SecurityError < Error; end
+
   # === Categoría: Errores del Cliente (4xx) ===
 
   # Clase base para errores causados por una petición incorrecta del cliente.

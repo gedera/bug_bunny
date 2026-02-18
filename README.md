@@ -54,12 +54,24 @@ BugBunny.configure do |config|
 
   # --- Logging (Niveles recomendados) ---
   # Logger de BugBunny: Muestra tus requests (INFO)
-  config.logger = Logger.new(STDOUT)
-  config.logger.level = Logger::INFO
+  rails_logger = Rails.logger
+
+  if defined?(ActiveSupport::TaggedLogging) && !rails_logger.respond_to?(:tagged)
+    config.logger = ActiveSupport::TaggedLogging.new(rails_logger)
+  else
+    config.logger = rails_logger
+  end
 
   # Logger de Bunny (Driver): Silencia el ruido de bajo nivel (WARN)
-  config.bunny_logger = Logger.new(STDOUT)
+  if defined?(ActiveSupport::TaggedLogging) && !rails_logger.respond_to?(:tagged)
+    config.bunny_logger = ActiveSupport::TaggedLogging.new(rails_logger)
+  else
+    config.bunny_logger = rails_logger
+  end
   config.bunny_logger.level = Logger::WARN
+
+  # Controller Namaspeace
+  config.controller_namespace = 'MyApp::AsyncHandlers' # Default: 'Rabbit::Controllers'
 end
 ```
 
@@ -149,6 +161,80 @@ svc.save
 # Log: [BugBunny] [POST] '/services' | Routing Key: 'urgent'
 ```
 
+### Soporte de Parámetros Anidados (Nested Queries)
+En la versión 3.0.3 arreglaste la serialización usando `Rack::Utils`. Esto es una "feature" poderosa que permite filtrar por hashes complejos, algo muy común en APIs modernas.
+
+**Sugerencia:** Agregar un ejemplo en la sección **CRUD RESTful > LEER (GET)**:
+
+```ruby
+# --- LEER CON FILTROS AVANZADOS ---
+# Soporta hashes anidados (gracias a Rack::Utils)
+# Envia: GET services?q[status]=active&q[tags][]=web
+Manager::Service.where(q: { status: 'active', tags: ['web'] })
+```
+
+### 🔌 Manipulación de Headers (Middleware)
+
+BugBunny permite interceptar y modificar las peticiones antes de que se envíen a RabbitMQ utilizando `client_middleware`. Esto es ideal para inyectar trazas, autenticación o metadatos de contexto.
+
+Existen 3 formas principales de usarlo:
+
+#### 1. Definición Inline (Rápida)
+Ideal para inyectar headers estáticos específicos de un recurso.
+```ruby
+class Payment < BugBunny::Resource
+  client_middleware do |stack|
+    stack.use(Class.new(BugBunny::Middleware::Base) do
+      def on_request(env)
+        env.headers['X-Service-Version'] = 'v2'
+        env.headers['Content-Type'] = 'application/json'
+      end
+    end)
+  end
+end
+```
+
+#### 2. Clase Reutilizable (Recomendada)
+Si tienes lógica compartida (ej: Autenticación), define una clase y úsala en múltiples recursos.
+
+```ruby
+# app/middleware/auth_middleware.rb
+class AuthMiddleware < BugBunny::Middleware::Base
+  def on_request(env)
+    env.headers['Authorization'] = "Bearer #{ENV['API_KEY']}"
+  end
+end
+
+# app/models/user.rb
+class User < BugBunny::Resource
+  client_middleware do |stack|
+    stack.use AuthMiddleware
+  end
+end
+```
+
+#### 3. Contexto Dinámico (Pro)
+Permite inyectar valores que cambian en cada petición (como el Usuario actual o Tenant), leyendo de variables globales thread-safe (como CurrentAttributes en Rails).
+
+```ruby
+# Middleware que lee el Tenant actual
+# app/middleware/tenant_middleware.rb
+class TenantMiddleware < BugBunny::Middleware::Base
+  def on_request(env)
+    # Ejemplo usando Rails CurrentAttributes
+    if Current.tenant_id
+      env.headers['X-Tenant-ID'] = Current.tenant_id
+    end
+  end
+end
+
+class Order < BugBunny::Resource
+  client_middleware do |stack|
+    stack.use TenantMiddleware
+  end
+end
+```
+
 ---
 
 ## 📡 Modo Servidor (Worker & Router)
@@ -217,7 +303,21 @@ class ApplicationController < BugBunny::Controller
 end
 ```
 
-### 3. Tabla de Ruteo (Convención)
+### 3. Namespace de Controladores (Opcional)
+
+Por defecto, BugBunny busca los controladores dentro del módulo `Rabbit::Controllers`. Esto implica que tus archivos deben estar en `app/rabbit/controllers/`.
+
+Si prefieres organizar tus consumidores en otro lugar (ej: dentro de un dominio específico o carpeta existente), puedes cambiar el namespace.
+
+**Configuración:**
+```ruby
+# config/initializers/bug_bunny.rb
+BugBunny.configure do |config|
+  config.controller_namespace = 'Billing::Events'
+end
+```
+
+### 4. Tabla de Ruteo (Convención)
 
 El Router infiere la acción automáticamente:
 
@@ -229,6 +329,116 @@ El Router infiere la acción automáticamente:
 | `PUT` | `services/12` | `ServicesController` | `update` |
 | `DELETE` | `services/12` | `ServicesController` | `destroy` |
 | `POST` | `services/12/restart` | `ServicesController` | `restart` (Custom) |
+
+### 🔎 Observabilidad y Logging
+
+BugBunny implementa un sistema de **Tracing Distribuido** nativo. Esto permite rastrear una petición desde que se origina en tu aplicación (Producer) hasta que es procesada por el worker (Consumer), manteniendo el mismo ID de traza (`correlation_id`) en todos los logs.
+
+#### 1. Productor: Inyectar el Trace ID
+
+Para asegurar que los mensajes salgan de tu aplicación con el ID de traza correcto (por ejemplo, el `X-Request-Id` de Rails, Sidekiq o tu propio `Current.request_id`), debes inyectarlo antes de publicar el mensaje.
+
+La forma recomendada es crear un Middleware y registrarlo globalmente.
+
+**A. Crear el Middleware**
+
+```ruby
+# app/middleware/correlation_injector.rb
+class CorrelationInjector < BugBunny::Middleware::Base
+  def on_request(env)
+    # Ejemplo: Si usas Rails CurrentAttributes o similar
+    if defined?(Current) && Current.request_id
+      env.correlation_id = Current.request_id
+    end
+  end
+end
+```
+
+**B. Registrar el Middleware (Initializer)**
+
+```ruby
+# config/initializers/bug_bunny.rb
+require 'bug_bunny'
+require_relative '../../app/middleware/correlation_injector'
+
+# Módulo para interceptar la inicialización de cualquier cliente
+module BugBunnyGlobalMiddleware
+  def initialize(pool:)
+    super
+    @stack.use CorrelationInjector
+  end
+end
+
+# Aplicamos el parche para que afecte a Resources y Clientes manuales
+BugBunny::Client.prepend(BugBunnyGlobalMiddleware)
+```
+
+---
+
+#### 2. Consumidor: Logging Automático
+
+El consumidor de BugBunny está diseñado para garantizar la trazabilidad "out-of-the-box".
+
+##### A. Comportamiento por Defecto
+Al recibir un mensaje, el Consumidor realiza automáticamente los siguientes pasos:
+1. Extrae el `correlation_id` de las propiedades AMQP (o genera un UUID si no existe).
+2. Envuelve todo el procesamiento en un bloque de log etiquetado (`tagged logging`).
+3. Pasa el ID al Controlador.
+
+**No necesitas configurar nada.** Tus logs se verán así automáticamente:
+
+```text
+[d41d8cd9-8f00...] [Consumer] Listening on queue...
+[d41d8cd9-8f00...] [API] Procesando usuario 123...
+```
+
+##### B. Configuración Global (Initializer)
+Si deseas agregar tags estáticos que aparezcan en **todos** los mensajes procesados por este worker (como el nombre del servicio, versión o entorno), agrégalos a `config.log_tags`.
+
+> **Nota:** No agregues `:uuid` aquí, ya que el Consumidor lo agrega automáticamente.
+
+```ruby
+BugBunny.configure do |config|
+  # ... configuración de conexión ...
+
+  # Tags globales adicionales
+  config.log_tags = [
+    'WORKER',
+    ->(_) { ENV['APP_VERSION'] }
+  ]
+end
+```
+
+**Resultado en Log:**
+```text
+[d41d8cd9...] [WORKER] [v1.0.2] [API] Procesando mensaje...
+```
+
+##### C. Configuración por Controlador (Contexto Rico)
+Para agregar información específica del mensaje o lógica de negocio (como IDs de inquilinos, usuario actual, o headers específicos), utiliza `self.log_tags` en tus controladores.
+
+Esto aprovecha el `around_action` nativo de la gema para inyectar contexto.
+
+```ruby
+# app/rabbit/controllers/application_controller.rb
+module Rabbit
+  module Controllers
+    class ApplicationController < BugBunny::Controller
+      # Define tags dinámicos basados en el mensaje actual
+      self.log_tags = [
+        ->(c) { c.params[:tenant_id] },      # Tag del Tenant (si viene en el body)
+        ->(c) { c.headers['X-Source'] }      # Tag del origen
+      ]
+    end
+  end
+end
+```
+
+**Resultado Final en Log:**
+(UUID Automático + Tag Global + Tag de Controlador)
+```text
+[d41d8cd9...] [WORKER] [Tenant-55] [Console] Creando usuario...
+```
 
 ---
 
@@ -255,6 +465,20 @@ client.publish('audit/events',
   body: { event: 'login', user_id: 1 }
 )
 ```
+
+### ⚠️ Consideraciones sobre RPC (Direct Reply-To)
+
+BugBunny utiliza el mecanismo nativo `amq.rabbitmq.reply-to` para las peticiones RPC. Esto maximiza el rendimiento eliminando la necesidad de crear colas temporales por cada petición.
+
+**Trade-off:**
+Al usar este mecanismo, las respuestas son efímeras. Si el proceso Cliente (tu aplicación Rails/Sidekiq) se reinicia abruptamente justo después de enviar la petición pero milisegundos antes de procesar la respuesta, **esa respuesta se perderá**.
+
+**Recomendación:**
+Diseña tus acciones de Controlador RPC (`POST`, `PUT`) para que sean **idempotentes**.
+* *Mal diseño:* "Crear pago" (si se reintenta, cobra doble).
+* *Buen diseño:* "Crear pago con ID X" (si se reintenta y ya existe, devuelve el recibo existente).
+
+Esto permite que, ante un `BugBunny::RequestTimeout` por caída del cliente, puedas reintentar la operación de forma segura.
 
 ---
 
