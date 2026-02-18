@@ -216,6 +216,7 @@ module BugBunny
     # @param correlation_id [String] ID para correlacionar la respuesta con la petición original.
     # @return [void]
     def reply(payload, reply_to, correlation_id)
+      BugBunny.configuration.logger.debug("[Consumer] 📤 Enviando REPLY a: #{reply_to} | ID: #{correlation_id}")
       session.channel.default_exchange.publish(
         payload.to_json,
         routing_key: reply_to,
