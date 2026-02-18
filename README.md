@@ -161,6 +161,18 @@ svc.save
 # Log: [BugBunny] [POST] '/services' | Routing Key: 'urgent'
 ```
 
+### Soporte de Parámetros Anidados (Nested Queries)
+En la versión 3.0.3 arreglaste la serialización usando `Rack::Utils`. Esto es una "feature" poderosa que permite filtrar por hashes complejos, algo muy común en APIs modernas.
+
+**Sugerencia:** Agregar un ejemplo en la sección **CRUD RESTful > LEER (GET)**:
+
+```ruby
+# --- LEER CON FILTROS AVANZADOS ---
+# Soporta hashes anidados (gracias a Rack::Utils)
+# Envia: GET services?q[status]=active&q[tags][]=web
+Manager::Service.where(q: { status: 'active', tags: ['web'] })
+```
+
 ### 🔌 Manipulación de Headers (Middleware)
 
 BugBunny permite interceptar y modificar las peticiones antes de que se envíen a RabbitMQ utilizando `client_middleware`. Esto es ideal para inyectar trazas, autenticación o metadatos de contexto.
