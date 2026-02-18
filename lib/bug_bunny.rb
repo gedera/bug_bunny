@@ -75,7 +75,7 @@ module BugBunny
 
     @global_connection.close if @global_connection.open?
     @global_connection = nil
-    configuration.logger.info('[BugBunny] Global connection closed.')
+    configuration.logger.info('[BugBunny] 🔌 Global connection closed.')
   end
 
   # @api private
