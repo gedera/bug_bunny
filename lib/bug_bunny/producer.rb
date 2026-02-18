@@ -131,10 +131,11 @@ module BugBunny
         # Consumimos sin ack (auto-ack) porque reply-to no soporta acks manuales de forma estándar
         @session.channel.basic_consume('amq.rabbitmq.reply-to', '', true, false, nil) do |_, props, body|
           BugBunny.configuration.logger.debug("[Producer] 📥 RESPUESTA RECIBIDA | ID: #{props.correlation_id}")
-          if (future = @pending_requests[props.correlation_id])
+          incoming_cid = props.correlation_id.to_s
+          if (future = @pending_requests[incoming_cid])
             future.set(body)
             else
-              BugBunny.configuration.logger.warn("[Producer] ⚠️ ID #{props.correlation_id} no encontrado en pendientes: #{@pending_requests.keys}")
+              BugBunny.configuration.logger.warn("[Producer] ⚠️ ID #{incoming_cid} no encontrado en pendientes: #{@pending_requests.keys}")
           end
         end
         @reply_listener_started = true
