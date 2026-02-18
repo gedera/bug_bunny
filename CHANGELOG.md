@@ -1,4 +1,21 @@
 # Changelog
+## [3.1.0] - 2026-02-18
+
+### 🌟 New Features: Observability & Tracing
+* **Distributed Tracing Stack:** Implemented a native distributed tracing system that ensures full visibility from the Producer to the Consumer/Worker.
+    * **Producer:** Messages now automatically carry a `correlation_id`. Added support for custom Middlewares to inject IDs from the application context (e.g., Rails `Current.request_id` or Sidekiq IDs).
+    * **Consumer:** Automatically extracts the `correlation_id` from AMQP headers and wraps the entire execution in a **Tagged Logger** block (e.g., `[d41d8cd9...] [API] Processing...`).
+    * **Controller:** Introduced `self.log_tags` to allow injecting rich business context into logs (e.g., `[Tenant-123]`) using the native `around_action` hook.
+
+### 🛡 Security
+* **Router Hardening:** Added a strict inheritance check in the `Consumer`.
+    * **Prevention:** The router now verifies that the instantiated class inherits from `BugBunny::Controller` before execution.
+    * **Impact:** Prevents potential **Remote Code Execution (RCE)** vulnerabilities where an attacker could try to instantiate arbitrary system classes (like `::Kernel`) via the `type` header.
+
+### 🐛 Bug Fixes
+* **RPC Type Consistency:** Fixed a critical issue where RPC responses were ignored if the `correlation_id` was an Integer.
+    * **Fix:** The Producer now strictly normalizes all correlation IDs to Strings (`.to_s`) during both storage (pending requests) and retrieval (reply listener), ensuring reliable matching regardless of the ID format.
+
 ## [3.0.6] - 2026-02-17
 
 ### ♻️ Refactor & Standards
