@@ -136,6 +136,10 @@ module BugBunny
         controller_class_name = "#{namespace}::#{controller_name}"
 
         controller_class = controller_class_name.constantize
+
+        unless controller_class < BugBunny::Controller
+          raise BugBunny::SecurityError, "Class #{controller_class} is not a valid BugBunny Controller"
+        end
       rescue NameError => _e
         BugBunny.configuration.logger.error("[Consumer] Controller not found: #{controller_class_name}")
         handle_fatal_error(properties, 404, "Not Found", "Controller #{controller_class_name} not found")
