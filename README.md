@@ -282,7 +282,21 @@ class ApplicationController < BugBunny::Controller
 end
 ```
 
-### 3. Tabla de Ruteo (Convención)
+### 3. Namespace de Controladores (Opcional)
+
+Por defecto, BugBunny busca los controladores dentro del módulo `Rabbit::Controllers`. Esto implica que tus archivos deben estar en `app/rabbit/controllers/`.
+
+Si prefieres organizar tus consumidores en otro lugar (ej: dentro de un dominio específico o carpeta existente), puedes cambiar el namespace.
+
+**Configuración:**
+```ruby
+# config/initializers/bug_bunny.rb
+BugBunny.configure do |config|
+  config.controller_namespace = 'Billing::Events'
+end
+```
+
+### 4. Tabla de Ruteo (Convención)
 
 El Router infiere la acción automáticamente:
 
@@ -430,6 +444,20 @@ client.publish('audit/events',
   body: { event: 'login', user_id: 1 }
 )
 ```
+
+### ⚠️ Consideraciones sobre RPC (Direct Reply-To)
+
+BugBunny utiliza el mecanismo nativo `amq.rabbitmq.reply-to` para las peticiones RPC. Esto maximiza el rendimiento eliminando la necesidad de crear colas temporales por cada petición.
+
+**Trade-off:**
+Al usar este mecanismo, las respuestas son efímeras. Si el proceso Cliente (tu aplicación Rails/Sidekiq) se reinicia abruptamente justo después de enviar la petición pero milisegundos antes de procesar la respuesta, **esa respuesta se perderá**.
+
+**Recomendación:**
+Diseña tus acciones de Controlador RPC (`POST`, `PUT`) para que sean **idempotentes**.
+* *Mal diseño:* "Crear pago" (si se reintenta, cobra doble).
+* *Buen diseño:* "Crear pago con ID X" (si se reintenta y ya existe, devuelve el recibo existente).
+
+Esto permite que, ante un `BugBunny::RequestTimeout` por caída del cliente, puedas reintentar la operación de forma segura.
 
 ---
 
