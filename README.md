@@ -295,6 +295,116 @@ El Router infiere la acción automáticamente:
 | `DELETE` | `services/12` | `ServicesController` | `destroy` |
 | `POST` | `services/12/restart` | `ServicesController` | `restart` (Custom) |
 
+### 🔎 Observabilidad y Logging
+
+BugBunny implementa un sistema de **Tracing Distribuido** nativo. Esto permite rastrear una petición desde que se origina en tu aplicación (Producer) hasta que es procesada por el worker (Consumer), manteniendo el mismo ID de traza (`correlation_id`) en todos los logs.
+
+#### 1. Productor: Inyectar el Trace ID
+
+Para asegurar que los mensajes salgan de tu aplicación con el ID de traza correcto (por ejemplo, el `X-Request-Id` de Rails, Sidekiq o tu propio `Current.request_id`), debes inyectarlo antes de publicar el mensaje.
+
+La forma recomendada es crear un Middleware y registrarlo globalmente.
+
+**A. Crear el Middleware**
+
+```ruby
+# app/middleware/correlation_injector.rb
+class CorrelationInjector < BugBunny::Middleware::Base
+  def on_request(env)
+    # Ejemplo: Si usas Rails CurrentAttributes o similar
+    if defined?(Current) && Current.request_id
+      env.correlation_id = Current.request_id
+    end
+  end
+end
+```
+
+**B. Registrar el Middleware (Initializer)**
+
+```ruby
+# config/initializers/bug_bunny.rb
+require 'bug_bunny'
+require_relative '../../app/middleware/correlation_injector'
+
+# Módulo para interceptar la inicialización de cualquier cliente
+module BugBunnyGlobalMiddleware
+  def initialize(pool:)
+    super
+    @stack.use CorrelationInjector
+  end
+end
+
+# Aplicamos el parche para que afecte a Resources y Clientes manuales
+BugBunny::Client.prepend(BugBunnyGlobalMiddleware)
+```
+
+---
+
+#### 2. Consumidor: Logging Automático
+
+El consumidor de BugBunny está diseñado para garantizar la trazabilidad "out-of-the-box".
+
+##### A. Comportamiento por Defecto
+Al recibir un mensaje, el Consumidor realiza automáticamente los siguientes pasos:
+1. Extrae el `correlation_id` de las propiedades AMQP (o genera un UUID si no existe).
+2. Envuelve todo el procesamiento en un bloque de log etiquetado (`tagged logging`).
+3. Pasa el ID al Controlador.
+
+**No necesitas configurar nada.** Tus logs se verán así automáticamente:
+
+```text
+[d41d8cd9-8f00...] [Consumer] Listening on queue...
+[d41d8cd9-8f00...] [API] Procesando usuario 123...
+```
+
+##### B. Configuración Global (Initializer)
+Si deseas agregar tags estáticos que aparezcan en **todos** los mensajes procesados por este worker (como el nombre del servicio, versión o entorno), agrégalos a `config.log_tags`.
+
+> **Nota:** No agregues `:uuid` aquí, ya que el Consumidor lo agrega automáticamente.
+
+```ruby
+BugBunny.configure do |config|
+  # ... configuración de conexión ...
+
+  # Tags globales adicionales
+  config.log_tags = [
+    'WORKER',
+    ->(_) { ENV['APP_VERSION'] }
+  ]
+end
+```
+
+**Resultado en Log:**
+```text
+[d41d8cd9...] [WORKER] [v1.0.2] [API] Procesando mensaje...
+```
+
+##### C. Configuración por Controlador (Contexto Rico)
+Para agregar información específica del mensaje o lógica de negocio (como IDs de inquilinos, usuario actual, o headers específicos), utiliza `self.log_tags` en tus controladores.
+
+Esto aprovecha el `around_action` nativo de la gema para inyectar contexto.
+
+```ruby
+# app/rabbit/controllers/application_controller.rb
+module Rabbit
+  module Controllers
+    class ApplicationController < BugBunny::Controller
+      # Define tags dinámicos basados en el mensaje actual
+      self.log_tags = [
+        ->(c) { c.params[:tenant_id] },      # Tag del Tenant (si viene en el body)
+        ->(c) { c.headers['X-Source'] }      # Tag del origen
+      ]
+    end
+  end
+end
+```
+
+**Resultado Final en Log:**
+(UUID Automático + Tag Global + Tag de Controlador)
+```text
+[d41d8cd9...] [WORKER] [Tenant-55] [Console] Creando usuario...
+```
+
 ---
 
 ## 🔌 Modo Publisher (Cliente Manual)

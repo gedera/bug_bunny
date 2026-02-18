@@ -65,7 +65,17 @@ module BugBunny
       start_health_check(queue_name)
 
       q.subscribe(manual_ack: true, block: block) do |delivery_info, properties, body|
-        process_message(delivery_info, properties, body)
+        trace_id = properties.correlation_id
+
+        logger = BugBunny.configuration.logger
+
+        if logger.respond_to?(:tagged)
+          logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
+        elsif defined?(Rails) && Rails.logger.respond_to?(:tagged)
+          Rails.logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
+        else
+          process_message(delivery_info, properties, body)
+        end
       end
     rescue StandardError => e
       BugBunny.configuration.logger.error("[Consumer] Connection Error: #{e.message}. Retrying...")
@@ -84,7 +94,7 @@ module BugBunny
     # @param body [String] El payload crudo del mensaje.
     # @return [void]
     def process_message(delivery_info, properties, body)
-
+      BugBunny.configuration.logger.debug("delivery_info: #{delivery_info}, properties: #{properties}, body: #{body}")
       # 1. Recuperación Robusta del Path (Ruta)
       path = properties.type
       if path.nil? || path.empty?

@@ -60,6 +60,9 @@ module BugBunny
     # @return [String] Namespace base donde se buscarán los controladores (default: 'Rabbit::Controllers').
     attr_accessor :controller_namespace
 
+    # @return [Array<Symbol, Proc, String>]
+    attr_accessor :log_tags
+
     # Inicializa la configuración con valores por defecto seguros.
     def initialize
       @host = '127.0.0.1'
@@ -86,6 +89,8 @@ module BugBunny
 
       # Configuración por defecto para mantener compatibilidad
       @controller_namespace = 'Rabbit::Controllers'
+
+      @log_tags = [:uuid]
     end
 
     # Construye la URL de conexión AMQP basada en los atributos configurados.
