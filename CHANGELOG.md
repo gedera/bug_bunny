@@ -1,4 +1,18 @@
 # Changelog
+## [3.1.2] - 2026-02-19
+
+### 🐛 Bug Fixes
+* **Controller Callback Inheritance:** Fixed a critical issue where `before_action`, `around_action`, and `rescue_from` definitions in a parent class (like `ApplicationController`) were not being inherited by child controllers. Migrated internal storage to `class_attribute` with deep duplication to ensure isolated, thread-safe inheritance without mutating the parent class.
+* **Gemspec Hygiene:** Updated the `spec.description` to resolve RubyGems identity warnings and added explicit minimum version boundaries for standard dependencies (e.g., `json >= 2.0`).
+
+### 🌟 Observability & DX (Developer Experience)
+* **Structured Remote Errors:** `BugBunny::Resource` now intelligently formats the body of remote errors. When raising a `ClientError` (4xx) or `InternalServerError` (500), it extracts the specific error message (e.g., `"Internal Server Error - undefined method 'foo'"`) or falls back to a readable JSON string. This drastically improves the legibility of remote stack traces in monitoring tools like Sentry or Datadog.
+* **Infrastructure Logging:** The `Consumer` and `Producer` now calculate the final resolved cascade options (`exchange_opts`, `queue_opts`) and explicitly log them during worker startup and message publishing. This provides absolute transparency into what configurations are actually reaching RabbitMQ.
+* **Consumer Cascade Options:** Added the `exchange_opts:` parameter to `Consumer.subscribe` to fully support Level 3 (On-the-fly) infrastructure configuration for manual worker instantiations.
+
+### 📖 Documentation
+* **Built-in Middlewares:** Added comprehensive documentation to the README explaining how to inject and utilize the provided `RaiseError` and `JsonResponse` middlewares when using the manual `BugBunny::Client`.
+
 ## [3.1.1] - 2026-02-19
 
 ### 🚀 Features
