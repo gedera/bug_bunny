@@ -15,6 +15,13 @@ BugBunny.configure do |config|
   config.vhost = '/'
   config.logger = Logger.new($stdout)
   config.logger.level = Logger::WARN 
+
+  # ========================================================
+  # LA MAGIA DE LA CASCADA (Nivel 2: Configuración Global)
+  # ========================================================
+  # Para los tests, queremos que los exchanges y queues sean efímeros
+  config.exchange_options = { durable: false, auto_delete: true }
+  config.queue_options    = { exclusive: false, durable: false, auto_delete: true }
 end
 
 TEST_POOL = ConnectionPool.new(size: 5, timeout: 5) { BugBunny.create_connection }
@@ -34,8 +41,12 @@ module IntegrationHelper
     
     worker_thread = Thread.new do
       ch = conn.create_channel
-      # FIX: auto_delete: true para limpieza automática
-      ch.exchange_declare(exchange, exchange_type, durable: false, auto_delete: true)
+      
+      x_opts = BugBunny.configuration.exchange_options || {}
+      q_opts = BugBunny.configuration.queue_options || {}
+
+      # FIX: Usamos la API de alto nivel (public_send) idéntica a BugBunny::Session
+      ch.public_send(exchange_type, exchange, x_opts)
       ch.close
 
       BugBunny::Consumer.subscribe(
@@ -44,7 +55,7 @@ module IntegrationHelper
         exchange_name: exchange,
         exchange_type: exchange_type,
         routing_key: routing_key,
-        queue_opts: { auto_delete: true }, # FIX: Queue también efímera
+        queue_opts: q_opts,
         block: true
       )
     rescue => e
@@ -66,12 +77,17 @@ module IntegrationHelper
     
     worker_thread = Thread.new do
       ch = conn.create_channel
-      # FIX: auto_delete: true
-      ch.exchange_declare(exchange, exchange_type, durable: false, auto_delete: true)
       
-      # FIX: auto_delete: true en la queue también
-      q = ch.queue(queue, auto_delete: true)
-      q.bind(exchange, routing_key: routing_key)
+      x_opts = BugBunny.configuration.exchange_options || {}
+      q_opts = BugBunny.configuration.queue_options || {}
+      
+      # FIX DEFINITIVO: Ahora 'x' es un hermoso objeto Bunny::Exchange
+      # que la función .bind() entiende perfectamente.
+      x = ch.public_send(exchange_type, exchange, x_opts)
+      q = ch.queue(queue, q_opts)
+      
+      # Bindeamos el objeto al queue
+      q.bind(x, routing_key: routing_key)
 
       q.subscribe(block: true) do |delivery, props, body|
         captured_messages << { 

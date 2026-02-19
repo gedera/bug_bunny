@@ -122,6 +122,77 @@ class ManualClientTest < Minitest::Test
     end
   end
 
+  # ==========================================
+  # GRUPO 3: OPCIONES DE INFRAESTRUCTURA (CASCADA NIVEL 3)
+  # ==========================================
+
+  def test_publish_with_custom_exchange_options
+    puts "  -> [Manual] Publish (Custom Options Nivel 3)..."
+    custom_exchange = "custom_opts_x_#{SecureRandom.hex(4)}"
+    
+    # 1. Pre-creamos el exchange exigiendo que sea DURABLE (contrario a la config global)
+    conn = BugBunny.create_connection
+    ch = conn.create_channel
+    ch.topic(custom_exchange, durable: true, auto_delete: true)
+
+    begin
+      # 2. El cliente publica inyectando opciones dinámicas.
+      # Si esto no funcionara, RabbitMQ nos tiraría PRECONDITION_FAILED 
+      # porque la configuración global (Nivel 2) dice durable: false.
+      @client.publish('logs', 
+        exchange: custom_exchange, 
+        exchange_type: 'topic', 
+        exchange_options: { durable: true, auto_delete: true }, # Nivel 3 sobrescribe Nivel 2
+        body: { test: 'options' }
+      )
+      
+      # Si la ejecución llega aquí, significa que la Cascada funcionó perfecto.
+      assert true 
+    ensure
+      ch&.exchange_delete(custom_exchange) rescue nil
+      conn&.close
+    end
+  end
+
+  def test_request_with_custom_exchange_options
+    puts "  -> [Manual] RPC (Custom Options Nivel 3)..."
+    custom_exchange = "custom_opts_rpc_x_#{SecureRandom.hex(4)}"
+    
+    # 1. Exigimos DURABLE
+    conn = BugBunny.create_connection
+    ch = conn.create_channel
+    ch.direct(custom_exchange, durable: true, auto_delete: true)
+
+    # 2. Levantamos un worker usando esas configuraciones nativas
+    worker_thread = Thread.new do
+      q = ch.queue('', exclusive: true)
+      q.bind(custom_exchange, routing_key: 'custom.rpc')
+      q.subscribe(block: true) do |delivery, props, _body|
+        # Respuesta manual
+        ch.default_exchange.publish('{"status":200, "body":"ok"}', routing_key: props.reply_to, correlation_id: props.correlation_id)
+      end
+    end
+    sleep 0.5
+
+    begin
+      # 3. El cliente hace el request inyectando las opciones
+      response = @client.request('test',
+        exchange: custom_exchange,
+        exchange_type: 'direct',
+        routing_key: 'custom.rpc',
+        exchange_options: { durable: true, auto_delete: true }, # Nivel 3
+        body: { req: 'data' }
+      )
+
+      assert_equal 200, response['status']
+      assert_equal 'ok', response['body']
+    ensure
+      worker_thread&.kill
+      ch&.exchange_delete(custom_exchange) rescue nil
+      conn&.close
+    end
+  end
+
   private
 
   def wait_for_message(queue, timeout_sec = 2)
