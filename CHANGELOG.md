@@ -1,4 +1,15 @@
 # Changelog
+## [3.1.3] - 2026-02-19
+
+### 🏗️ Architectural Refactoring (Middleware Standardization)
+* **Centralized Error Handling:** Refactored `BugBunny::Resource` to completely delegate HTTP status evaluation to the `RaiseError` middleware. The ORM now operates strictly on a "Happy Path" mentality, rescuing semantic exceptions (`NotFound`, `UnprocessableEntity`) natively.
+* **Middleware Injection Enforcement:** `BugBunny::Resource` now explicitly guarantees that `BugBunny::Middleware::RaiseError` and `BugBunny::Middleware::JsonResponse` are the core of the stack, ensuring consistent data parsing and error raising before any custom user middlewares are executed.
+
+### ✨ New Features & Improvements
+* **Smart Validation Errors:** `BugBunny::UnprocessableEntity` (422) is now intelligent. It automatically parses the remote worker's response payload, gracefully handling string fallbacks or extracting the standard Rails `{ errors: ... }` convention to accurately populate local object validations.
+* **HTTP 409 Conflict Support:** Added native support for `409 Conflict` mapping it to the new `BugBunny::Conflict` exception. Ideal for handling state collisions in distributed systems.
+* **Global Error Formatting:** Moved `format_error_message` directly into the `RaiseError` middleware. Now, even manual `BugBunny::Client` requests will benefit from clean, structured exception messages (e.g., `"Internal Server Error - undefined method"`) optimized for APMs like Sentry or Datadog.
+
 ## [3.1.2] - 2026-02-19
 
 ### 🐛 Bug Fixes
