@@ -185,7 +185,27 @@ Manager::Service.with(
 ```
 
 ### 4. Client Middleware (Interceptores)
-Intercepta peticiones antes de salir hacia RabbitMQ. Ideal para inyectar Auth o Headers.
+Intercepta peticiones de ida y respuestas de vuelta en la arquitectura del cliente. 
+
+**Middlewares Incluidos (Built-ins)**
+Si usas `BugBunny::Resource` el manejo de JSON y errores ya está integrado. Pero si utilizas el cliente manual (`BugBunny::Client`), puedes inyectar los middlewares incluidos para no tener que parsear respuestas manualmente:
+
+* `BugBunny::Middleware::JsonResponse`: Parsea automáticamente el cuerpo de la respuesta de JSON a un Hash de Ruby.
+* `BugBunny::Middleware::RaiseError`: Evalúa el código de estado (`status`) de la respuesta y lanza excepciones nativas (`BugBunny::NotFound`, `BugBunny::UnprocessableEntity`, `BugBunny::InternalServerError`, etc.).
+
+```ruby
+# Uso con el cliente manual
+client = BugBunny::Client.new(pool: BUG_BUNNY_POOL) do |stack|
+  stack.use BugBunny::Middleware::RaiseError
+  stack.use BugBunny::Middleware::JsonResponse
+end
+
+# Ahora el cliente devolverá Hashes y lanzará errores si el worker falla
+response = client.request('users/1', method: :get)
+```
+
+**Middlewares Personalizados**
+Ideales para inyectar Auth o Headers de trazabilidad en todos los requests de un Recurso.
 
 ```ruby
 class Manager::Service < BugBunny::Resource

@@ -414,15 +414,30 @@ module BugBunny
       if response['status'] == 422
         raise BugBunny::UnprocessableEntity.new(response['body']['errors'] || response['body'])
       elsif response['status'] >= 500
-        raise BugBunny::InternalServerError
+        raise BugBunny::InternalServerError, format_error_message(response['body'])
       elsif response['status'] >= 400
-        raise BugBunny::ClientError
+        raise BugBunny::ClientError, format_error_message(response['body'])
       end
 
       assign_attributes(response['body'])
       self.persisted = true
       clear_changes_information
       true
+    end
+
+    # Formatea el cuerpo de la respuesta de error para que sea legible en las excepciones
+    def format_error_message(body)
+      return "Unknown Error" if body.nil?
+      return body if body.is_a?(String)
+
+      # Si el worker devolvió un JSON con una key 'error' (nuestra convención en Controller), la priorizamos
+      if body.is_a?(Hash) && body['error']
+        detail = body['detail'] ? " - #{body['detail']}" : ""
+        "#{body['error']}#{detail}"
+      else
+        # Fallback: Convertir todo el Hash a JSON string para que se vea claro en Sentry/Logs
+        body.to_json
+      end
     end
 
     # Carga errores remotos en el objeto local.

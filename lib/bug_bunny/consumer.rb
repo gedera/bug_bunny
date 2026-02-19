@@ -53,15 +53,27 @@ module BugBunny
     # @param exchange_name [String] Nombre del exchange al cual enlazar la cola.
     # @param routing_key [String] Patrón de enrutamiento (ej: 'users.*').
     # @param exchange_type [String] Tipo de exchange ('direct', 'topic', 'fanout').
+    # @param exchange_opts [Hash] Opciones adicionales para el exchange (durable, auto_delete).
     # @param queue_opts [Hash] Opciones adicionales para la cola (durable, auto_delete).
     # @param block [Boolean] Si es `true`, bloquea el hilo actual (loop infinito).
     # @return [void]
-    def subscribe(queue_name:, exchange_name:, routing_key:, exchange_type: 'direct', queue_opts: {}, block: true)
-      x = session.exchange(name: exchange_name, type: exchange_type)
+    def subscribe(queue_name:, exchange_name:, routing_key:, exchange_type: 'direct', exchange_opts: {}, queue_opts: {}, block: true)
+      # Declaración de Infraestructura
+      x = session.exchange(name: exchange_name, type: exchange_type, opts: exchange_opts)
       q = session.queue(queue_name, queue_opts)
       q.bind(x, routing_key: routing_key)
 
-      BugBunny.configuration.logger.info("[BugBunny::Consumer] 🎧 Listening on '#{queue_name}' | Exchange: '#{exchange_name}' | Routing Key: '#{routing_key}'")
+      # 📊 LOGGING DE OBSERVABILIDAD: Calculamos las opciones finales para mostrarlas en consola
+      final_x_opts = BugBunny::Session::DEFAULT_EXCHANGE_OPTIONS
+                       .merge(BugBunny.configuration.exchange_options || {})
+                       .merge(exchange_opts || {})
+      final_q_opts = BugBunny::Session::DEFAULT_QUEUE_OPTIONS
+                       .merge(BugBunny.configuration.queue_options || {})
+                       .merge(queue_opts || {})
+
+      BugBunny.configuration.logger.info("[BugBunny::Consumer] 🎧 Listening on '#{queue_name}' (Opts: #{final_q_opts})")
+      BugBunny.configuration.logger.info("[BugBunny::Consumer] 🔀 Bounded to Exchange '#{exchange_name}' (#{exchange_type}) | Opts: #{final_x_opts} | RK: '#{routing_key}'")
+
       start_health_check(queue_name)
 
       q.subscribe(manual_ack: true, block: block) do |delivery_info, properties, body|
