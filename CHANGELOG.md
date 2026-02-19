@@ -1,4 +1,15 @@
 # Changelog
+## [3.1.1] - 2026-02-19
+
+### 🚀 Features
+* **Infrastructure Configuration Cascade:** Added support for dynamic configuration of RabbitMQ Exchanges and Queues (e.g., `durable`, `auto_delete`). Configurations can now be applied across 3 levels:
+  1. **Global Default:** Via `BugBunny.configure { |c| c.exchange_options = {...} }`.
+  2. **Resource Level:** Via class attributes `self.exchange_options = {...}` on `BugBunny::Resource`.
+  3. **On-the-fly:** Via `BugBunny::Client` request kwargs or `Resource.with(exchange_options: {...})`.
+
+### 🛠 Improvements
+* **Test Suite Resilience:** Updated internal test helpers to use global cascade configurations, resolving `PRECONDITION_FAILED` conflicts during rapid test execution.
+
 ## [3.1.0] - 2026-02-18
 
 ### 🌟 New Features: Observability & Tracing
