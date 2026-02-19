@@ -61,7 +61,7 @@ module BugBunny
       q = session.queue(queue_name, queue_opts)
       q.bind(x, routing_key: routing_key)
 
-      BugBunny.configuration.logger.info("[Consumer] Listening on #{queue_name} (Exchange: #{exchange_name})")
+      BugBunny.configuration.logger.info("[BugBunny::Consumer] 🎧 Listening on '#{queue_name}' | Exchange: '#{exchange_name}' | Routing Key: '#{routing_key}'")
       start_health_check(queue_name)
 
       q.subscribe(manual_ack: true, block: block) do |delivery_info, properties, body|
@@ -78,7 +78,7 @@ module BugBunny
         end
       end
     rescue StandardError => e
-      BugBunny.configuration.logger.error("[Consumer] Connection Error: #{e.message}. Retrying...")
+      BugBunny.configuration.logger.error("[BugBunny::Consumer] 💥 Connection Error: #{e.message}. Retrying in #{BugBunny.configuration.network_recovery_interval}s...")
       sleep BugBunny.configuration.network_recovery_interval
       retry
     end
@@ -94,15 +94,11 @@ module BugBunny
     # @param body [String] El payload crudo del mensaje.
     # @return [void]
     def process_message(delivery_info, properties, body)
-      BugBunny.configuration.logger.debug("delivery_info: #{delivery_info}, properties: #{properties}, body: #{body}")
-      # 1. Recuperación Robusta del Path (Ruta)
-      path = properties.type
-      if path.nil? || path.empty?
-        path = properties.headers ? properties.headers['path'] : nil
-      end
+      # 1. Validación de Headers
+      path = properties.type || (properties.headers && properties.headers['path'])
 
       if path.nil? || path.empty?
-        BugBunny.configuration.logger.error("[Consumer] Missing 'type' or 'path' header. Message rejected.")
+        BugBunny.configuration.logger.error("[BugBunny::Consumer] ⛔ Rejected: Missing 'type' header.")
         session.channel.reject(delivery_info.delivery_tag, false)
         return
       end
@@ -113,6 +109,9 @@ module BugBunny
 
       # 3. Router: Inferencia de Controlador y Acción
       route_info = router_dispatch(http_method, path)
+
+      BugBunny.configuration.logger.info("[BugBunny::Consumer] 📥 Started #{http_method} \"/#{path}\" for Routing Key: #{delivery_info.routing_key}")
+      BugBunny.configuration.logger.debug("[BugBunny::Consumer] 📦 Body: #{body.truncate(200)}")
 
       request_metadata = {
         type: path,
@@ -133,7 +132,7 @@ module BugBunny
         controller_name = route_info[:controller].camelize
 
         # Construcción: "Messaging::Handlers" + "::" + "Users"
-        controller_class_name = "#{namespace}::#{controller_name}"
+        controller_class_name = "#{namespace}::#{controller_name}Controller"
 
         controller_class = controller_class_name.constantize
 
@@ -141,7 +140,7 @@ module BugBunny
           raise BugBunny::SecurityError, "Class #{controller_class} is not a valid BugBunny Controller"
         end
       rescue NameError => _e
-        BugBunny.configuration.logger.error("[Consumer] Controller not found: #{controller_class_name}")
+        BugBunny.configuration.logger.warn("[BugBunny::Consumer] ⚠️  Controller not found: #{controller_class_name} (Path: #{path})")
         handle_fatal_error(properties, 404, "Not Found", "Controller #{controller_class_name} not found")
         session.channel.reject(delivery_info.delivery_tag, false)
         return
@@ -159,7 +158,7 @@ module BugBunny
       session.channel.ack(delivery_info.delivery_tag)
 
     rescue StandardError => e
-      BugBunny.configuration.logger.error("[Consumer] Execution Error: #{e.message}")
+      BugBunny.configuration.logger.error("[BugBunny::Consumer] 💥 Execution Error (#{e.class}): #{e.message}")
       handle_fatal_error(properties, 500, "Internal Server Error", e.message)
       session.channel.reject(delivery_info.delivery_tag, false)
     end
@@ -216,7 +215,7 @@ module BugBunny
     # @param correlation_id [String] ID para correlacionar la respuesta con la petición original.
     # @return [void]
     def reply(payload, reply_to, correlation_id)
-      BugBunny.configuration.logger.debug("[Consumer] 📤 Enviando REPLY a: #{reply_to} | ID: #{correlation_id}")
+      BugBunny.configuration.logger.debug("[BugBunny::Consumer] 📤 Sending RPC Reply to #{reply_to} | ID: #{correlation_id}")
       session.channel.default_exchange.publish(
         payload.to_json,
         routing_key: reply_to,
@@ -247,7 +246,7 @@ module BugBunny
       Concurrent::TimerTask.new(execution_interval: BugBunny.configuration.health_check_interval) do
         session.channel.queue_declare(q_name, passive: true)
       rescue StandardError
-        BugBunny.configuration.logger.warn("[Consumer] Queue check failed. Reconnecting session...")
+        BugBunny.configuration.logger.warn("[BugBunny::Consumer] ⚠️  Queue check failed. Reconnecting session...")
         session.close
       end.execute
     end

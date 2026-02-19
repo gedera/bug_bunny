@@ -29,7 +29,7 @@ module BugBunny
 
     # Envía un mensaje de forma asíncrona (Fire-and-Forget).
     #
-    # Serializa el cuerpo del request, resuelve el exchange aplicando la cascada de 
+    # Serializa el cuerpo del request, resuelve el exchange aplicando la cascada de
     # configuración y publica el mensaje sin esperar respuesta.
     #
     # @param request [BugBunny::Request] Objeto con la configuración del envío (body, exchange_options, etc).
@@ -37,16 +37,15 @@ module BugBunny
     def fire(request)
       # Obtenemos el exchange pasando las opciones específicas del request para la fusión en cascada
       x = @session.exchange(
-        name: request.exchange, 
-        type: request.exchange_type, 
+        name: request.exchange,
+        type: request.exchange_type,
         opts: request.exchange_options
       )
 
       payload = serialize_message(request.body)
       opts = request.amqp_options
 
-      # LOG ESTRUCTURADO Y LEGIBLE
-      log_publication(request)
+      log_request(request, payload)
 
       x.publish(payload, opts.merge(routing_key: request.final_routing_key))
     end
@@ -74,6 +73,8 @@ module BugBunny
       begin
         fire(request)
 
+        BugBunny.configuration.logger.debug("[BugBunny::Producer] ⏳ Waiting for RPC response | ID: #{cid} | Timeout: #{wait_timeout}s")
+
         # Bloqueamos el hilo aquí hasta que llegue la respuesta o expire el timeout
         response_payload = future.value(wait_timeout)
 
@@ -90,18 +91,17 @@ module BugBunny
 
     private
 
-    # Registra la información de la publicación en el logger configurado.
-    #
-    # @param request [BugBunny::Request] El objeto request que se está procesando.
-    def log_publication(request)
+    def log_request(request, payload)
       verb = request.method.to_s.upcase
       target = request.path
-      ex_info = "'#{request.exchange}' (Type: #{request.exchange_type})"
       rk = request.final_routing_key
+      id = request.correlation_id
 
-      BugBunny.configuration.logger.info(
-        "[BugBunny] [#{verb}] '/#{target}' | Exchange: #{ex_info} | Routing Key: '#{rk}'"
-      )
+      # INFO: Resumen de una línea (Traffic)
+      BugBunny.configuration.logger.info("[BugBunny::Producer] 📤 #{verb} /#{target} | RK: '#{rk}' | ID: #{id}")
+
+      # DEBUG: Detalle completo (Payload)
+      BugBunny.configuration.logger.debug("[BugBunny::Producer] 📦 Payload: #{payload.truncate(300)}") if payload.is_a?(String)
     end
 
     # Serializa el mensaje para su transporte.
@@ -135,18 +135,16 @@ module BugBunny
       @reply_listener_mutex.synchronize do
         return if @reply_listener_started
 
-        BugBunny.configuration.logger.debug("[Producer] 👂 Iniciando escucha en amq.rabbitmq.reply-to...")
+        BugBunny.configuration.logger.debug("[BugBunny::Producer] 👂 Starting Reply Listener on 'amq.rabbitmq.reply-to'")
 
         # Consumimos sin ack (auto-ack) porque reply-to no soporta acks manuales de forma estándar
         @session.channel.basic_consume('amq.rabbitmq.reply-to', '', true, false, nil) do |_, props, body|
-          BugBunny.configuration.logger.debug("[Producer] 📥 RESPUESTA RECIBIDA | ID: #{props.correlation_id}")
-          incoming_cid = props.correlation_id.to_s
-          if (future = @pending_requests[incoming_cid])
+          cid = props.correlation_id.to_s
+          BugBunny.configuration.logger.debug("[BugBunny::Producer] 📥 RPC Response matched | ID: #{cid}")
+          if (future = @pending_requests[cid])
             future.set(body)
           else
-            BugBunny.configuration.logger.warn(
-              "[Producer] ⚠️ ID #{incoming_cid} no encontrado en pendientes: #{@pending_requests.keys}"
-            )
+            BugBunny.configuration.logger.warn("[BugBunny::Producer] ⚠️ Orphaned RPC Response received | ID: #{cid}")
           end
         end
         @reply_listener_started = true
