@@ -91,16 +91,26 @@ module BugBunny
 
     private
 
+    # Registra la petición en el log calculando las opciones de infraestructura.
+    #
+    # @param request [BugBunny::Request] Objeto Request que se está enviando.
+    # @param payload [String] El cuerpo del mensaje serializado.
     def log_request(request, payload)
       verb = request.method.to_s.upcase
       target = request.path
       rk = request.final_routing_key
       id = request.correlation_id
 
+      # 📊 LOGGING DE OBSERVABILIDAD: Calculamos las opciones finales para mostrarlas en consola
+      final_x_opts = BugBunny::Session::DEFAULT_EXCHANGE_OPTIONS
+                       .merge(BugBunny.configuration.exchange_options || {})
+                       .merge(request.exchange_options || {})
+
       # INFO: Resumen de una línea (Traffic)
       BugBunny.configuration.logger.info("[BugBunny::Producer] 📤 #{verb} /#{target} | RK: '#{rk}' | ID: #{id}")
 
-      # DEBUG: Detalle completo (Payload)
+      # DEBUG: Detalle completo de Infraestructura y Payload
+      BugBunny.configuration.logger.debug("[BugBunny::Producer] ⚙️  Exchange Opts: #{final_x_opts}")
       BugBunny.configuration.logger.debug("[BugBunny::Producer] 📦 Payload: #{payload.truncate(300)}") if payload.is_a?(String)
     end
 

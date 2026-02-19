@@ -2,7 +2,7 @@
 
 require 'bundler/setup'
 require 'minitest/autorun'
-# require 'minitest/reporters' 
+# require 'minitest/reporters'
 require 'bug_bunny'
 require 'connection_pool'
 require 'securerandom'
@@ -14,7 +14,7 @@ BugBunny.configure do |config|
   config.password = ENV.fetch('RABBITMQ_PASS', 'guest')
   config.vhost = '/'
   config.logger = Logger.new($stdout)
-  config.logger.level = Logger::WARN 
+  config.logger.level = Logger::WARN
 
   # ========================================================
   # LA MAGIA DE LA CASCADA (Nivel 2: Configuración Global)
@@ -38,10 +38,10 @@ module IntegrationHelper
 
   def with_running_worker(queue:, exchange:, exchange_type: 'topic', routing_key: '#')
     conn = BugBunny.create_connection
-    
+
     worker_thread = Thread.new do
       ch = conn.create_channel
-      
+
       x_opts = BugBunny.configuration.exchange_options || {}
       q_opts = BugBunny.configuration.queue_options || {}
 
@@ -63,7 +63,7 @@ module IntegrationHelper
       puts e.backtrace.join("\n")
     end
 
-    sleep 0.5 
+    sleep 0.5
     yield
   ensure
     conn&.close
@@ -74,26 +74,26 @@ module IntegrationHelper
   def with_spy_worker(queue:, exchange:, exchange_type: 'topic', routing_key: '#')
     captured_messages = Thread::Queue.new
     conn = BugBunny.create_connection
-    
+
     worker_thread = Thread.new do
       ch = conn.create_channel
-      
+
       x_opts = BugBunny.configuration.exchange_options || {}
       q_opts = BugBunny.configuration.queue_options || {}
-      
+
       # FIX DEFINITIVO: Ahora 'x' es un hermoso objeto Bunny::Exchange
       # que la función .bind() entiende perfectamente.
       x = ch.public_send(exchange_type, exchange, x_opts)
       q = ch.queue(queue, q_opts)
-      
+
       # Bindeamos el objeto al queue
       q.bind(x, routing_key: routing_key)
 
       q.subscribe(block: true) do |delivery, props, body|
-        captured_messages << { 
-          body: body, 
+        captured_messages << {
+          body: body,
           routing_key: delivery.routing_key,
-          headers: props.headers 
+          headers: props.headers
         }
       end
     rescue => e
