@@ -15,7 +15,7 @@ module BugBunny
   # 3. **Específico:** Definidos en la clase del recurso o vía `with`.
   #
   # @author Gabriel
-  # @since 3.1.0
+  # @since 3.1.2
   class Resource
     include ActiveModel::API
     include ActiveModel::Attributes
@@ -100,13 +100,22 @@ module BugBunny
         stack
       end
 
-      # Instancia el cliente inyectando los middlewares configurados.
+      # Instancia el cliente inyectando los middlewares núcleo y personalizados.
+      # Integra automáticamente `RaiseError` y `JsonResponse` para que el ORM trabaje
+      # puramente con datos parseados o atrape excepciones sin validar HTTP Status manuales.
+      #
       # @return [BugBunny::Client]
       def bug_bunny_client
         pool = connection_pool
         raise BugBunny::Error, "Connection pool missing for #{name}" unless pool
-        BugBunny::Client.new(pool: pool) do |conn|
-          resolve_middleware_stack.each { |block| block.call(conn) }
+
+        BugBunny::Client.new(pool: pool) do |stack|
+          # 1. Middlewares Core (Siempre presentes para el Resource)
+          stack.use BugBunny::Middleware::RaiseError
+          stack.use BugBunny::Middleware::JsonResponse
+
+          # 2. Middlewares Personalizados del Usuario
+          resolve_middleware_stack.each { |block| block.call(stack) }
         end
       end
 
@@ -164,6 +173,8 @@ module BugBunny
       # @!group Acciones CRUD RESTful
 
       # Realiza una búsqueda filtrada (GET).
+      # Mapea un posible 404 a un array vacío.
+      #
       # @param filters [Hash]
       # @return [Array<BugBunny::Resource>]
       def where(filters = {})
@@ -188,6 +199,8 @@ module BugBunny
           inst.send(:clear_changes_information)
           inst
         end
+      rescue BugBunny::NotFound
+        []
       end
 
       # Devuelve todos los registros.
@@ -195,6 +208,8 @@ module BugBunny
       def all; where({}); end
 
       # Busca un registro por ID (GET).
+      # Mapea un 404 (NotFound) devolviendo un objeto nulo.
+      #
       # @param id [String, Integer]
       # @return [BugBunny::Resource, nil]
       def find(id)
@@ -211,12 +226,14 @@ module BugBunny
           queue_options: current_queue_options
         )
 
-        return nil if response.nil? || response['status'] == 404
-        return nil unless response['body'].is_a?(Hash)
+        return nil unless response && response['body'].is_a?(Hash)
+
         instance = new(response['body'])
         instance.persisted = true
         instance.send(:clear_changes_information)
         instance
+      rescue BugBunny::NotFound
+        nil
       end
 
       # Crea una nueva instancia y la persiste.
@@ -350,7 +367,9 @@ module BugBunny
     # @!group Persistencia
 
     # Guarda el recurso en el servidor remoto vía AMQP (POST o PUT).
-    # @return [Boolean]
+    # Asume el Happy Path; el middleware se encarga de interceptar y lanzar excepciones.
+    #
+    # @return [Boolean] Retorna true si tuvo éxito, false si falló la validación.
     def save
       return false unless valid?
 
@@ -364,6 +383,7 @@ module BugBunny
         path = is_new ? self.class.resource_name : "#{self.class.resource_name}/#{id}"
         method = is_new ? :post : :put
 
+        # Si el middleware de errores no lanza excepción, asumimos un éxito (200..299)
         response = bug_bunny_client.request(
           path,
           method: method,
@@ -375,7 +395,10 @@ module BugBunny
           body: wrapped_payload
         )
 
-        handle_save_response(response)
+        assign_attributes(response['body'])
+        self.persisted = true
+        clear_changes_information
+        true
       end
     rescue BugBunny::UnprocessableEntity => e
       load_remote_rabbit_errors(e.error_messages)
@@ -383,6 +406,7 @@ module BugBunny
     end
 
     # Elimina el recurso del servidor remoto (DELETE).
+    #
     # @return [Boolean]
     def destroy
       return false unless persisted?
@@ -409,40 +433,9 @@ module BugBunny
 
     private
 
-    # Maneja la lógica de respuesta para la acción de guardado.
-    def handle_save_response(response)
-      if response['status'] == 422
-        raise BugBunny::UnprocessableEntity.new(response['body']['errors'] || response['body'])
-      elsif response['status'] >= 500
-        raise BugBunny::InternalServerError, format_error_message(response['body'])
-      elsif response['status'] >= 400
-        raise BugBunny::ClientError, format_error_message(response['body'])
-      end
-
-      assign_attributes(response['body'])
-      self.persisted = true
-      clear_changes_information
-      true
-    end
-
-    # Formatea el cuerpo de la respuesta de error para que sea legible en las excepciones
-    def format_error_message(body)
-      return "Unknown Error" if body.nil?
-      return body if body.is_a?(String)
-
-      # Si el worker devolvió un JSON con una key 'error' (nuestra convención en Controller), la priorizamos
-      if body.is_a?(Hash) && body['error']
-        detail = body['detail'] ? " - #{body['detail']}" : ""
-        "#{body['error']}#{detail}"
-      else
-        # Fallback: Convertir todo el Hash a JSON string para que se vea claro en Sentry/Logs
-        body.to_json
-      end
-    end
-
-    # Carga errores remotos en el objeto local.
+    # Carga errores remotos en el objeto local (utilizado al recibir 422).
     def load_remote_rabbit_errors(errors_hash)
-      return if errors_hash.nil?
+      return if errors_hash.nil? || errors_hash.empty?
       if errors_hash.is_a?(String)
         errors.add(:base, errors_hash)
       else

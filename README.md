@@ -188,7 +188,7 @@ Manager::Service.with(
 Intercepta peticiones de ida y respuestas de vuelta en la arquitectura del cliente. 
 
 **Middlewares Incluidos (Built-ins)**
-Si usas `BugBunny::Resource` el manejo de JSON y errores ya está integrado. Pero si utilizas el cliente manual (`BugBunny::Client`), puedes inyectar los middlewares incluidos para no tener que parsear respuestas manualmente:
+Si usas `BugBunny::Resource`, el manejo de JSON y de errores ya está integrado automáticamente. Pero si utilizas el cliente manual (`BugBunny::Client`), puedes inyectar los middlewares incluidos para no tener que parsear respuestas manualmente:
 
 * `BugBunny::Middleware::JsonResponse`: Parsea automáticamente el cuerpo de la respuesta de JSON a un Hash de Ruby.
 * `BugBunny::Middleware::RaiseError`: Evalúa el código de estado (`status`) de la respuesta y lanza excepciones nativas (`BugBunny::NotFound`, `BugBunny::UnprocessableEntity`, `BugBunny::InternalServerError`, etc.).
@@ -218,6 +218,30 @@ class Manager::Service < BugBunny::Resource
     end)
   end
 end
+```
+
+**Personalización Avanzada de Errores**
+Si en tu aplicación necesitas mapear códigos HTTP de negocio (ej. `402 Payment Required`) a excepciones personalizadas, la forma más limpia es usar `Module#prepend` sobre el middleware nativo en un inicializador. De esta forma inyectas tus reglas sin perder el comportamiento por defecto para los demás errores:
+
+```ruby
+# config/initializers/bug_bunny_custom_errors.rb
+module CustomBugBunnyErrors
+  def on_complete(response)
+    status = response['status'].to_i
+
+    # 1. Reglas específicas de tu negocio
+    if status == 402
+      raise MyApp::PaymentRequiredError, response['body']['message']
+    elsif status == 403 && response['body']['reason'] == 'ip_blocked'
+      raise MyApp::IpBlockedError, response['body']['detail']
+    end
+
+    # 2. Delegar el resto de los errores (404, 422, 500) al middleware original
+    super(response)
+  end
+end
+
+BugBunny::Middleware::RaiseError.prepend(CustomBugBunnyErrors)
 ```
 
 ---
