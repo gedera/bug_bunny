@@ -167,8 +167,8 @@ module BugBunny
         return rendered_response if rendered_response
       end
 
-      BugBunny.configuration.logger.error("Controller Error (#{exception.class}): #{exception.message}")
-      BugBunny.configuration.logger.error(exception.backtrace.join("\n"))
+      BugBunny.configuration.logger.error("[BugBunny::Controller] 💥 Unhandled Exception (#{exception.class}): #{exception.message}")
+      BugBunny.configuration.logger.error(exception.backtrace.first(5).join("\n")) # Limitamos a 5 líneas para no ensuciar
 
       {
         status: 500,

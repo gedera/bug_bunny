@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'concurrent'
 require 'json'
 require 'securerandom'
@@ -27,39 +29,30 @@ module BugBunny
 
     # Envía un mensaje de forma asíncrona (Fire-and-Forget).
     #
-    # Serializa el cuerpo del request, resuelve el exchange y publica el mensaje
-    # sin esperar confirmación ni respuesta del consumidor.
+    # Serializa el cuerpo del request, resuelve el exchange aplicando la cascada de
+    # configuración y publica el mensaje sin esperar respuesta.
     #
-    # @param request [BugBunny::Request] Objeto con la configuración del envío (body, routing_key, etc).
+    # @param request [BugBunny::Request] Objeto con la configuración del envío (body, exchange_options, etc).
     # @return [void]
     def fire(request)
-      x = @session.exchange(name: request.exchange, type: request.exchange_type)
+      # Obtenemos el exchange pasando las opciones específicas del request para la fusión en cascada
+      x = @session.exchange(
+        name: request.exchange,
+        type: request.exchange_type,
+        opts: request.exchange_options
+      )
+
       payload = serialize_message(request.body)
       opts = request.amqp_options
 
-      # LOG ESTRUCTURADO Y LEGIBLE
-      # Muestra claramente: Verbo, Recurso, Exchange (y su tipo) y la Routing Key usada.
-      verb = request.method.to_s.upcase
-      target = request.path
-      ex_info = "'#{request.exchange}' (Type: #{request.exchange_type})"
-      rk = request.final_routing_key
-
-      BugBunny.configuration.logger.info("[BugBunny] [#{verb}] '/#{target}' | Exchange: #{ex_info} | Routing Key: '#{rk}'")
+      log_request(request, payload)
 
       x.publish(payload, opts.merge(routing_key: request.final_routing_key))
     end
 
     # Envía un mensaje y bloquea el hilo actual esperando una respuesta (RPC).
     #
-    # Implementa el mecanismo "Direct Reply-to" de RabbitMQ (`amq.rabbitmq.reply-to`)
-    # para recibir la respuesta directamente sin necesidad de crear colas temporales
-    # por cada petición, lo cual mejora significativamente el rendimiento.
-    #
-    # El flujo es:
-    # 1. Asegura que hay un consumidor escuchando en `amq.rabbitmq.reply-to`.
-    # 2. Genera un `correlation_id` único.
-    # 3. Crea una promesa (`Concurrent::IVar`) y la registra.
-    # 4. Publica el mensaje y bloquea esperando que la promesa se resuelva.
+    # Implementa el mecanismo "Direct Reply-to" de RabbitMQ (`amq.rabbitmq.reply-to`).
     #
     # @param request [BugBunny::Request] Objeto request configurado.
     # @return [Hash] El cuerpo de la respuesta parseado desde JSON.
@@ -80,11 +73,12 @@ module BugBunny
       begin
         fire(request)
 
+        BugBunny.configuration.logger.debug("[BugBunny::Producer] ⏳ Waiting for RPC response | ID: #{cid} | Timeout: #{wait_timeout}s")
+
         # Bloqueamos el hilo aquí hasta que llegue la respuesta o expire el timeout
         response_payload = future.value(wait_timeout)
 
         if response_payload.nil?
-          # CORRECCIÓN: Usamos request.path y request.method en lugar de request.action
           raise BugBunny::RequestTimeout, "Timeout waiting for RPC: #{request.path} [#{request.method}]"
         end
 
@@ -97,7 +91,21 @@ module BugBunny
 
     private
 
+    def log_request(request, payload)
+      verb = request.method.to_s.upcase
+      target = request.path
+      rk = request.final_routing_key
+      id = request.correlation_id
+
+      # INFO: Resumen de una línea (Traffic)
+      BugBunny.configuration.logger.info("[BugBunny::Producer] 📤 #{verb} /#{target} | RK: '#{rk}' | ID: #{id}")
+
+      # DEBUG: Detalle completo (Payload)
+      BugBunny.configuration.logger.debug("[BugBunny::Producer] 📦 Payload: #{payload.truncate(300)}") if payload.is_a?(String)
+    end
+
     # Serializa el mensaje para su transporte.
+    #
     # @param msg [Hash, String, Object] El mensaje a serializar.
     # @return [String] Cadena JSON o string crudo.
     def serialize_message(msg)
@@ -105,6 +113,9 @@ module BugBunny
     end
 
     # Intenta parsear la respuesta recibida.
+    #
+    # @param payload [String] El cuerpo de la respuesta recibida.
+    # @return [Hash] El JSON parseado.
     # @raise [BugBunny::InternalServerError] Si el payload no es JSON válido.
     def parse_response(payload)
       JSON.parse(payload)
@@ -115,27 +126,25 @@ module BugBunny
     # Inicia el consumidor de respuestas RPC de forma perezosa (Lazy Initialization).
     #
     # Utiliza un patrón de "Double-Checked Locking" con Mutex para asegurar que
-    # solo se crea un listener por instancia de Producer, incluso en entornos multi-hilo.
+    # solo se crea un listener por instancia de Producer.
     #
-    # Escucha en la pseudo-cola `amq.rabbitmq.reply-to`. Cuando llega un mensaje,
-    # busca el `correlation_id` en el mapa de pendientes y completa el futuro (`IVar`),
-    # desbloqueando así al hilo que llamó a {#rpc}.
+    # @return [void]
     def ensure_reply_listener!
       return if @reply_listener_started
 
       @reply_listener_mutex.synchronize do
         return if @reply_listener_started
 
-        BugBunny.configuration.logger.debug("[Producer] 👂 Iniciando escucha en amq.rabbitmq.reply-to...")
+        BugBunny.configuration.logger.debug("[BugBunny::Producer] 👂 Starting Reply Listener on 'amq.rabbitmq.reply-to'")
 
         # Consumimos sin ack (auto-ack) porque reply-to no soporta acks manuales de forma estándar
         @session.channel.basic_consume('amq.rabbitmq.reply-to', '', true, false, nil) do |_, props, body|
-          BugBunny.configuration.logger.debug("[Producer] 📥 RESPUESTA RECIBIDA | ID: #{props.correlation_id}")
-          incoming_cid = props.correlation_id.to_s
-          if (future = @pending_requests[incoming_cid])
+          cid = props.correlation_id.to_s
+          BugBunny.configuration.logger.debug("[BugBunny::Producer] 📥 RPC Response matched | ID: #{cid}")
+          if (future = @pending_requests[cid])
             future.set(body)
-            else
-              BugBunny.configuration.logger.warn("[Producer] ⚠️ ID #{incoming_cid} no encontrado en pendientes: #{@pending_requests.keys}")
+          else
+            BugBunny.configuration.logger.warn("[BugBunny::Producer] ⚠️ Orphaned RPC Response received | ID: #{cid}")
           end
         end
         @reply_listener_started = true

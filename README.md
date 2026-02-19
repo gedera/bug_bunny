@@ -12,6 +12,7 @@ BugBunny transforma la complejidad de la mensajería asíncrona (RabbitMQ) en un
 - [Introducción: La Filosofía](#-introducción-la-filosofía)
 - [Instalación](#-instalación)
 - [Configuración Inicial](#-configuración-inicial)
+- [Configuración de Infraestructura en Cascada](#-configuración-de-infraestructura-en-cascada-nuevo-v31)
 - [Modo Cliente: Recursos (ORM)](#-modo-cliente-recursos-orm)
     - [Definición y Atributos](#1-definición-y-atributos-híbridos)
     - [CRUD y Consultas](#2-crud-y-consultas-restful)
@@ -21,7 +22,7 @@ BugBunny transforma la complejidad de la mensajería asíncrona (RabbitMQ) en un
     - [Ruteo Inteligente](#1-ruteo-inteligente)
     - [El Controlador](#2-el-controlador)
     - [Manejo de Errores](#3-manejo-de-errores-declarativo)
-- [Observabilidad y Tracing (Nuevo v3.1)](#-observabilidad-y-tracing)
+- [Observabilidad y Tracing](#-observabilidad-y-tracing)
 - [Guía de Producción](#-guía-de-producción)
 
 ---
@@ -75,7 +76,7 @@ BugBunny.configure do |config|
   config.rpc_timeout = 10               # Segundos máx para esperar respuesta (Síncrono)
   config.network_recovery_interval = 5  # Reintento de conexión
 
-  # 3. Logging (Ver sección Observabilidad)
+  # 3. Logging
   config.logger = Rails.logger
 end
 
@@ -91,12 +92,36 @@ BugBunny::Resource.connection_pool = BUG_BUNNY_POOL
 
 ---
 
+## 🏗️ Configuración de Infraestructura en Cascada (Nuevo v3.1)
+
+BugBunny v3.1 introduce un sistema de configuración jerárquico para los parámetros de RabbitMQ (como la durabilidad de Exchanges y Colas). Las opciones se resuelven en el siguiente orden de prioridad:
+
+1.  **Defaults de la Gema:** Rápidos y efímeros (`durable: false`).
+2.  **Configuración Global:** Definida en el inicializador para todo el entorno.
+3.  **Configuración de Recurso:** Atributos de clase en modelos específicos.
+4.  **Configuración al Vuelo:** Parámetros pasados en la llamada `.with` o en el Cliente manual.
+
+**Ejemplo de Configuración Global (Nivel 2):**
+Útil para hacer que todos los recursos en el entorno de pruebas sean auto-borrables.
+
+```ruby
+# config/initializers/bug_bunny.rb
+BugBunny.configure do |config|
+  if Rails.env.test?
+    config.exchange_options = { auto_delete: true }
+    config.queue_options    = { auto_delete: true }
+  end
+end
+```
+
+---
+
 ## 🚀 Modo Cliente: Recursos (ORM)
 
 Los recursos son proxies de servicios remotos. Heredan de `BugBunny::Resource`.
 
 ### 1. Definición y Atributos Híbridos
-BugBunny v3 es **Schema-less**. Soporta atributos tipados (ActiveModel) y dinámicos simultáneamente.
+BugBunny v3 es **Schema-less**. Soporta atributos tipados (ActiveModel) y dinámicos simultáneamente, además de definir su propia infraestructura.
 
 ```ruby
 # app/models/manager/service.rb
@@ -104,6 +129,10 @@ class Manager::Service < BugBunny::Resource
   # Configuración de Transporte
   self.exchange = 'cluster_events'
   self.exchange_type = 'topic'
+
+  # Configuración de Infraestructura Específica (Nivel 3)
+  # Este recurso crítico sobrevivirá a reinicios del servidor RabbitMQ
+  self.exchange_options = { durable: true, auto_delete: false }
 
   # Configuración de Ruteo (La "URL" base)
   self.resource_name = 'services'
@@ -145,11 +174,14 @@ svc.destroy
 ```
 
 ### 3. Contexto Dinámico (`.with`)
-Puedes sobrescribir la configuración de enrutamiento para una ejecución específica sin afectar al modelo global (Thread-Safe).
+Puedes sobrescribir la configuración de enrutamiento o infraestructura para una ejecución específica sin afectar al modelo global (Thread-Safe).
 
 ```ruby
-# Ejemplo: Enviar a una routing key específica por prioridad
-Manager::Service.with(routing_key: 'high_priority').create(name: 'redis')
+# Nivel 4: Configuración al vuelo. Inyectamos opciones solo para esta llamada.
+Manager::Service.with(
+  routing_key: 'high_priority',
+  exchange_options: { durable: false } # Ignora el durable: true de la clase
+).create(name: 'redis_temp')
 ```
 
 ### 4. Client Middleware (Interceptores)

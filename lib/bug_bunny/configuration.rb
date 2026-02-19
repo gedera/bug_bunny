@@ -4,7 +4,14 @@ require 'logger'
 
 module BugBunny
   # Clase de configuración global para la gema BugBunny.
-  # Almacena las credenciales de conexión, timeouts y parámetros de ajuste de RabbitMQ.
+  # Almacena las credenciales de conexión, timeouts y parámetros de ajuste de RabbitMQ,
+  # así como las opciones por defecto para la declaración de infraestructura AMQP.
+  #
+  # @example Configuración en un inicializador (e.g., config/initializers/bug_bunny.rb)
+  #   BugBunny.configure do |config|
+  #     config.host = '127.0.0.1'
+  #     config.exchange_options = { durable: true, auto_delete: false }
+  #   end
   class Configuration
     # @return [String] Host o IP del servidor RabbitMQ (ej: 'localhost').
     attr_accessor :host
@@ -60,8 +67,22 @@ module BugBunny
     # @return [String] Namespace base donde se buscarán los controladores (default: 'Rabbit::Controllers').
     attr_accessor :controller_namespace
 
-    # @return [Array<Symbol, Proc, String>]
+    # @return [Array<Symbol, Proc, String>] Etiquetas para el log estructurado.
     attr_accessor :log_tags
+
+    # @!group Configuración de Infraestructura Global
+
+    # @return [Hash] Opciones globales por defecto para la declaración de Exchanges.
+    #   Estas opciones se fusionarán con los valores por defecto de la gema y las específicas del recurso.
+    #   @example { durable: true, auto_delete: false }
+    attr_accessor :exchange_options
+
+    # @return [Hash] Opciones globales por defecto para la declaración de Colas.
+    #   Estas opciones se fusionarán con los valores por defecto de la gema y las específicas del recurso.
+    #   @example { durable: true, exclusive: false }
+    attr_accessor :queue_options
+
+    # @!endgroup
 
     # Inicializa la configuración con valores por defecto seguros.
     def initialize
@@ -91,9 +112,14 @@ module BugBunny
       @controller_namespace = 'Rabbit::Controllers'
 
       @log_tags = [:uuid]
+
+      # Inicialización de opciones de infraestructura como hashes vacíos para permitir fusiones posteriores.
+      @exchange_options = {}
+      @queue_options = {}
     end
 
     # Construye la URL de conexión AMQP basada en los atributos configurados.
+    # @return [String] URL formateada amqp://user:pass@host:port/vhost
     def url
       "amqp://#{username}:#{password}@#{host}:#{port}/#{vhost}"
     end
