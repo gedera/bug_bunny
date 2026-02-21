@@ -1,4 +1,15 @@
 # Changelog
+## [3.1.4] - 2026-02-21
+
+### 🚀 Cloud Native & Infrastructure Features
+* **Docker Swarm / Kubernetes Health Checks:** Introduced native support for external orchestrator health checks using the **Touchfile** pattern.
+  * Added `config.health_check_file` to the global configuration.
+  * The `Consumer`'s internal heartbeat now automatically updates the modification time (`touch`) of the specified file upon successful validation of the RabbitMQ connection and queue existence.
+  * Fails gracefully without interrupting the consumer if file system permissions are restricted.
+
+### 📖 Documentation
+* **Production Guide Expansion:** Added a comprehensive "Health Checks en Docker Swarm / Kubernetes" section to the README. Includes detailed `docker-compose.yml` examples demonstrating best practices for integrating the touchfile pattern, specifically highlighting the critical use of `start_period` to accommodate Rails boot times.
+
 ## [3.1.3] - 2026-02-19
 
 ### 🏗️ Architectural Refactoring (Middleware Standardization)
