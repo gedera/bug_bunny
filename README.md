@@ -76,11 +76,14 @@ BugBunny.configure do |config|
   config.rpc_timeout = 10               # Segundos máx para esperar respuesta (Síncrono)
   config.network_recovery_interval = 5  # Reintento de conexión
 
-  # 3. Logging
+  # 3. Health Checks (Opcional, para Docker Swarm / K8s)
+  config.health_check_file = '/tmp/bug_bunny_health'
+
+  # 4. Logging
   config.logger = Rails.logger
 end
 
-# 4. Connection Pool (CRÍTICO para concurrencia)
+# 5. Connection Pool (CRÍTICO para concurrencia)
 # Define un pool global para compartir conexiones entre hilos
 BUG_BUNNY_POOL = ConnectionPool.new(size: ENV.fetch('RAILS_MAX_THREADS', 5).to_i, timeout: 5) do
   BugBunny.create_connection
@@ -376,6 +379,35 @@ Para máxima velocidad, BugBunny usa `amq.rabbitmq.reply-to`.
 
 ### Seguridad
 El Router incluye protecciones contra **Remote Code Execution (RCE)**. Verifica estrictamente que la clase instanciada herede de `BugBunny::Controller` antes de ejecutarla, impidiendo la inyección de clases arbitrarias de Ruby vía el header `type`.
+
+### Health Checks en Docker Swarm / Kubernetes
+Dado que un Worker se ejecuta en segundo plano sin exponer un servidor web tradicional, orquestadores como Docker Swarm o Kubernetes no pueden usar un endpoint HTTP para verificar si el proceso está saludable.
+
+BugBunny implementa el patrón **Touchfile**. Puedes configurar la gema para que actualice la fecha de modificación de un archivo temporal en cada latido exitoso (heartbeat) hacia RabbitMQ.
+
+**1. Configurar la gema:**
+```ruby
+# config/initializers/bug_bunny.rb
+BugBunny.configure do |config|
+  # Actualizará la fecha de este archivo si la conexión a la cola está sana
+  config.health_check_file = '/tmp/bug_bunny_health'
+end
+```
+
+**2. Configurar el Orquestador (Ejemplo docker-compose.yml):**
+Con esta configuración, Docker Swarm verificará que el archivo haya sido modificado (tocado) en los últimos 15 segundos. Si el worker se bloquea o pierde la conexión de manera irrecuperable, Docker reiniciará el contenedor automáticamente.
+
+```yaml
+services:
+  worker:
+    image: my_rails_app
+    command: bundle exec rake bug_bunny:work
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(expr $$(date +%s) - $$(stat -c %Y /tmp/bug_bunny_health)) -lt 15 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+```
 
 ---
 

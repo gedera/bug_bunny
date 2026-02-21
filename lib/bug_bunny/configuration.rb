@@ -11,6 +11,7 @@ module BugBunny
   #   BugBunny.configure do |config|
   #     config.host = '127.0.0.1'
   #     config.exchange_options = { durable: true, auto_delete: false }
+  #     config.health_check_file = '/tmp/bug_bunny_health'
   #   end
   class Configuration
     # @return [String] Host o IP del servidor RabbitMQ (ej: 'localhost').
@@ -64,6 +65,12 @@ module BugBunny
     # @return [Integer] Intervalo en segundos para verificar la salud de la cola.
     attr_accessor :health_check_interval
 
+    # @return [String, nil] Ruta del archivo que se actualizará (touch) en cada health check exitoso.
+    #   Ideal para sondas (probes) de orquestadores como Docker Swarm o Kubernetes.
+    #   Si es `nil`, la funcionalidad de touchfile se desactiva.
+    #   @example '/tmp/bug_bunny_health'
+    attr_accessor :health_check_file
+
     # @return [String] Namespace base donde se buscarán los controladores (default: 'Rabbit::Controllers').
     attr_accessor :controller_namespace
 
@@ -107,6 +114,9 @@ module BugBunny
       @channel_prefetch = 1
       @rpc_timeout = 10
       @health_check_interval = 60
+
+      # Desactivado por defecto. El usuario debe especificar una ruta explícita para habilitarlo.
+      @health_check_file = nil
 
       # Configuración por defecto para mantener compatibilidad
       @controller_namespace = 'Rabbit::Controllers'

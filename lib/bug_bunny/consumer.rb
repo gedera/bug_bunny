@@ -1,10 +1,12 @@
-# lib/bug_bunny/consumer.rb
+# frozen_string_literal: true
+
 require 'active_support/core_ext/string/inflections'
 require 'concurrent'
 require 'json'
 require 'uri'
 require 'cgi'
 require 'rack/utils' # Necesario para parse_nested_query
+require 'fileutils'  # Necesario para el touchfile del health check
 
 module BugBunny
   # Consumidor de mensajes AMQP que actúa como un Router RESTful.
@@ -253,14 +255,40 @@ module BugBunny
     # Tarea de fondo (Heartbeat lógico) para verificar la salud del canal.
     # Si la cola desaparece o la conexión se cierra, fuerza una reconexión.
     #
+    # Adicionalmente, si `health_check_file` está configurado, actualiza la
+    # fecha de modificación (touch) de dicho archivo para notificar a orquestadores
+    # externos (como Docker Swarm o Kubernetes) que el proceso está saludable.
+    #
     # @param q_name [String] Nombre de la cola a monitorear.
+    # @return [void]
     def start_health_check(q_name)
+      file_path = BugBunny.configuration.health_check_file
+
+      # Toque inicial para indicar al orquestador que el worker arrancó correctamente
+      touch_health_file(file_path) if file_path
+
       Concurrent::TimerTask.new(execution_interval: BugBunny.configuration.health_check_interval) do
+        # 1. Verificamos la salud de RabbitMQ (si falla, levanta un error y corta la ejecución del bloque)
         session.channel.queue_declare(q_name, passive: true)
-      rescue StandardError
-        BugBunny.configuration.logger.warn("[BugBunny::Consumer] ⚠️  Queue check failed. Reconnecting session...")
+
+        # 2. Si llegamos aquí, RabbitMQ y la cola están vivos. Avisamos al orquestador actualizando el archivo.
+        touch_health_file(file_path) if file_path
+      rescue StandardError => e
+        BugBunny.configuration.logger.warn("[BugBunny::Consumer] ⚠️  Queue check failed: #{e.message}. Reconnecting session...")
         session.close
       end.execute
+    end
+
+    # Actualiza la fecha de modificación del archivo de health check (touchfile).
+    # Se utiliza un `rescue` genérico para no interrumpir el flujo principal del worker
+    # si el contenedor de Docker tiene problemas de permisos sobre la carpeta temporal.
+    #
+    # @param file_path [String] Ruta absoluta del archivo a tocar.
+    # @return [void]
+    def touch_health_file(file_path)
+      FileUtils.touch(file_path)
+    rescue StandardError => e
+      BugBunny.configuration.logger.error("[BugBunny::Consumer] ⚠️  Cannot touch health check file '#{file_path}': #{e.message}")
     end
   end
 end
