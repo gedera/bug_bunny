@@ -110,7 +110,7 @@ module BugBunny
       BugBunny.configuration.logger.info("[BugBunny::Producer] 📤 #{verb} /#{target} | RK: '#{rk}' | ID: #{id}")
 
       # DEBUG: Detalle completo de Infraestructura y Payload
-      BugBunny.configuration.logger.debug("[BugBunny::Producer] ⚙️  Exchange Opts: #{final_x_opts}")
+      BugBunny.configuration.logger.debug("[BugBunny::Producer] ⚙️ Exchange #{request.exchange} | Opts: #{final_x_opts}")
       BugBunny.configuration.logger.debug("[BugBunny::Producer] 📦 Payload: #{payload.truncate(300)}") if payload.is_a?(String)
     end
 
