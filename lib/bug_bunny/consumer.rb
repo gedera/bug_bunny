@@ -179,44 +179,58 @@ module BugBunny
 
     # Interpreta la URL y el verbo para decidir qué controlador ejecutar.
     #
-    # Utiliza `Rack::Utils.parse_nested_query` para soportar parámetros anidados
-    # como `q[service]=rabbit`.
+    # Implementa un Router Heurístico que soporta namespaces y acciones custom
+    # buscando dinámicamente el ID en la ruta.
     #
     # @param method [String] Verbo HTTP (GET, POST, etc).
-    # @param path [String] URL virtual del recurso (ej: 'users/1?active=true').
+    # @param path [String] URL virtual del recurso (ej: 'foo/bar/algo/13/test').
     # @return [Hash] Estructura con keys {:controller, :action, :id, :params}.
     def router_dispatch(method, path)
-      # Usamos URI para separar path de query string
       uri = URI.parse("http://dummy/#{path}")
       segments = uri.path.split('/').reject(&:empty?)
 
-      # --- FIX: Uso de Rack para soportar params anidados ---
       query_params = uri.query ? Rack::Utils.parse_nested_query(uri.query) : {}
-
-      # Si estamos en Rails, convertimos a HashWithIndifferentAccess para comodidad
       if defined?(ActiveSupport::HashWithIndifferentAccess)
         query_params = query_params.with_indifferent_access
       end
 
-      # Lógica de Ruteo Convencional
-      controller_name = segments[0]
-      id = segments[1]
-
-      action = case method.to_s.upcase
-               when 'GET' then id ? 'show' : 'index'
-               when 'POST' then 'create'
-               when 'PUT', 'PATCH' then 'update'
-               when 'DELETE' then 'destroy'
-               else id || 'index'
-               end
-
-      # Soporte para rutas miembro custom (POST users/1/promote)
-      if segments.size >= 3
-         id = segments[1]
-         action = segments[2]
+      # 1. Acción Built-in: Health Check Global (/up o /api/up)
+      if segments.last == 'up' && method.to_s.upcase == 'GET'
+        # Si la ruta es solo 'up', usamos un controlador genérico 'application'
+        ctrl = segments.size > 1 ? segments[0...-1].join('/') : 'application'
+        return { controller: ctrl, action: 'up', id: nil, params: query_params }
       end
 
-      # Inyectamos el ID en los params si existe en la ruta
+      # 2. Búsqueda dinámica del ID (Heurística)
+      # Patrón: Números enteros, UUIDs, o hashes alfanuméricos largos (MongoDB/Snowflake)
+      id_pattern = /^(?:\d+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24})$/
+      id_index = segments.find_index { |s| s.match?(id_pattern) }
+
+      if id_index
+        # ESCENARIO A: Ruta Miembro (ej. foo/bar/algo/13/test)
+        # Todo lo que está antes del ID es el namespace/controlador
+        controller_name = segments[0...id_index].join('/') # "foo/bar/algo"
+        id = segments[id_index]                            # "13"
+        action = segments[id_index + 1]                    # "test" (puede ser nil)
+      else
+        # ESCENARIO B: Ruta Colección (ej. foo/bar/algo o api/v1/users)
+        controller_name = segments.join('/')
+        id = nil
+        action = nil
+      end
+
+      # 3. Inferimos la acción si no hay una explícita en la ruta
+      unless action
+        action = case method.to_s.upcase
+                 when 'GET' then id ? 'show' : 'index'
+                 when 'POST' then 'create'
+                 when 'PUT', 'PATCH' then 'update'
+                 when 'DELETE' then 'destroy'
+                 else id ? 'show' : 'index'
+                 end
+      end
+
+      # 4. Inyectamos el ID en los parámetros para que el Controller lo tenga fácil
       query_params['id'] = id if id
 
       { controller: controller_name, action: action, id: id, params: query_params }
