@@ -1,4 +1,10 @@
 # Changelog
+## [3.1.5] - 2026-02-25
+
+### ✨ New Features & Improvements
+* **Smart Heuristic Router (Namespace Support):** El enrutador interno del consumidor (`Consumer#router_dispatch`) fue reescrito para soportar namespaces profundos y rutas anidadas sin necesidad de configuración manual. Utiliza una heurística basada en Regex para detectar dinámicamente identificadores (Enteros, UUIDs o hashes alfanuméricos largos) dentro de la URL.
+  * Esto permite que rutas complejas como `GET api/v1/ecommerce/orders/a1b2c3d4/cancel` resuelvan automáticamente al controlador `Api::V1::Ecommerce::OrdersController`, asignando `id: a1b2c3d4` y `action: cancel`.
+
 ## [3.1.4] - 2026-02-21
 
 ### 🚀 Cloud Native & Infrastructure Features
