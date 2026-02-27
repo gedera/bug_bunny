@@ -1,4 +1,12 @@
 # Changelog
+## [3.1.6] - 2026-02-27
+
+### 🐛 Bug Fixes & Router Improvements
+* **Enhanced Heuristic Router (ID Detection):** Mejoras críticas en `Consumer#router_dispatch` para soportar una gama mucho más amplia de formatos de identificadores y evitar colisiones con namespaces:
+  * **Soporte para Swarm/NanoID:** Se amplió la expresión regular de detección de IDs para capturar hashes alfanuméricos de 20 o más caracteres (`[a-zA-Z0-9_-]{20,}`), permitiendo el correcto ruteo de IDs generados por Docker Swarm (25 caracteres) o NanoID.
+  * **Escaneo Inverso (Right-to-Left):** Se modificó la búsqueda del ID para que escanee los segmentos de la URL desde el final hacia el principio (`rindex`). Esto evita falsos positivos donde namespaces cortos como `v1` (ej. `api/v1/...`) eran confundidos accidentalmente con un ID.
+  * **Fallback Semántico Posicional:** Se introdujo una red de seguridad (fallback) que infiere la posición del ID basándose en el Verbo HTTP. Si el ID no coincide con ningún patrón Regex (ej. es un ID corto como `node-1`), pero el método es `PUT`, `PATCH` o `DELETE`, el enrutador ahora asume inteligentemente que el penúltimo/último segmento corresponde al ID del recurso.
+
 ## [3.1.5] - 2026-02-25
 
 ### ✨ New Features & Improvements
