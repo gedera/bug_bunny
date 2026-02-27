@@ -180,7 +180,7 @@ module BugBunny
     # Interpreta la URL y el verbo para decidir qué controlador ejecutar.
     #
     # Implementa un Router Heurístico que soporta namespaces y acciones custom
-    # buscando dinámicamente el ID en la ruta.
+    # buscando dinámicamente el ID en la ruta mediante Regex y Fallback Semántico.
     #
     # @param method [String] Verbo HTTP (GET, POST, etc).
     # @param path [String] URL virtual del recurso (ej: 'foo/bar/algo/13/test').
@@ -196,30 +196,49 @@ module BugBunny
 
       # 1. Acción Built-in: Health Check Global (/up o /api/up)
       if segments.last == 'up' && method.to_s.upcase == 'GET'
-        # Si la ruta es solo 'up', usamos un controlador genérico 'application'
         ctrl = segments.size > 1 ? segments[0...-1].join('/') : 'application'
         return { controller: ctrl, action: 'up', id: nil, params: query_params }
       end
 
-      # 2. Búsqueda dinámica del ID (Heurística)
-      # Patrón: Números enteros, UUIDs, o hashes alfanuméricos largos (MongoDB/Snowflake)
-      id_pattern = /^(?:\d+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24})$/
-      id_index = segments.find_index { |s| s.match?(id_pattern) }
+      # 2. Búsqueda dinámica del ID (Heurística por Regex)
+      # Patrón: Enteros, UUIDs, o Hashes largos (Docker Swarm 25 chars, Mongo 24 chars)
+      id_pattern = /^(?:\d+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[a-zA-Z0-9_-]{20,})$/
 
+      # FIX: Usamos rindex (de derecha a izquierda) para evitar falsos positivos con namespaces como 'v1'
+      id_index = segments.rindex { |s| s.match?(id_pattern) }
+
+      # 3. Fallback Semántico Posicional
+      # Si el regex no detectó el ID (ej: ID corto como "node-1"), pero la semántica HTTP
+      # indica que es una operación singular (PUT/DELETE/GET), asumimos que el último segmento es el ID.
+      if id_index.nil? && segments.size >= 2
+        last_segment = segments.last
+        method_up = method.to_s.upcase
+
+        is_member_verb = %w[PUT PATCH DELETE].include?(method_up)
+        # En GET, nos aseguramos que la última palabra no sea una acción estándar de REST
+        is_get_member = method_up == 'GET' && !%w[index new edit up action].include?(last_segment)
+
+        if is_member_verb || is_get_member
+          # Si tiene 3 o más segmentos (ej. nodes/node-1/stats), el ID no está al final.
+          # Este fallback asume que para IDs raros, el formato clásico es recurso/id
+          id_index = segments.size - 1
+        end
+      end
+
+      # 4. Asignación de variables según escenario
       if id_index
-        # ESCENARIO A: Ruta Miembro (ej. foo/bar/algo/13/test)
-        # Todo lo que está antes del ID es el namespace/controlador
-        controller_name = segments[0...id_index].join('/') # "foo/bar/algo"
-        id = segments[id_index]                            # "13"
-        action = segments[id_index + 1]                    # "test" (puede ser nil)
+        # ESCENARIO A: Ruta Miembro (ej. nodes/4bv445vgc158hk4twlxmdjo0v/stats)
+        controller_name = segments[0...id_index].join('/')
+        id = segments[id_index]
+        action = segments[id_index + 1] # Puede ser nil si no hay acción extra al final
       else
-        # ESCENARIO B: Ruta Colección (ej. foo/bar/algo o api/v1/users)
+        # ESCENARIO B: Ruta Colección (ej. api/v1/nodes)
         controller_name = segments.join('/')
         id = nil
         action = nil
       end
 
-      # 3. Inferimos la acción si no hay una explícita en la ruta
+      # 5. Inferimos la acción clásica de Rails si no hay una explícita
       unless action
         action = case method.to_s.upcase
                  when 'GET' then id ? 'show' : 'index'
@@ -230,7 +249,7 @@ module BugBunny
                  end
       end
 
-      # 4. Inyectamos el ID en los parámetros para que el Controller lo tenga fácil
+      # 6. Inyectamos el ID en los parámetros para fácil acceso en el Controlador
       query_params['id'] = id if id
 
       { controller: controller_name, action: action, id: id, params: query_params }
