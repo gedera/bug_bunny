@@ -15,7 +15,7 @@ module BugBunny
   # Sus responsabilidades son:
   # 1. Escuchar una cola específica.
   # 2. Deserializar el mensaje y sus headers.
-  # 3. Enrutar el mensaje a un Controlador (`BugBunny::Controller`) basándose en el "path" y el verbo HTTP.
+  # 3. Consultar el mapa global `BugBunny.routes` para enrutar el mensaje a un Controlador.
   # 4. Gestionar el ciclo de respuesta RPC (Request-Response) para evitar timeouts en el cliente.
   #
   # @example Suscripción manual
@@ -99,16 +99,16 @@ module BugBunny
 
     private
 
-    # Procesa un mensaje individual recibido de la cola.
+    # Procesa un mensaje individual recibido de la cola orquestando el ruteo declarativo.
     #
-    # Realiza la orquestación completa: Parsing -> Routing -> Ejecución -> Respuesta.
+    # Realiza la orquestación completa: Parsing -> Reconocimiento de Ruta -> Ejecución -> Respuesta.
     #
     # @param delivery_info [Bunny::DeliveryInfo] Metadatos de entrega (tag, redelivered, etc).
     # @param properties [Bunny::MessageProperties] Headers y propiedades AMQP (reply_to, correlation_id).
     # @param body [String] El payload crudo del mensaje.
     # @return [void]
     def process_message(delivery_info, properties, body)
-      # 1. Validación de Headers
+      # 1. Validación de Headers (URL path)
       path = properties.type || (properties.headers && properties.headers['path'])
 
       if path.nil? || path.empty?
@@ -119,140 +119,89 @@ module BugBunny
 
       # 2. Recuperación Robusta del Verbo HTTP
       headers_hash = properties.headers || {}
-      http_method = headers_hash['x-http-method'] || headers_hash['method'] || 'GET'
+      http_method = (headers_hash['x-http-method'] || headers_hash['method'] || 'GET').to_s.upcase
 
-      # 3. Router: Inferencia de Controlador y Acción
-      route_info = router_dispatch(http_method, path)
-
-      BugBunny.configuration.logger.info("[BugBunny::Consumer] 📥 Started #{http_method} \"/#{path}\" for Routing Key: #{delivery_info.routing_key}")
+      BugBunny.configuration.logger.info("[BugBunny::Consumer] 📥 Received #{http_method} \"/#{path}\" | RK: '#{delivery_info.routing_key}'")
       BugBunny.configuration.logger.debug("[BugBunny::Consumer] 📦 Body: #{body.truncate(200)}")
+
+      # ===================================================================
+      # 3. Ruteo Declarativo
+      # ===================================================================
+      uri = URI.parse("http://dummy/#{path}")
+
+      # Extraemos query params (ej. /nodes?status=active)
+      query_params = uri.query ? Rack::Utils.parse_nested_query(uri.query) : {}
+      if defined?(ActiveSupport::HashWithIndifferentAccess)
+        query_params = query_params.with_indifferent_access
+      end
+
+      # Le preguntamos al motor de rutas global quién debe manejar esto
+      route_info = BugBunny.routes.recognize(http_method, uri.path)
+
+      if route_info.nil?
+        BugBunny.configuration.logger.warn("[BugBunny::Consumer] ⚠️  No route matches [#{http_method}] \"/#{uri.path}\"")
+        handle_fatal_error(properties, 404, "Not Found", "No route matches [#{http_method}] \"/#{uri.path}\"")
+        session.channel.reject(delivery_info.delivery_tag, false)
+        return
+      end
+
+      # Fusionamos los parámetros extraídos de la URL (ej. :id) con los query_params
+      final_params = query_params.merge(route_info[:params])
+
+      # ===================================================================
+      # 4. Instanciación del Controlador
+      # ===================================================================
+      namespace = BugBunny.configuration.controller_namespace
+      controller_name = route_info[:controller].camelize
+      controller_class_name = "#{namespace}::#{controller_name}Controller"
+
+      begin
+        controller_class = controller_class_name.constantize
+      rescue NameError
+        BugBunny.configuration.logger.warn("[BugBunny::Consumer] ⚠️  Controller class not found: #{controller_class_name}")
+        handle_fatal_error(properties, 404, "Not Found", "Controller #{controller_class_name} not found")
+        session.channel.reject(delivery_info.delivery_tag, false)
+        return
+      end
+
+      # Verificación estricta de Seguridad (RCE Prevention)
+      unless controller_class < BugBunny::Controller
+        BugBunny.configuration.logger.error("[BugBunny::Consumer] ⛔ Security Alert: #{controller_class} is not a valid BugBunny Controller")
+        handle_fatal_error(properties, 403, "Forbidden", "Invalid Controller Class")
+        session.channel.reject(delivery_info.delivery_tag, false)
+        return
+      end
+
+      BugBunny.configuration.logger.debug("[BugBunny::Consumer] 🎯 Routed to #{controller_class_name}##{route_info[:action]}")
 
       request_metadata = {
         type: path,
         http_method: http_method,
         controller: route_info[:controller],
         action: route_info[:action],
-        id: route_info[:id],
-        query_params: route_info[:params],
+        id: final_params['id'] || final_params[:id],
+        query_params: final_params,
         content_type: properties.content_type,
         correlation_id: properties.correlation_id,
         reply_to: properties.reply_to
-      }.merge(properties.headers)
+      }.merge(headers_hash)
 
-      # 4. Instanciación Dinámica del Controlador
-      # Utilizamos el namespace configurado en lugar de hardcodear "Rabbit::Controllers"
-      begin
-        namespace = BugBunny.configuration.controller_namespace
-        controller_name = route_info[:controller].camelize
-
-        # Construcción: "Messaging::Handlers" + "::" + "Users"
-        controller_class_name = "#{namespace}::#{controller_name}Controller"
-
-        controller_class = controller_class_name.constantize
-
-        unless controller_class < BugBunny::Controller
-          raise BugBunny::SecurityError, "Class #{controller_class} is not a valid BugBunny Controller"
-        end
-      rescue NameError => _e
-        BugBunny.configuration.logger.warn("[BugBunny::Consumer] ⚠️  Controller not found: #{controller_class_name} (Path: #{path})")
-        handle_fatal_error(properties, 404, "Not Found", "Controller #{controller_class_name} not found")
-        session.channel.reject(delivery_info.delivery_tag, false)
-        return
-      end
-
-      # 5. Ejecución del Pipeline (Middleware + Acción)
+      # ===================================================================
+      # 5. Ejecución y Respuesta
+      # ===================================================================
       response_payload = controller_class.call(headers: request_metadata, body: body)
 
-      # 6. Respuesta RPC
       if properties.reply_to
         reply(response_payload, properties.reply_to, properties.correlation_id)
       end
 
-      # 7. Acknowledge
       session.channel.ack(delivery_info.delivery_tag)
 
     rescue StandardError => e
       BugBunny.configuration.logger.error("[BugBunny::Consumer] 💥 Execution Error (#{e.class}): #{e.message}")
+      BugBunny.configuration.logger.debug(e.backtrace.join("\n"))
       handle_fatal_error(properties, 500, "Internal Server Error", e.message)
       session.channel.reject(delivery_info.delivery_tag, false)
-    end
-
-    # Interpreta la URL y el verbo para decidir qué controlador ejecutar.
-    #
-    # Implementa un Router Heurístico que soporta namespaces y acciones custom
-    # buscando dinámicamente el ID en la ruta mediante Regex y Fallback Semántico.
-    #
-    # @param method [String] Verbo HTTP (GET, POST, etc).
-    # @param path [String] URL virtual del recurso (ej: 'foo/bar/algo/13/test').
-    # @return [Hash] Estructura con keys {:controller, :action, :id, :params}.
-    def router_dispatch(method, path)
-      uri = URI.parse("http://dummy/#{path}")
-      segments = uri.path.split('/').reject(&:empty?)
-
-      query_params = uri.query ? Rack::Utils.parse_nested_query(uri.query) : {}
-      if defined?(ActiveSupport::HashWithIndifferentAccess)
-        query_params = query_params.with_indifferent_access
-      end
-
-      # 1. Acción Built-in: Health Check Global (/up o /api/up)
-      if segments.last == 'up' && method.to_s.upcase == 'GET'
-        ctrl = segments.size > 1 ? segments[0...-1].join('/') : 'application'
-        return { controller: ctrl, action: 'up', id: nil, params: query_params }
-      end
-
-      # 2. Búsqueda dinámica del ID (Heurística por Regex)
-      # Patrón: Enteros, UUIDs, o Hashes largos (Docker Swarm 25 chars, Mongo 24 chars)
-      id_pattern = /^(?:\d+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[a-zA-Z0-9_-]{20,})$/
-
-      # FIX: Usamos rindex (de derecha a izquierda) para evitar falsos positivos con namespaces como 'v1'
-      id_index = segments.rindex { |s| s.match?(id_pattern) }
-
-      # 3. Fallback Semántico Posicional
-      # Si el regex no detectó el ID (ej: ID corto como "node-1"), pero la semántica HTTP
-      # indica que es una operación singular (PUT/DELETE/GET), asumimos que el último segmento es el ID.
-      if id_index.nil? && segments.size >= 2
-        last_segment = segments.last
-        method_up = method.to_s.upcase
-
-        is_member_verb = %w[PUT PATCH DELETE].include?(method_up)
-        # En GET, nos aseguramos que la última palabra no sea una acción estándar de REST
-        is_get_member = method_up == 'GET' && !%w[index new edit up action].include?(last_segment)
-
-        if is_member_verb || is_get_member
-          # Si tiene 3 o más segmentos (ej. nodes/node-1/stats), el ID no está al final.
-          # Este fallback asume que para IDs raros, el formato clásico es recurso/id
-          id_index = segments.size - 1
-        end
-      end
-
-      # 4. Asignación de variables según escenario
-      if id_index
-        # ESCENARIO A: Ruta Miembro (ej. nodes/4bv445vgc158hk4twlxmdjo0v/stats)
-        controller_name = segments[0...id_index].join('/')
-        id = segments[id_index]
-        action = segments[id_index + 1] # Puede ser nil si no hay acción extra al final
-      else
-        # ESCENARIO B: Ruta Colección (ej. api/v1/nodes)
-        controller_name = segments.join('/')
-        id = nil
-        action = nil
-      end
-
-      # 5. Inferimos la acción clásica de Rails si no hay una explícita
-      unless action
-        action = case method.to_s.upcase
-                 when 'GET' then id ? 'show' : 'index'
-                 when 'POST' then 'create'
-                 when 'PUT', 'PATCH' then 'update'
-                 when 'DELETE' then 'destroy'
-                 else id ? 'show' : 'index'
-                 end
-      end
-
-      # 6. Inyectamos el ID en los parámetros para fácil acceso en el Controlador
-      query_params['id'] = id if id
-
-      { controller: controller_name, action: action, id: id, params: query_params }
     end
 
     # Envía una respuesta al cliente RPC utilizando Direct Reply-to.

@@ -1,4 +1,21 @@
 # Changelog
+## [4.0.0] - 2026-03-02
+
+### ⚠ Breaking Changes
+* **Declarative Routing (Rails-style):** El enrutamiento "mágico" y heurístico del Consumer ha sido reemplazado por un motor de enrutamiento explícito y estricto.
+  * Ahora es **obligatorio** definir un mapa de rutas usando el DSL `BugBunny.routes.draw` (típicamente en un inicializador como `config/initializers/bug_bunny_routes.rb`).
+  * Los mensajes entrantes cuyas rutas no estén explícitamente declaradas serán rechazados inmediatamente con un error `404 Not Found`.
+
+### 🚀 New Features & Architecture
+* **Advanced Routing DSL:** Se construyó un motor de enrutamiento completo y robusto inspirado en `ActionDispatch::Routing` de Rails.
+  * **Smart Route Parameters:** Compilación de rutas a expresiones regulares, permitiendo la extracción nativa de parámetros dinámicos desde la URL (ej. `get 'clusters/:cluster_id/nodes/:id/metrics'`). Estos se inyectan automáticamente en el hash `params` del Controlador.
+  * **Resource Macros & Filtering:** Introducción del macro `resources :name` para generar endpoints CRUD estándar. Ahora soporta filtrado granular de acciones utilizando las opciones `only:` y `except:`.
+  * **Nested Scopes (Member/Collection):** Soporte total para bloques anidados `member do ... end` y `collection do ... end` dentro de los recursos, permitiendo definir rutas complejas infiriendo automáticamente el controlador destino y la inyección del `:id`.
+
+### 🛡️ Security & Observability
+* **Strict Instantiation (RCE Prevention):** Al requerir que todas las rutas sean declaradas explícitamente por el desarrollador, se elimina por completo el vector de ataque que permitía intentar instanciar clases arbitrarias de Ruby manipulando el header `type`.
+* **Enhanced Routing Logs:** El Consumer ahora emite un log de nivel `DEBUG` (marcado con 🎯) que confirma de manera transparente exactamente qué Controlador y Acción se resolvieron al evaluar la petición contra el mapa de rutas.
+
 ## [3.1.6] - 2026-02-27
 
 ### 🐛 Bug Fixes & Router Improvements
