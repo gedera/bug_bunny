@@ -107,3 +107,14 @@ module IntegrationHelper
     worker_thread&.kill
   end
 end
+
+# test/test_helper.rb (Al final del archivo)
+
+BugBunny.routes.draw do
+  # Rutas necesarias para infrastructure_test.rb
+  resources :ping
+
+  # Rutas necesarias para manual_client_test.rb
+  get 'echo', to: 'echo#index'
+  post 'test', to: 'test#index' # o el controlador que maneje 'test'
+end
