@@ -12,7 +12,7 @@ BugBunny transforma la complejidad de la mensajería asíncrona (RabbitMQ) en un
 - [Introducción: La Filosofía](#-introducción-la-filosofía)
 - [Instalación](#-instalación)
 - [Configuración Inicial](#-configuración-inicial)
-- [Configuración de Infraestructura en Cascada](#-configuración-de-infraestructura-en-cascada-nuevo-v31)
+- [Configuración de Infraestructura en Cascada](#-configuración-de-infraestructura-en-cascada)
 - [Modo Cliente: Recursos (ORM)](#-modo-cliente-recursos-orm)
     - [Definición y Atributos](#1-definición-y-atributos-híbridos)
     - [CRUD y Consultas](#2-crud-y-consultas-restful)
@@ -95,9 +95,9 @@ BugBunny::Resource.connection_pool = BUG_BUNNY_POOL
 
 ---
 
-## 🏗️ Configuración de Infraestructura en Cascada (Nuevo v3.1)
+## 🏗️ Configuración de Infraestructura en Cascada
 
-BugBunny introduce un sistema de configuración jerárquico para los parámetros de RabbitMQ (como la durabilidad de Exchanges y Colas). Las opciones se resuelven en el siguiente orden de prioridad:
+BugBunny utiliza un sistema de configuración jerárquico para los parámetros de RabbitMQ (como la durabilidad de Exchanges y Colas). Las opciones se resuelven en el siguiente orden de prioridad:
 
 1.  **Defaults de la Gema:** Rápidos y efímeros (`durable: false`).
 2.  **Configuración Global:** Definida en el inicializador para todo el entorno.
@@ -260,15 +260,28 @@ Crea un inicializador en tu aplicación (ej. `config/initializers/bug_bunny_rout
 # config/initializers/bug_bunny_routes.rb
 
 BugBunny.routes.draw do
-  # Macro para generar las 6 rutas CRUD estándar (index, show, create, update, destroy)
-  resources :services
+  # 1. Colecciones Básicas y Filtrado
+  # Genera rutas para index, show y update únicamente
+  resources :services, only: [:index, :show, :update]
 
-  # Rutas estáticas (Colecciones o Acciones Custom)
-  get 'swarm/info', to: 'swarm#info'
+  # 2. Rutas Anidadas (Member y Collection)
+  resources :nodes, except: [:create, :destroy] do
+    # Member inyecta el parámetro :id (ej. PUT nodes/:id/drain)
+    member do
+      put :drain
+      post :restart
+    end
+
+    # Collection opera sobre el conjunto (ej. GET nodes/stats)
+    collection do
+      get :stats
+    end
+  end
+
+  # 3. Rutas estáticas (Colecciones o Acciones Custom)
   get 'health_checks/up', to: 'health_checks#up'
 
-  # Rutas dinámicas con extracción automática de parámetros (:id, :cluster_id, etc.)
-  put 'nodes/:id/drain', to: 'nodes#drain'
+  # 4. Extracción automática de variables dinámicas profundas
   get 'api/v1/clusters/:cluster_id/nodes/:node_id/metrics', to: 'api/v1/metrics#show'
 end
 ```
@@ -326,16 +339,14 @@ end
 
 ## 🔎 Observabilidad y Tracing
 
-> **Novedad v3.1:** BugBunny implementa Distributed Tracing nativo.
-
-El `correlation_id` se mantiene intacto a través de toda la cadena: `Producer -> RabbitMQ -> Consumer -> Controller`.
+BugBunny implementa Distributed Tracing nativo. El `correlation_id` se mantiene intacto a través de toda la cadena: `Producer -> RabbitMQ -> Consumer -> Controller`.
 
 ### 1. Logs Automáticos (Consumer)
 No requiere configuración. El worker envuelve la ejecución en bloques de log etiquetados con el UUID.
 
 ```text
 [d41d8cd9...] [BugBunny::Consumer] 📥 Received PUT "/nodes/4bv445vgc158hk" | RK: 'dbu55...'
-[d41d8cd9...] [BugBunny::Consumer] 🎯 Routed to Rabbit::Controllers::NodesController#update
+[d41d8cd9...] [BugBunny::Consumer] 🎯 Routed to Rabbit::Controllers::NodesController#drain
 ```
 
 ### 2. Logs de Negocio (Controller)
