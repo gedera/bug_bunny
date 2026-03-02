@@ -59,3 +59,20 @@ BugBunny.configure do |config|
   # * Valor alto (10-50): Mayor throughput, pero riesgo de sobrecargar un solo worker lento.
   config.channel_prefetch = 10
 end
+
+# ==========================================
+# 🗺️ Enrutamiento Declarativo (Router)
+# ==========================================
+# Define cómo se mapean las rutas de los mensajes entrantes a tus controladores.
+# Funciona de manera similar al routes.rb de Rails.
+
+# BugBunny.routes.draw do
+#   # Macro para generar rutas CRUD estándar (index, show, create, update, destroy)
+#   resources :services
+#
+#   # Rutas estáticas o custom
+#   get 'health_checks/up', to: 'health_checks#up'
+#
+#   # Rutas con parámetros dinámicos (:id, :cluster_id, etc.)
+#   put 'nodes/:id/drain', to: 'nodes#drain'
+# end
