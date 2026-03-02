@@ -5,6 +5,7 @@ require 'logger'
 require_relative 'bug_bunny/version'
 require_relative 'bug_bunny/exception'
 require_relative 'bug_bunny/configuration'
+require_relative 'bug_bunny/routing/route_set'
 require_relative 'bug_bunny/middleware/base'
 require_relative 'bug_bunny/middleware/stack'
 require_relative 'bug_bunny/middleware/raise_error'
@@ -27,6 +28,13 @@ module BugBunny
 
     # @return [Bunny::Session, nil] La conexión global (Singleton) usada por procesos Rails.
     attr_accessor :global_connection
+
+    attr_writer :routes
+  end
+
+  # @return [BugBunny::Routing::RouteSet] El motor global de enrutamiento.
+  def self.routes
+    @routes ||= Routing::RouteSet.new
   end
 
   # Configura la librería BugBunny.
