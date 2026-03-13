@@ -1,4 +1,9 @@
 # Changelog
+## [4.0.1] - 2026-03-13
+
+### 🐛 Bug Fixes
+* **Rails Autoload (Zeitwerk):** Corrige el registro de `app/rabbit` para autoload/eager load usando `app.config.paths.add` en lugar de mutar `autoload_paths`/`eager_load_paths`.
+
 ## [4.0.0] - 2026-03-02
 
 ### ⚠ Breaking Changes

@@ -15,8 +15,7 @@ module BugBunny
     initializer 'bug_bunny.add_autoload_paths' do |app|
       rabbit_path = File.join(app.root, 'app', 'rabbit')
       if Dir.exist?(rabbit_path)
-        app.config.autoload_paths << rabbit_path
-        app.config.eager_load_paths << rabbit_path
+        app.config.paths.add 'app/rabbit', eager_load: true
       end
     end
 
