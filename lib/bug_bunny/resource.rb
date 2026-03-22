@@ -154,9 +154,24 @@ module BugBunny
       end
 
       # Proxy para el encadenamiento del método `.with`.
+      # Solo puede usarse para UNA llamada de método: el contexto se restaura al finalizar.
       class ScopeProxy < BasicObject
-        def initialize(target, keys, old_values); @target = target; @keys = keys; @old_values = old_values; end
-        def method_missing(method, *args, &block); @target.public_send(method, *args, &block); ensure; @keys.each { |k, v| ::Thread.current[v] = @old_values[k] }; end
+        def initialize(target, keys, old_values)
+          @target = target
+          @keys = keys
+          @old_values = old_values
+          @used = false
+        end
+
+        def method_missing(method, *args, &block)
+          if @used
+            ::Kernel.raise ::BugBunny::Error, "ScopeProxy is single-use. Call .with again for a new context."
+          end
+          @used = true
+          @target.public_send(method, *args, &block)
+        ensure
+          @keys.each { |k, v| ::Thread.current[v] = @old_values[k] }
+        end
       end
 
       # Calcula la routing key final.

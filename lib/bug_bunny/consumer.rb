@@ -44,6 +44,7 @@ module BugBunny
     # @param connection [Bunny::Session] Conexión nativa de Bunny.
     def initialize(connection)
       @session = BugBunny::Session.new(connection)
+      @health_timer = nil
     end
 
     # Inicia la suscripción a la cola y comienza el bucle de procesamiento.
@@ -244,12 +245,16 @@ module BugBunny
     # @param q_name [String] Nombre de la cola a monitorear.
     # @return [void]
     def start_health_check(q_name)
+      # Detener el timer anterior antes de crear uno nuevo (evita leak en cada retry)
+      @health_timer&.shutdown
+      @health_timer = nil
+
       file_path = BugBunny.configuration.health_check_file
 
       # Toque inicial para indicar al orquestador que el worker arrancó correctamente
       touch_health_file(file_path) if file_path
 
-      Concurrent::TimerTask.new(execution_interval: BugBunny.configuration.health_check_interval) do
+      @health_timer = Concurrent::TimerTask.new(execution_interval: BugBunny.configuration.health_check_interval) do
         # 1. Verificamos la salud de RabbitMQ (si falla, levanta un error y corta la ejecución del bloque)
         session.channel.queue_declare(q_name, passive: true)
 
@@ -258,7 +263,8 @@ module BugBunny
       rescue StandardError => e
         BugBunny.configuration.logger.warn("[BugBunny::Consumer] ⚠️  Queue check failed: #{e.message}. Reconnecting session...")
         session.close
-      end.execute
+      end
+      @health_timer.execute
     end
 
     # Actualiza la fecha de modificación del archivo de health check (touchfile).
