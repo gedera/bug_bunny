@@ -1,5 +1,15 @@
 # Changelog
 
+## [4.1.1] - 2026-03-22
+
+### 🐛 Bug Fixes
+* **Consumer:** Previene memory leak al detener el `TimerTask` de health check previo antes de realizar una reconexiÃ³n.
+* **Controller:** Corrige la mutaciÃ³n accidental de \`log_tags\` globales al usar una lÃ³gica de herencia no destructiva en \`compute_tags\`.
+
+### ✨ Improvements
+* **Controller:** Ahora lanza una excepciÃ³n \`BugBunny::BadRequest\` (400) si el cuerpo de la peticiÃ³n contiene un JSON invÃ¡lido, mejorando la depuraciÃ³n en el cliente.
+* **Resource:** Se aÃ±adiÃ³ una protecciÃ³n a \`.with\` (\`ScopeProxy\`) para asegurar que el contexto sea de un solo uso, evitando efectos secundarios en llamadas encadenadas.
+
 ## [4.1.0] - 2026-03-22
 
 ### 🚀 New Features & Improvements
