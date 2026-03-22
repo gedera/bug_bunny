@@ -1,5 +1,16 @@
 # Changelog
 
+## [4.2.0] - 2026-03-22
+
+### ðŸ”  Observability & Structured Logging
+* **Structured Logs (Key-Value):** Se migraron todos los logs del framework a un formato \`key=value\` estructurado, ideal para herramientas de monitoreo como Datadog o CloudWatch. Se eliminaron emojis y texto libre para mejorar el parseo automÃ¡tico.
+* **Lazy Evaluation (Debug Blocks):** Las llamadas a \`logger.debug\` ahora utilizan bloques para evitar la interpolaciÃ³n de strings innecesaria en producciÃ³n, optimizando el uso de CPU y memoria.
+
+### ðŸ›¡ï¸  Resilience & Connectivity
+* **Exponential Backoff:** El \`Consumer\` ahora implementa un algoritmo de reintento exponencial para reconectarse a RabbitMQ, evitando picos de carga durante caÃ­das del broker.
+* **Max Reconnect Attempts:** Nueva configuraciÃ³n \`max_reconnect_attempts\` que permite que el worker falle definitivamente tras N intentos, facilitando el reinicio del Pod por parte de orquestadores como Kubernetes.
+* **Performance Tuning:** Se desactivaron los \`publisher_confirms\` en el canal del \`Consumer\` al responder RPCs para reducir la latencia de respuesta (round-trips innecesarios).
+
 ## [4.1.2] - 2026-03-22
 
 ### ✨ Improvements
