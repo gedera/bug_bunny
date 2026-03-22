@@ -125,10 +125,10 @@ module BugBunny
     def ensure_connection!
       return if @connection.open?
 
-      BugBunny.configuration.logger.warn("[BugBunny::Session] ⚠️  Connection lost. Attempting to reconnect...")
+      BugBunny.configuration.logger.warn('component=bug_bunny event=reconnect_attempt')
       @connection.start
     rescue StandardError => e
-      BugBunny.configuration.logger.error("[BugBunny::Session] ❌ Critical connection failure: #{e.message}")
+      BugBunny.configuration.logger.error { "component=bug_bunny event=reconnect_failed error=#{e.message.inspect}" }
       raise BugBunny::CommunicationError, "Could not reconnect to RabbitMQ: #{e.message}"
     end
   end
