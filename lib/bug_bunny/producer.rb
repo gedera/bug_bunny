@@ -73,7 +73,7 @@ module BugBunny
       begin
         fire(request)
 
-        BugBunny.configuration.logger.debug("[BugBunny::Producer] ⏳ Waiting for RPC response | ID: #{cid} | Timeout: #{wait_timeout}s")
+        BugBunny.configuration.logger.debug { "component=bug_bunny event=rpc_waiting correlation_id=#{cid} timeout=#{wait_timeout}" }
 
         # Bloqueamos el hilo aquí hasta que llegue la respuesta o expire el timeout
         response_payload = future.value(wait_timeout)
@@ -106,12 +106,9 @@ module BugBunny
                        .merge(BugBunny.configuration.exchange_options || {})
                        .merge(request.exchange_options || {})
 
-      # INFO: Resumen de una línea (Traffic)
-      BugBunny.configuration.logger.info("[BugBunny::Producer] 📤 #{verb} /#{target} | RK: '#{rk}' | ID: #{id}")
-
-      # DEBUG: Detalle completo de Infraestructura y Payload
-      BugBunny.configuration.logger.debug("[BugBunny::Producer] ⚙️ Exchange #{request.exchange} | Opts: #{final_x_opts}")
-      BugBunny.configuration.logger.debug("[BugBunny::Producer] 📦 Payload: #{payload.truncate(300)}") if payload.is_a?(String)
+      BugBunny.configuration.logger.info("component=bug_bunny event=publish method=#{verb} path=#{target} routing_key=#{rk} correlation_id=#{id}")
+      BugBunny.configuration.logger.debug { "component=bug_bunny event=publish_detail exchange=#{request.exchange} exchange_opts=#{final_x_opts}" }
+      BugBunny.configuration.logger.debug { "component=bug_bunny event=publish_payload payload=#{payload.truncate(300).inspect}" } if payload.is_a?(String)
     end
 
     # Serializa el mensaje para su transporte.
@@ -145,16 +142,16 @@ module BugBunny
       @reply_listener_mutex.synchronize do
         return if @reply_listener_started
 
-        BugBunny.configuration.logger.debug("[BugBunny::Producer] 👂 Starting Reply Listener on 'amq.rabbitmq.reply-to'")
+        BugBunny.configuration.logger.debug { 'component=bug_bunny event=reply_listener_start queue=amq.rabbitmq.reply-to' }
 
         # Consumimos sin ack (auto-ack) porque reply-to no soporta acks manuales de forma estándar
         @session.channel.basic_consume('amq.rabbitmq.reply-to', '', true, false, nil) do |_, props, body|
           cid = props.correlation_id.to_s
-          BugBunny.configuration.logger.debug("[BugBunny::Producer] 📥 RPC Response matched | ID: #{cid}")
+          BugBunny.configuration.logger.debug { "component=bug_bunny event=rpc_response_received correlation_id=#{cid}" }
           if (future = @pending_requests[cid])
             future.set(body)
           else
-            BugBunny.configuration.logger.warn("[BugBunny::Producer] ⚠️ Orphaned RPC Response received | ID: #{cid}")
+            BugBunny.configuration.logger.warn("component=bug_bunny event=rpc_response_orphaned correlation_id=#{cid}")
           end
         end
         @reply_listener_started = true

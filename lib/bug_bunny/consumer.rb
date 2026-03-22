@@ -77,8 +77,8 @@ module BugBunny
                          .merge(BugBunny.configuration.queue_options || {})
                          .merge(queue_opts || {})
 
-        BugBunny.configuration.logger.info("[BugBunny::Consumer] 🎧 Listening on '#{queue_name}' (Opts: #{final_q_opts})")
-        BugBunny.configuration.logger.info("[BugBunny::Consumer] 🔀 Bounded to Exchange '#{exchange_name}' (#{exchange_type}) | Opts: #{final_x_opts} | RK: '#{routing_key}'")
+        BugBunny.configuration.logger.info("component=bug_bunny event=consumer_start queue=#{queue_name} queue_opts=#{final_q_opts}")
+        BugBunny.configuration.logger.info("component=bug_bunny event=consumer_bound exchange=#{exchange_name} exchange_type=#{exchange_type} routing_key=#{routing_key} exchange_opts=#{final_x_opts}")
 
         start_health_check(queue_name)
 
@@ -100,7 +100,7 @@ module BugBunny
         max_attempts = BugBunny.configuration.max_reconnect_attempts
 
         if max_attempts && attempt >= max_attempts
-          BugBunny.configuration.logger.error("[BugBunny::Consumer] 💥 Max reconnect attempts (#{max_attempts}) reached. Giving up: #{e.message}")
+          BugBunny.configuration.logger.error { "component=bug_bunny event=reconnect_exhausted attempts=#{max_attempts} error=#{e.message.inspect}" }
           raise
         end
 
@@ -109,7 +109,7 @@ module BugBunny
           BugBunny.configuration.max_reconnect_interval
         ].min
 
-        BugBunny.configuration.logger.error("[BugBunny::Consumer] 💥 Connection Error: #{e.message}. Retrying in #{wait}s (attempt #{attempt}/#{max_attempts || '∞'})...")
+        BugBunny.configuration.logger.error { "component=bug_bunny event=connection_error error=#{e.message.inspect} attempt=#{attempt} max_attempts=#{max_attempts || 'infinity'} retry_in=#{wait}" }
         sleep wait
         retry
       end
@@ -130,7 +130,7 @@ module BugBunny
       path = properties.type || (properties.headers && properties.headers['path'])
 
       if path.nil? || path.empty?
-        BugBunny.configuration.logger.error("[BugBunny::Consumer] ⛔ Rejected: Missing 'type' header.")
+        BugBunny.configuration.logger.error('component=bug_bunny event=message_rejected reason=missing_type_header')
         session.channel.reject(delivery_info.delivery_tag, false)
         return
       end
@@ -139,8 +139,8 @@ module BugBunny
       headers_hash = properties.headers || {}
       http_method = (headers_hash['x-http-method'] || headers_hash['method'] || 'GET').to_s.upcase
 
-      BugBunny.configuration.logger.info("[BugBunny::Consumer] 📥 Received #{http_method} \"/#{path}\" | RK: '#{delivery_info.routing_key}'")
-      BugBunny.configuration.logger.debug("[BugBunny::Consumer] 📦 Body: #{body.truncate(200)}")
+      BugBunny.configuration.logger.info("component=bug_bunny event=message_received method=#{http_method} path=#{path} routing_key=#{delivery_info.routing_key}")
+      BugBunny.configuration.logger.debug { "component=bug_bunny event=message_received_body body=#{body.truncate(200).inspect}" }
 
       # ===================================================================
       # 3. Ruteo Declarativo
@@ -157,7 +157,7 @@ module BugBunny
       route_info = BugBunny.routes.recognize(http_method, uri.path)
 
       if route_info.nil?
-        BugBunny.configuration.logger.warn("[BugBunny::Consumer] ⚠️  No route matches [#{http_method}] \"/#{uri.path}\"")
+        BugBunny.configuration.logger.warn("component=bug_bunny event=route_not_found method=#{http_method} path=#{uri.path}")
         handle_fatal_error(properties, 404, "Not Found", "No route matches [#{http_method}] \"/#{uri.path}\"")
         session.channel.reject(delivery_info.delivery_tag, false)
         return
@@ -176,7 +176,7 @@ module BugBunny
       begin
         controller_class = controller_class_name.constantize
       rescue NameError
-        BugBunny.configuration.logger.warn("[BugBunny::Consumer] ⚠️  Controller class not found: #{controller_class_name}")
+        BugBunny.configuration.logger.warn("component=bug_bunny event=controller_not_found controller=#{controller_class_name}")
         handle_fatal_error(properties, 404, "Not Found", "Controller #{controller_class_name} not found")
         session.channel.reject(delivery_info.delivery_tag, false)
         return
@@ -184,13 +184,13 @@ module BugBunny
 
       # Verificación estricta de Seguridad (RCE Prevention)
       unless controller_class < BugBunny::Controller
-        BugBunny.configuration.logger.error("[BugBunny::Consumer] ⛔ Security Alert: #{controller_class} is not a valid BugBunny Controller")
+        BugBunny.configuration.logger.error("component=bug_bunny event=security_violation reason=invalid_controller controller=#{controller_class}")
         handle_fatal_error(properties, 403, "Forbidden", "Invalid Controller Class")
         session.channel.reject(delivery_info.delivery_tag, false)
         return
       end
 
-      BugBunny.configuration.logger.debug("[BugBunny::Consumer] 🎯 Routed to #{controller_class_name}##{route_info[:action]}")
+      BugBunny.configuration.logger.debug { "component=bug_bunny event=route_matched controller=#{controller_class_name} action=#{route_info[:action]}" }
 
       request_metadata = {
         type: path,
@@ -216,8 +216,8 @@ module BugBunny
       session.channel.ack(delivery_info.delivery_tag)
 
     rescue StandardError => e
-      BugBunny.configuration.logger.error("[BugBunny::Consumer] 💥 Execution Error (#{e.class}): #{e.message}")
-      BugBunny.configuration.logger.debug(e.backtrace.join("\n"))
+      BugBunny.configuration.logger.error { "component=bug_bunny event=execution_error error_class=#{e.class} error=#{e.message.inspect}" }
+      BugBunny.configuration.logger.debug { "component=bug_bunny event=execution_error backtrace=#{e.backtrace.first(5).join(' | ').inspect}" }
       handle_fatal_error(properties, 500, "Internal Server Error", e.message)
       session.channel.reject(delivery_info.delivery_tag, false)
     end
@@ -229,7 +229,7 @@ module BugBunny
     # @param correlation_id [String] ID para correlacionar la respuesta con la petición original.
     # @return [void]
     def reply(payload, reply_to, correlation_id)
-      BugBunny.configuration.logger.debug("[BugBunny::Consumer] 📤 Sending RPC Reply to #{reply_to} | ID: #{correlation_id}")
+      BugBunny.configuration.logger.debug { "component=bug_bunny event=rpc_reply reply_to=#{reply_to} correlation_id=#{correlation_id}" }
       session.channel.default_exchange.publish(
         payload.to_json,
         routing_key: reply_to,
@@ -278,7 +278,7 @@ module BugBunny
         # 2. Si llegamos aquí, RabbitMQ y la cola están vivos. Avisamos al orquestador actualizando el archivo.
         touch_health_file(file_path) if file_path
       rescue StandardError => e
-        BugBunny.configuration.logger.warn("[BugBunny::Consumer] ⚠️  Queue check failed: #{e.message}. Reconnecting session...")
+        BugBunny.configuration.logger.warn("component=bug_bunny event=health_check_failed queue=#{q_name} error=#{e.message.inspect}")
         session.close
       end
       @health_timer.execute
@@ -293,7 +293,7 @@ module BugBunny
     def touch_health_file(file_path)
       FileUtils.touch(file_path)
     rescue StandardError => e
-      BugBunny.configuration.logger.error("[BugBunny::Consumer] ⚠️  Cannot touch health check file '#{file_path}': #{e.message}")
+      BugBunny.configuration.logger.error("component=bug_bunny event=health_check_file_error path=#{file_path} error=#{e.message.inspect}")
     end
   end
 end
