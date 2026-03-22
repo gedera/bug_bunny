@@ -1,4 +1,12 @@
 # Changelog
+
+## [4.1.0] - 2026-03-22
+
+### 🚀 New Features & Improvements
+* **Faraday-style Client API:** Se introdujo el mÃ©todo \`Client#send\` como punto de entrada genÃ©rico, permitiendo una sintaxis mÃ¡s familiar y flexible.
+* **Flexible Delivery Modes:** IntroducciÃ³n del atributo \`delivery_mode\` (:rpc o :publish). Ahora es posible configurar la estrategia de envÃ­o a nivel de cliente o por cada peticiÃ³n individual.
+* **Smart Request Defaults:** Los mÃ©todos \`request\` y \`publish\` ahora delegan internamente en \`send\`, manteniendo la compatibilidad pero beneficiÃ¡ndose de la nueva arquitectura de peticiones.
+
 ## [4.0.1] - 2026-03-13
 
 ### 🐛 Bug Fixes
