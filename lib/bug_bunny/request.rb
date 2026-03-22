@@ -16,6 +16,7 @@ module BugBunny
   # @attr routing_key [String] La routing key específica. Si es nil, se usará {#path}.
   # @attr timeout [Integer] Tiempo máximo en segundos para timeout RPC.
   #
+  # @attr delivery_mode [Symbol] El modo de entrega (:rpc o :publish).
   # @attr exchange_options [Hash] Opciones específicas para la declaración del Exchange en esta petición.
   # @attr queue_options [Hash] Opciones específicas para la declaración de la Cola en esta petición.
   class Request
@@ -27,6 +28,7 @@ module BugBunny
     attr_accessor :exchange_type
     attr_accessor :routing_key
     attr_accessor :timeout
+    attr_accessor :delivery_mode
 
     # Configuración de Infraestructura Específica
     attr_accessor :exchange_options
@@ -48,12 +50,12 @@ module BugBunny
       @timestamp = Time.now.to_i
       @persistent = false
       @exchange_type = 'direct'
+      @delivery_mode = :rpc
 
       # Inicialización de opciones de infraestructura para evitar errores de nil durante el merge.
       @exchange_options = {}
       @queue_options = {}
     end
-
     # Calcula la Routing Key final que se usará en RabbitMQ.
     #
     # Principio: "Convention over Configuration".

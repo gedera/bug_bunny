@@ -203,6 +203,26 @@ client = BugBunny::Client.new(pool: BUG_BUNNY_POOL) do |stack|
   stack.use BugBunny::Middleware::JsonResponse
 end
 
+# 1. Método genérico 'send' (Estilo Faraday)
+# El comportamiento (RPC o Fire-and-forget) depende de 'delivery_mode'
+client.delivery_mode = :rpc # Default
+client.send('users/1', method: :get)
+
+# 2. Configuración flexible del modo de entrega
+# Por cada petición
+client.send('logs', method: :post, body: { msg: 'system_up' }, delivery_mode: :publish)
+
+# O mediante un bloque para configuración avanzada
+client.send('users/1') do |req|
+  req.method = :get
+  req.delivery_mode = :rpc
+  req.timeout = 5
+end
+
+# 3. Métodos de conveniencia (Atajos)
+client.request('users/1') # Siempre :rpc
+client.publish('events', body: { type: 'click' }) # Siempre :publish
+
 # Ahora el cliente devolverá Hashes y lanzará errores si el worker falla
 response = client.request('users/1', method: :get)
 ```

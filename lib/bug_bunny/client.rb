@@ -21,6 +21,9 @@ module BugBunny
     # @return [BugBunny::Middleware::Stack] La pila de middlewares configurada.
     attr_reader :stack
 
+    # @return [Symbol] El modo de entrega por defecto para este cliente (:rpc o :publish).
+    attr_accessor :delivery_mode
+
     # Inicializa un nuevo cliente.
     #
     # @param pool [ConnectionPool] Pool de conexiones a RabbitMQ configurado previamente.
@@ -30,7 +33,20 @@ module BugBunny
       raise ArgumentError, "BugBunny::Client requiere un 'pool:'" if pool.nil?
       @pool = pool
       @stack = BugBunny::Middleware::Stack.new
+      @delivery_mode = :rpc
       yield(@stack) if block_given?
+    end
+
+    # Realiza una petición general al estilo Faraday.
+    # El comportamiento (RPC o Fire-and-forget) depende de {#delivery_mode}.
+    #
+    # @param url [String] La ruta del recurso.
+    # @param args [Hash] Opciones de configuración.
+    # @yield [req] Bloque para configurar el objeto Request directamente.
+    def send(url, **args)
+      run_in_pool(url, args) do |req|
+        yield req if block_given?
+      end
     end
 
     # Realiza una petición Síncrona (RPC / Request-Response).
@@ -48,7 +64,8 @@ module BugBunny
     # @yield [req] Bloque para configurar el objeto Request directamente.
     # @return [Hash] La respuesta del servidor.
     def request(url, **args)
-      run_in_pool(:rpc, url, args) do |req|
+      send(url, **args) do |req|
+        req.delivery_mode = :rpc
         yield req if block_given?
       end
     end
@@ -60,7 +77,8 @@ module BugBunny
     # @yield [req] Bloque para configurar el objeto Request.
     # @return [void]
     def publish(url, **args)
-      run_in_pool(:fire, url, args) do |req|
+      send(url, **args) do |req|
+        req.delivery_mode = :publish
         yield req if block_given?
       end
     end
@@ -70,15 +88,16 @@ module BugBunny
     # Ejecuta la lógica de envío dentro del contexto del Pool.
     # Mapea los argumentos al objeto Request y ejecuta la cadena de middlewares.
     #
-    # @param method_name [Symbol] El método del productor a llamar (:rpc o :fire).
     # @param url [String] La ruta destino.
     # @param args [Hash] Argumentos pasados a los métodos públicos.
     # @yield [req] Bloque para configuración adicional del Request.
-    def run_in_pool(method_name, url, args)
+    def run_in_pool(url, args)
       # 1. Builder del Request
       req = BugBunny::Request.new(url)
 
       # 2. Syntactic Sugar: Mapeo de argumentos a atributos del Request
+      req.delivery_mode    = delivery_mode           # Default del cliente
+      req.delivery_mode    = args[:delivery_mode]    if args[:delivery_mode]
       req.method           = args[:method]           if args[:method]
       req.body             = args[:body]             if args[:body]
       req.exchange         = args[:exchange]         if args[:exchange]
@@ -101,6 +120,10 @@ module BugBunny
         producer = BugBunny::Producer.new(session)
 
         begin
+          # Mapeo de delivery_mode al método del productor (:rpc o :fire)
+          # :publish se mapea a :fire por consistencia interna.
+          method_name = req.delivery_mode == :publish ? :fire : :rpc
+
           # Onion Architecture: La acción final es llamar al Producer real.
           final_action = ->(env) { producer.send(method_name, env) }
 
