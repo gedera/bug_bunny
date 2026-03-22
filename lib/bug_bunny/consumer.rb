@@ -43,7 +43,7 @@ module BugBunny
     #
     # @param connection [Bunny::Session] Conexión nativa de Bunny.
     def initialize(connection)
-      @session = BugBunny::Session.new(connection)
+      @session = BugBunny::Session.new(connection, publisher_confirms: false)
       @health_timer = nil
     end
 
@@ -61,41 +61,58 @@ module BugBunny
     # @param block [Boolean] Si es `true`, bloquea el hilo actual (loop infinito).
     # @return [void]
     def subscribe(queue_name:, exchange_name:, routing_key:, exchange_type: 'direct', exchange_opts: {}, queue_opts: {}, block: true)
-      # Declaración de Infraestructura
-      x = session.exchange(name: exchange_name, type: exchange_type, opts: exchange_opts)
-      q = session.queue(queue_name, queue_opts)
-      q.bind(x, routing_key: routing_key)
+      attempt = 0
 
-      # 📊 LOGGING DE OBSERVABILIDAD: Calculamos las opciones finales para mostrarlas en consola
-      final_x_opts = BugBunny::Session::DEFAULT_EXCHANGE_OPTIONS
-                       .merge(BugBunny.configuration.exchange_options || {})
-                       .merge(exchange_opts || {})
-      final_q_opts = BugBunny::Session::DEFAULT_QUEUE_OPTIONS
-                       .merge(BugBunny.configuration.queue_options || {})
-                       .merge(queue_opts || {})
+      begin
+        # Declaración de Infraestructura
+        x = session.exchange(name: exchange_name, type: exchange_type, opts: exchange_opts)
+        q = session.queue(queue_name, queue_opts)
+        q.bind(x, routing_key: routing_key)
 
-      BugBunny.configuration.logger.info("[BugBunny::Consumer] 🎧 Listening on '#{queue_name}' (Opts: #{final_q_opts})")
-      BugBunny.configuration.logger.info("[BugBunny::Consumer] 🔀 Bounded to Exchange '#{exchange_name}' (#{exchange_type}) | Opts: #{final_x_opts} | RK: '#{routing_key}'")
+        # 📊 LOGGING DE OBSERVABILIDAD: Calculamos las opciones finales para mostrarlas en consola
+        final_x_opts = BugBunny::Session::DEFAULT_EXCHANGE_OPTIONS
+                         .merge(BugBunny.configuration.exchange_options || {})
+                         .merge(exchange_opts || {})
+        final_q_opts = BugBunny::Session::DEFAULT_QUEUE_OPTIONS
+                         .merge(BugBunny.configuration.queue_options || {})
+                         .merge(queue_opts || {})
 
-      start_health_check(queue_name)
+        BugBunny.configuration.logger.info("[BugBunny::Consumer] 🎧 Listening on '#{queue_name}' (Opts: #{final_q_opts})")
+        BugBunny.configuration.logger.info("[BugBunny::Consumer] 🔀 Bounded to Exchange '#{exchange_name}' (#{exchange_type}) | Opts: #{final_x_opts} | RK: '#{routing_key}'")
 
-      q.subscribe(manual_ack: true, block: block) do |delivery_info, properties, body|
-        trace_id = properties.correlation_id
+        start_health_check(queue_name)
 
-        logger = BugBunny.configuration.logger
+        q.subscribe(manual_ack: true, block: block) do |delivery_info, properties, body|
+          trace_id = properties.correlation_id
 
-        if logger.respond_to?(:tagged)
-          logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
-        elsif defined?(Rails) && Rails.logger.respond_to?(:tagged)
-          Rails.logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
-        else
-          process_message(delivery_info, properties, body)
+          logger = BugBunny.configuration.logger
+
+          if logger.respond_to?(:tagged)
+            logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
+          elsif defined?(Rails) && Rails.logger.respond_to?(:tagged)
+            Rails.logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
+          else
+            process_message(delivery_info, properties, body)
+          end
         end
+      rescue StandardError => e
+        attempt += 1
+        max_attempts = BugBunny.configuration.max_reconnect_attempts
+
+        if max_attempts && attempt >= max_attempts
+          BugBunny.configuration.logger.error("[BugBunny::Consumer] 💥 Max reconnect attempts (#{max_attempts}) reached. Giving up: #{e.message}")
+          raise
+        end
+
+        wait = [
+          BugBunny.configuration.network_recovery_interval * (2 ** (attempt - 1)),
+          BugBunny.configuration.max_reconnect_interval
+        ].min
+
+        BugBunny.configuration.logger.error("[BugBunny::Consumer] 💥 Connection Error: #{e.message}. Retrying in #{wait}s (attempt #{attempt}/#{max_attempts || '∞'})...")
+        sleep wait
+        retry
       end
-    rescue StandardError => e
-      BugBunny.configuration.logger.error("[BugBunny::Consumer] 💥 Connection Error: #{e.message}. Retrying in #{BugBunny.configuration.network_recovery_interval}s...")
-      sleep BugBunny.configuration.network_recovery_interval
-      retry
     end
 
     private
