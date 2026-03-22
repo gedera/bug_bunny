@@ -24,8 +24,12 @@ module BugBunny
     # Inicializa una nueva sesión sin abrir canales todavía.
     #
     # @param connection [Bunny::Session] Una conexión (puede estar abierta o cerrada temporalmente).
-    def initialize(connection)
+    # @param publisher_confirms [Boolean] Si es `true`, el canal se abre en modo Publisher Confirms.
+    #   Activar solo en sesiones de Producer. En sesiones de Consumer genera overhead innecesario
+    #   ya que los replies RPC son fire-and-forget desde la perspectiva del servidor.
+    def initialize(connection, publisher_confirms: true)
       @connection = connection
+      @publisher_confirms = publisher_confirms
       @channel = nil
     end
 
@@ -105,8 +109,7 @@ module BugBunny
     def create_channel!
       @channel = @connection.create_channel
 
-      # Configuraciones globales de BugBunny
-      @channel.confirm_select
+      @channel.confirm_select if @publisher_confirms
 
       if BugBunny.configuration.channel_prefetch
         @channel.prefetch(BugBunny.configuration.channel_prefetch)

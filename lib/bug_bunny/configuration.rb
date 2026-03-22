@@ -38,8 +38,15 @@ module BugBunny
     # @return [Boolean] Si `true`, Bunny intentará reconectar automáticamente.
     attr_accessor :automatically_recover
 
-    # @return [Integer] Tiempo en segundos a esperar antes de intentar reconectar.
+    # @return [Integer] Tiempo en segundos a esperar antes de intentar reconectar (base del backoff).
     attr_accessor :network_recovery_interval
+
+    # @return [Integer, nil] Número máximo de intentos de reconexión del Consumer antes de rendirse.
+    #   Si es `nil` (default), reintenta indefinidamente.
+    attr_accessor :max_reconnect_attempts
+
+    # @return [Integer] Techo en segundos para el backoff exponencial de reconexión (default: 60).
+    attr_accessor :max_reconnect_interval
 
     # @return [Integer] Timeout en segundos para establecer la conexión TCP inicial.
     attr_accessor :connection_timeout
@@ -106,6 +113,8 @@ module BugBunny
       @bunny_logger.level = Logger::WARN
       @automatically_recover = true
       @network_recovery_interval = 5
+      @max_reconnect_attempts = nil
+      @max_reconnect_interval = 60
       @connection_timeout = 10
       @read_timeout = 30
       @write_timeout = 30
