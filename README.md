@@ -74,7 +74,9 @@ BugBunny.configure do |config|
 
   # 2. Timeouts y Recuperación
   config.rpc_timeout = 10               # Segundos máx para esperar respuesta (Síncrono)
-  config.network_recovery_interval = 5  # Reintento de conexión
+  config.network_recovery_interval = 5  # Base del backoff de reconexión (segundos)
+  config.max_reconnect_interval    = 60 # Techo del backoff exponencial (segundos)
+  config.max_reconnect_attempts    = nil # nil = reintenta infinitamente; Integer = falla hard
 
   # 3. Health Checks (Opcional, para Docker Swarm / K8s)
   config.health_check_file = '/tmp/bug_bunny_health'
@@ -419,6 +421,30 @@ Para máxima velocidad, BugBunny usa `amq.rabbitmq.reply-to`.
 
 ### Seguridad
 El Router incluye protecciones contra **Remote Code Execution (RCE)**. El Consumer verifica estrictamente que el Controlador resuelto a través del archivo de rutas herede de `BugBunny::Controller` antes de ejecutarla, impidiendo la inyección de clases arbitrarias. Además, las llamadas a rutas no registradas fallan rápido con un `404 Not Found`.
+
+### Reconexión con Backoff Exponencial
+
+Cuando el Consumer pierde la conexión a RabbitMQ, reintenta automáticamente usando un backoff exponencial basado en `network_recovery_interval`:
+
+| Intento | Espera (base = 5s, techo = 60s) |
+|---------|----------------------------------|
+| 1       | 5s                               |
+| 2       | 10s                              |
+| 3       | 20s                              |
+| 4       | 40s                              |
+| 5+      | 60s (cap)                        |
+
+Por defecto reintenta indefinidamente (`max_reconnect_attempts: nil`). En entornos orquestados (Kubernetes, Docker Swarm), es preferible dejar que el orquestador reinicie el contenedor cuando la infraestructura no está disponible:
+
+```ruby
+BugBunny.configure do |config|
+  config.network_recovery_interval = 5   # Base del backoff
+  config.max_reconnect_interval    = 60  # Techo máximo de espera
+  config.max_reconnect_attempts    = 10  # Falla hard después de 10 intentos
+end
+```
+
+Con esta configuración, si RabbitMQ no vuelve en ~10 reintentos el proceso levanta la excepción y el orquestador lo reinicia con su propia política de restart.
 
 ### Health Checks en Docker Swarm / Kubernetes
 Dado que un Worker se ejecuta en segundo plano sin exponer un servidor web tradicional, orquestadores como Docker Swarm o Kubernetes no pueden usar un endpoint HTTP para verificar si el proceso está saludable.
