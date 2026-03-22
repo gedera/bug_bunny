@@ -146,11 +146,6 @@ module BugBunny
     def process(body)
       prepare_params(body)
 
-      # Inyección de configuración global de logs si el controlador no define propios
-      if self.class.log_tags.empty? && BugBunny.configuration.log_tags.any?
-        self.class.log_tags = BugBunny.configuration.log_tags
-      end
-
       action_name = headers[:action].to_sym
       current_arounds = resolve_callbacks(self.class.around_actions, action_name)
 
@@ -245,12 +240,11 @@ module BugBunny
       if body.is_a?(Hash)
         params.merge!(body)
       elsif body.is_a?(String) && headers[:content_type].to_s.include?('json')
-        parsed = begin
-                   JSON.parse(body)
-                 rescue JSON::ParserError
-                   nil
-                 end
-        params.merge!(parsed) if parsed
+        begin
+          params.merge!(JSON.parse(body))
+        rescue JSON::ParserError => e
+          raise BugBunny::BadRequest, "Invalid JSON in request body: #{e.message}"
+        end
       else
         self.raw_string = body
       end
@@ -284,7 +278,8 @@ module BugBunny
     end
 
     def compute_tags
-      self.class.log_tags.map do |tag|
+      tags = self.class.log_tags.presence || BugBunny.configuration.log_tags
+      tags.map do |tag|
         case tag
         when Proc
           tag.call(self)
