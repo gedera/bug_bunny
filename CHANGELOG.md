@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.4.0] - 2026-03-24
+
+### 📈 Standard Observability Pattern
+* **Unified Observability Module:** Adopción del patrón de observabilidad estándar para todas las gemas.
+* **Semantic Event Naming:** Todos los eventos ahora siguen el formato `clase.evento` (ej: `consumer.message_processed`, `producer.publish`) para una mejor categorización.
+* **Resilient Logging:** Implementación de `@logger` en cada componente con el método `safe_log` para garantizar que la telemetría nunca interrumpa la ejecución principal.
+* **Full Documentation Sync:** Actualización del README con los nuevos ejemplos de uso del patrón de observabilidad.
+
 ## [4.3.0] - 2026-03-24
 
 ### 📈 Observability Alignment (ExisRay Standards)
