@@ -13,6 +13,8 @@ module BugBunny
   # 3. Implementar el patrón RPC síncrono utilizando futuros (`Concurrent::IVar`).
   # 4. Gestionar la escucha de respuestas en la cola especial de RabbitMQ.
   class Producer
+    include BugBunny::Observability
+
     # Inicializa el productor.
     #
     # Prepara las estructuras de concurrencia necesarias para manejar múltiples
@@ -21,6 +23,7 @@ module BugBunny
     # @param session [BugBunny::Session] Sesión activa de Bunny (wrapper).
     def initialize(session)
       @session = session
+      @logger = BugBunny.configuration.logger
       # Mapa thread-safe para correlacionar IDs de petición con sus futuros (IVars)
       @pending_requests = Concurrent::Map.new
       @reply_listener_mutex = Mutex.new
@@ -73,7 +76,7 @@ module BugBunny
       begin
         fire(request)
 
-        BugBunny.configuration.logger.debug { "component=bug_bunny event=rpc_waiting correlation_id=#{cid} timeout_s=#{wait_timeout}" }
+        safe_log(:debug, "producer.rpc_waiting", correlation_id: cid, timeout_s: wait_timeout)
 
         # Bloqueamos el hilo aquí hasta que llegue la respuesta o expire el timeout
         response_payload = future.value(wait_timeout)
@@ -106,9 +109,9 @@ module BugBunny
                        .merge(BugBunny.configuration.exchange_options || {})
                        .merge(request.exchange_options || {})
 
-      BugBunny.configuration.logger.info("component=bug_bunny event=publish method=#{verb} path=#{target} routing_key=#{rk} correlation_id=#{id}")
-      BugBunny.configuration.logger.debug { "component=bug_bunny event=publish_detail exchange=#{request.exchange} exchange_opts=#{final_x_opts}" }
-      BugBunny.configuration.logger.debug { "component=bug_bunny event=publish_payload payload=#{payload.truncate(300).inspect}" } if payload.is_a?(String)
+      safe_log(:info, "producer.publish", method: verb, path: target, routing_key: rk, correlation_id: id)
+      safe_log(:debug, "producer.publish_detail", exchange: request.exchange, exchange_opts: final_x_opts)
+      safe_log(:debug, "producer.publish_payload", payload: payload.truncate(300)) if payload.is_a?(String)
     end
 
     # Serializa el mensaje para su transporte.
@@ -142,16 +145,16 @@ module BugBunny
       @reply_listener_mutex.synchronize do
         return if @reply_listener_started
 
-        BugBunny.configuration.logger.debug { 'component=bug_bunny event=reply_listener_start queue=amq.rabbitmq.reply-to' }
+        safe_log(:debug, "producer.reply_listener_start")
 
         # Consumimos sin ack (auto-ack) porque reply-to no soporta acks manuales de forma estándar
         @session.channel.basic_consume('amq.rabbitmq.reply-to', '', true, false, nil) do |_, props, body|
           cid = props.correlation_id.to_s
-          BugBunny.configuration.logger.debug { "component=bug_bunny event=rpc_response_received correlation_id=#{cid}" }
+          safe_log(:debug, "producer.rpc_response_received", correlation_id: cid)
           if (future = @pending_requests[cid])
             future.set(body)
           else
-            BugBunny.configuration.logger.warn("component=bug_bunny event=rpc_response_orphaned correlation_id=#{cid}")
+            safe_log(:warn, "producer.rpc_response_orphaned", correlation_id: cid)
           end
         end
         @reply_listener_started = true

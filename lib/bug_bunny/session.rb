@@ -8,6 +8,7 @@ module BugBunny
   #
   # @api private
   class Session
+    include BugBunny::Observability
     # @!group Opciones por Defecto (Nivel 1: Gema)
 
     # Opciones predeterminadas de la gema para Exchanges.
@@ -31,6 +32,7 @@ module BugBunny
       @connection = connection
       @publisher_confirms = publisher_confirms
       @channel = nil
+      @logger = BugBunny.configuration.logger
     end
 
     # Obtiene el canal actual o crea uno nuevo si es necesario.
@@ -125,10 +127,10 @@ module BugBunny
     def ensure_connection!
       return if @connection.open?
 
-      BugBunny.configuration.logger.warn('component=bug_bunny event=reconnect_attempt')
+      safe_log(:warn, "session.reconnect_attempt")
       @connection.start
     rescue StandardError => e
-      BugBunny.configuration.logger.error { "component=bug_bunny event=reconnect_failed error_message=#{e.message.inspect}" }
+      safe_log(:error, "session.reconnect_failed", **exception_metadata(e))
       raise BugBunny::CommunicationError, "Could not reconnect to RabbitMQ: #{e.message}"
     end
   end
