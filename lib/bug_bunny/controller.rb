@@ -19,6 +19,7 @@ module BugBunny
   class Controller
     include ActiveModel::Model
     include ActiveModel::Attributes
+    include BugBunny::Observability
 
     # @!group Atributos de Instancia
 
@@ -128,6 +129,7 @@ module BugBunny
     def initialize(attributes = {})
       super
       @response_headers = {}
+      @logger = BugBunny.configuration.logger
     end
 
     # Punto de entrada principal estático llamado por el Router (`BugBunny::Consumer`).
@@ -204,8 +206,7 @@ module BugBunny
       end
 
       # Fallback genérico si la excepción no fue mapeada
-      BugBunny.configuration.logger.error { "component=bug_bunny event=unhandled_exception error_class=#{exception.class} error_message=#{exception.message.inspect}" }
-      BugBunny.configuration.logger.error { "component=bug_bunny event=unhandled_exception backtrace=#{exception.backtrace.first(5).join(' | ').inspect}" }
+      safe_log(:error, "controller.unhandled_exception", backtrace: exception.backtrace.first(5).join(" | "), **exception_metadata(exception))
 
       {
         status: 500,
