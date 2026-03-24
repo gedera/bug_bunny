@@ -100,7 +100,7 @@ module BugBunny
         max_attempts = BugBunny.configuration.max_reconnect_attempts
 
         if max_attempts && attempt >= max_attempts
-          BugBunny.configuration.logger.error { "component=bug_bunny event=reconnect_exhausted attempts=#{max_attempts} error=#{e.message.inspect}" }
+          BugBunny.configuration.logger.error { "component=bug_bunny event=reconnect_exhausted max_attempts_count=#{max_attempts} error_message=#{e.message.inspect}" }
           raise
         end
 
@@ -109,7 +109,7 @@ module BugBunny
           BugBunny.configuration.max_reconnect_interval
         ].min
 
-        BugBunny.configuration.logger.error { "component=bug_bunny event=connection_error error=#{e.message.inspect} attempt=#{attempt} max_attempts=#{max_attempts || 'infinity'} retry_in=#{wait}" }
+        BugBunny.configuration.logger.error { "component=bug_bunny event=connection_error error_message=#{e.message.inspect} attempt_count=#{attempt} max_attempts_count=#{max_attempts || 'infinity'} retry_in_s=#{wait}" }
         sleep wait
         retry
       end
@@ -126,6 +126,8 @@ module BugBunny
     # @param body [String] El payload crudo del mensaje.
     # @return [void]
     def process_message(delivery_info, properties, body)
+      start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
       # 1. Validación de Headers (URL path)
       path = properties.type || (properties.headers && properties.headers['path'])
 
@@ -215,8 +217,12 @@ module BugBunny
 
       session.channel.ack(delivery_info.delivery_tag)
 
+      duration_s = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_time).round(6)
+      BugBunny.configuration.logger.info("component=bug_bunny event=message_processed status=#{response_payload[:status]} duration_s=#{duration_s} controller=#{controller_class_name} action=#{route_info[:action]}")
+
     rescue StandardError => e
-      BugBunny.configuration.logger.error { "component=bug_bunny event=execution_error error_class=#{e.class} error=#{e.message.inspect}" }
+      duration_s = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_time).round(6)
+      BugBunny.configuration.logger.error { "component=bug_bunny event=execution_error error_class=#{e.class} error_message=#{e.message.inspect} duration_s=#{duration_s}" }
       BugBunny.configuration.logger.debug { "component=bug_bunny event=execution_error backtrace=#{e.backtrace.first(5).join(' | ').inspect}" }
       handle_fatal_error(properties, 500, "Internal Server Error", e.message)
       session.channel.reject(delivery_info.delivery_tag, false)
@@ -278,7 +284,7 @@ module BugBunny
         # 2. Si llegamos aquí, RabbitMQ y la cola están vivos. Avisamos al orquestador actualizando el archivo.
         touch_health_file(file_path) if file_path
       rescue StandardError => e
-        BugBunny.configuration.logger.warn("component=bug_bunny event=health_check_failed queue=#{q_name} error=#{e.message.inspect}")
+        BugBunny.configuration.logger.warn("component=bug_bunny event=health_check_failed queue=#{q_name} error_message=#{e.message.inspect}")
         session.close
       end
       @health_timer.execute
@@ -293,7 +299,7 @@ module BugBunny
     def touch_health_file(file_path)
       FileUtils.touch(file_path)
     rescue StandardError => e
-      BugBunny.configuration.logger.error("component=bug_bunny event=health_check_file_error path=#{file_path} error=#{e.message.inspect}")
+      BugBunny.configuration.logger.error("component=bug_bunny event=health_check_file_error path=#{file_path} error_message=#{e.message.inspect}")
     end
   end
 end

@@ -73,7 +73,7 @@ module BugBunny
       begin
         fire(request)
 
-        BugBunny.configuration.logger.debug { "component=bug_bunny event=rpc_waiting correlation_id=#{cid} timeout=#{wait_timeout}" }
+        BugBunny.configuration.logger.debug { "component=bug_bunny event=rpc_waiting correlation_id=#{cid} timeout_s=#{wait_timeout}" }
 
         # Bloqueamos el hilo aquí hasta que llegue la respuesta o expire el timeout
         response_payload = future.value(wait_timeout)
