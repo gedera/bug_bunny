@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.3.0] - 2026-03-24
+
+### 📈 Observability Alignment (ExisRay Standards)
+* **Monotonic Clock Durations:** Implementación de `Process.clock_gettime(Process::CLOCK_MONOTONIC)` para calcular todas las duraciones técnicas y de negocio (`duration_s`), garantizando precisión en entornos Cloud.
+* **Unit-Suffix Keys (Data First):** Se renombraron las llaves de logs para incluir explícitamente su unidad:
+    * `timeout` -> `timeout_s`
+    * `retry_in` -> `retry_in_s`
+    * `attempt` -> `attempt_count`
+    * `max_attempts` -> `max_attempts_count`
+* **Error Field Standardization:** Se renombraron todos los campos `error` a `error_message` para ser consistentes con los eventos de falla de `exis_ray`.
+* **Automatic Field Removal:** Se eliminó la inyección manual de `source` delegando la responsabilidad a la gema `exis_ray`.
+
 ## [4.2.0] - 2026-03-22
 
 ### ðŸ”  Observability & Structured Logging

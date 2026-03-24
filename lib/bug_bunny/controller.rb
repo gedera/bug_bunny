@@ -204,7 +204,7 @@ module BugBunny
       end
 
       # Fallback genérico si la excepción no fue mapeada
-      BugBunny.configuration.logger.error { "component=bug_bunny event=unhandled_exception error_class=#{exception.class} error=#{exception.message.inspect}" }
+      BugBunny.configuration.logger.error { "component=bug_bunny event=unhandled_exception error_class=#{exception.class} error_message=#{exception.message.inspect}" }
       BugBunny.configuration.logger.error { "component=bug_bunny event=unhandled_exception backtrace=#{exception.backtrace.first(5).join(' | ').inspect}" }
 
       {

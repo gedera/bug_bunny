@@ -128,7 +128,7 @@ module BugBunny
       BugBunny.configuration.logger.warn('component=bug_bunny event=reconnect_attempt')
       @connection.start
     rescue StandardError => e
-      BugBunny.configuration.logger.error { "component=bug_bunny event=reconnect_failed error=#{e.message.inspect}" }
+      BugBunny.configuration.logger.error { "component=bug_bunny event=reconnect_failed error_message=#{e.message.inspect}" }
       raise BugBunny::CommunicationError, "Could not reconnect to RabbitMQ: #{e.message}"
     end
   end
