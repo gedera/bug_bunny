@@ -4,201 +4,140 @@
 
 **Active Record over AMQP.**
 
-BugBunny transforma la complejidad de la mensajería asíncrona (RabbitMQ) en una arquitectura **RESTful familiar** para desarrolladores Rails. Envía mensajes como si estuvieras usando Active Record y procésalos como si fueran Controladores de Rails, apoyado por un potente motor de enrutamiento declarativo.
+BugBunny transforma la complejidad de la mensajería asíncrona (RabbitMQ) en una arquitectura familiar RESTful. Permite que tus microservicios se comuniquen como si fueran APIs locales, utilizando controladores, rutas y modelos con una interfaz idéntica a Active Record.
+
+## ✨ Características
+
+*   **RESTful Routing:** Define tus endpoints AMQP con un DSL estilo Rails (`get`, `post`, `resources`).
+*   **Active Record Pattern:** Modela tus recursos remotos con validaciones, callbacks y tracking de cambios.
+*   **Middleware Stack:** Arquitectura de cebolla (Onion) para interceptar peticiones, manejar errores y transformar payloads.
+*   **RPC & Pub/Sub:** Soporta nativamente tanto peticiones síncronas (Request-Response) como publicaciones asíncronas.
+*   **Observabilidad de Clase Mundial:** Integración nativa con **ExisRay** (Tracing distribuido y Logs estructurados KV).
+*   **Resiliencia Enterprise:** Reconexión automática con Backoff Exponencial y Health Checks automáticos.
 
 ---
 
-## 📖 Tabla de Contenidos
-- [Introducción: La Filosofía](#-introducción-la-filosofía)
-- [Instalación](#-instalación)
-- [Configuración Inicial](#-configuración-inicial)
-- [Configuración de Infraestructura en Cascada](#-configuración-de-infraestructura-en-cascada)
-- [Modo Cliente: Recursos (ORM)](#-modo-cliente-recursos-orm)
-    - [Definición y Atributos](#1-definición-y-atributos-híbridos)
-    - [CRUD y Consultas](#2-crud-y-consultas-restful)
-    - [Contexto Dinámico (.with)](#3-contexto-dinámico-with)
-    - [Client Middleware](#4-client-middleware-interceptores)
-- [Modo Servidor: Controladores](#-modo-servidor-controladores)
-    - [Ruteo Declarativo (Rutas)](#1-ruteo-declarativo-rutas)
-    - [El Controlador](#2-el-controlador)
-    - [Manejo de Errores](#3-manejo-de-errores-declarativo)
-- [Observabilidad y Tracing](#-observabilidad-y-tracing)
-- [Guía de Producción](#-guía-de-producción)
+## 🚀 Instalación
 
----
-
-## 💡 Introducción: La Filosofía
-
-En lugar de pensar en "Exchanges" y "Queues", BugBunny inyecta verbos HTTP (`GET`, `POST`, `PUT`, `DELETE`) y rutas (`users/1`) en los headers de AMQP.
-
-* **Tu código (Cliente):** `User.create(name: 'Gabi')`
-* **Protocolo (BugBunny):** Envía `POST /users` (Header `type: users`) vía RabbitMQ.
-* **Worker (Servidor):** Recibe el mensaje, evalúa tu mapa de rutas y ejecuta `UsersController#create`.
-
----
-
-## 📦 Instalación
-
-Agrega la gema a tu `Gemfile`:
+Añade esta línea al `Gemfile` de tu aplicación:
 
 ```ruby
-gem 'bug_bunny', '~> 4.0'
+gem 'bug_bunny'
 ```
 
-Ejecuta el bundle e instala los archivos base:
-
+Y luego ejecuta:
 ```bash
-bundle install
-rails g bug_bunny:install
+$ bundle install
 ```
 
-Esto genera:
-1.  `config/initializers/bug_bunny.rb`
-2.  `app/rabbit/controllers/`
+O instálalo manualmente:
+```bash
+$ gem install bug_bunny
+```
 
----
-
-## ⚙️ Configuración Inicial
-
-Para entornos productivos (Puma/Sidekiq), es **obligatorio** configurar un Pool de conexiones.
-
-```ruby
-# config/initializers/bug_bunny.rb
-
-BugBunny.configure do |config|
-  # 1. Credenciales
-  config.host     = ENV.fetch('RABBITMQ_HOST', 'localhost')
-  config.username = ENV.fetch('RABBITMQ_USER', 'guest')
-  config.password = ENV.fetch('RABBITMQ_PASS', 'guest')
-  config.vhost    = ENV.fetch('RABBITMQ_VHOST', '/')
-
-  # 2. Timeouts y Recuperación
-  config.rpc_timeout = 10               # Segundos máx para esperar respuesta (Síncrono)
-  config.network_recovery_interval = 5  # Base del backoff de reconexión (segundos)
-  config.max_reconnect_interval    = 60 # Techo del backoff exponencial (segundos)
-  config.max_reconnect_attempts    = nil # nil = reintenta infinitamente; Integer = falla hard
-
-  # 3. Health Checks (Opcional, para Docker Swarm / K8s)
-  config.health_check_file = '/tmp/bug_bunny_health'
-
-  # 4. Logging
-  config.logger = Rails.logger
-end
-
-# 5. Connection Pool (CRÍTICO para concurrencia)
-# Define un pool global para compartir conexiones entre hilos
-BUG_BUNNY_POOL = ConnectionPool.new(size: ENV.fetch('RAILS_MAX_THREADS', 5).to_i, timeout: 5) do
-  BugBunny.create_connection
-end
-
-# Inyecta el pool en los recursos
-BugBunny::Resource.connection_pool = BUG_BUNNY_POOL
+Luego, genera el inicializador (en Rails):
+```bash
+$ rails generate bug_bunny:install
 ```
 
 ---
 
-## 🏗️ Configuración de Infraestructura en Cascada
+## 🛠️ Configuración
 
-BugBunny utiliza un sistema de configuración jerárquico para los parámetros de RabbitMQ (como la durabilidad de Exchanges y Colas). Las opciones se resuelven en el siguiente orden de prioridad:
-
-1.  **Defaults de la Gema:** Rápidos y efímeros (`durable: false`).
-2.  **Configuración Global:** Definida en el inicializador para todo el entorno.
-3.  **Configuración de Recurso:** Atributos de clase en modelos específicos.
-4.  **Configuración al Vuelo:** Parámetros pasados en la llamada `.with` o en el Cliente manual.
-
-**Ejemplo de Configuración Global (Nivel 2):**
-Útil para hacer que todos los recursos en el entorno de pruebas sean auto-borrables.
+Configura la conexión a RabbitMQ y las opciones globales:
 
 ```ruby
 # config/initializers/bug_bunny.rb
 BugBunny.configure do |config|
-  if Rails.env.test?
-    config.exchange_options = { auto_delete: true }
-    config.queue_options    = { auto_delete: true }
+  config.host = ENV['RABBITMQ_HOST'] || '127.0.0.1'
+  config.port = 5672
+  config.username = 'guest'
+  config.password = 'guest'
+  
+  # Resiliencia
+  config.max_reconnect_attempts = 10      # Falla tras 10 intentos (útil en K8s)
+  config.max_reconnect_interval = 60      # Máximo 60s entre reintentos
+  config.network_recovery_interval = 5    # Intervalo base para backoff
+  
+  # Infraestructura por defecto (Nivel 2)
+  config.exchange_options = { durable: true }
+end
+```
+
+---
+
+## 📦 Uso como Modelo (Consumer + Producer)
+
+BugBunny permite definir modelos que representan recursos en otros microservicios.
+
+```ruby
+class RemoteNode < BugBunny::Resource
+  # Configuración del canal
+  self.exchange = 'inventory_exchange'
+  self.resource_name = 'nodes' # Equivale al path de la URL
+
+  # Atributos (ActiveRecord style)
+  attribute :name, :string
+  attribute :status, :string
+  attribute :cpu_cores, :integer
+
+  # Validaciones
+  validates :name, presence: true
+end
+
+# Uso:
+node = RemoteNode.find('node-123')
+node.status = 'active'
+node.save # Realiza un PUT a inventory_exchange con routing_key 'nodes.node-123'
+```
+
+---
+
+## 🛣️ Enrutamiento y Controladores (Server side)
+
+Define cómo debe responder tu aplicación a los mensajes entrantes:
+
+```ruby
+# config/rabbit_routes.rb
+BugBunny.routes.draw do
+  resources :nodes do
+    member do
+      put :drain
+    end
+  end
+end
+
+# app/rabbit/controllers/nodes_controller.rb
+module Rabbit
+  module Controllers
+    class NodesController < BugBunny::Controller
+      def index
+        nodes = Node.all # Lógica local de tu app
+        render status: :ok, json: nodes
+      end
+
+      def drain
+        # El ID viene automáticamente en params[:id]
+        Node.find(params[:id]).start_drain_process!
+        render status: :accepted, json: { message: "Draining started" }
+      end
+    end
   end
 end
 ```
 
 ---
 
-## 🚀 Modo Cliente: Recursos (ORM)
+## 🔌 Middlewares
 
-Los recursos son proxies de servicios remotos. Heredan de `BugBunny::Resource`.
-
-### 1. Definición y Atributos Híbridos
-BugBunny es **Schema-less**. Soporta atributos tipados (ActiveModel) y dinámicos simultáneamente, además de definir su propia infraestructura.
+Puedes extender el comportamiento del cliente globalmente o por recurso:
 
 ```ruby
-# app/models/manager/service.rb
-class Manager::Service < BugBunny::Resource
-  # Configuración de Transporte
-  self.exchange = 'cluster_events'
-  self.exchange_type = 'topic'
-
-  # Configuración de Infraestructura Específica (Nivel 3)
-  # Este recurso crítico sobrevivirá a reinicios del servidor RabbitMQ
-  self.exchange_options = { durable: true, auto_delete: false }
-
-  # Configuración de Ruteo (La "URL" base)
-  self.resource_name = 'services'
-
-  # A. Atributos Tipados (Opcional, para casting)
-  attribute :created_at, :datetime
-  attribute :replicas, :integer, default: 1
-
-  # B. Validaciones (Funcionan en ambos tipos)
-  validates :name, presence: true
+# Globalmente en el inicializador
+BugBunny.configure do |config|
+  # ...
 end
-```
 
-### 2. CRUD y Consultas RESTful
-
-```ruby
-# --- LEER (GET) ---
-# RPC: Espera respuesta del worker.
-# Envia: GET services/123
-service = Manager::Service.find('123')
-
-# --- BÚSQUEDAS AVANZADAS ---
-# Soporta Hashes anidados para filtros complejos.
-# Envia: GET services?q[status]=active&q[tags][]=web
-Manager::Service.where(q: { status: 'active', tags: ['web'] })
-
-# --- CREAR (POST) ---
-# RPC: Envía payload y espera el objeto persistido.
-# Payload: { "service": { "name": "nginx", "replicas": 3 } }
-svc = Manager::Service.create(name: 'nginx', replicas: 3)
-
-# --- ACTUALIZAR (PUT) ---
-# Dirty Tracking: Solo envía los campos que cambiaron.
-svc.name = 'nginx-pro'
-svc.save
-
-# --- ELIMINAR (DELETE) ---
-svc.destroy
-```
-
-### 3. Contexto Dinámico (`.with`)
-Puedes sobrescribir la configuración de enrutamiento o infraestructura para una ejecución específica sin afectar al modelo global (Thread-Safe).
-
-```ruby
-# Nivel 4: Configuración al vuelo. Inyectamos opciones solo para esta llamada.
-Manager::Service.with(
-  routing_key: 'high_priority',
-  exchange_options: { durable: false } # Ignora el durable: true de la clase
-).create(name: 'redis_temp')
-```
-
-### 4. Client Middleware (Interceptores)
-Intercepta peticiones de ida y respuestas de vuelta en la arquitectura del cliente.
-
-**Middlewares Incluidos (Built-ins)**
-Si usas `BugBunny::Resource`, el manejo de JSON y de errores ya está integrado automáticamente. Pero si utilizas el cliente manual (`BugBunny::Client`), puedes inyectar los middlewares incluidos para no tener que parsear respuestas manualmente:
-
-* `BugBunny::Middleware::JsonResponse`: Parsea automáticamente el cuerpo de la respuesta de JSON a un Hash de Ruby.
-* `BugBunny::Middleware::RaiseError`: Evalúa el código de estado (`status`) de la respuesta y lanza excepciones nativas (`BugBunny::NotFound`, `BugBunny::UnprocessableEntity`, `BugBunny::InternalServerError`, etc.).
-
-```ruby
 # Uso con el cliente manual
 client = BugBunny::Client.new(pool: BUG_BUNNY_POOL) do |stack|
   stack.use BugBunny::Middleware::RaiseError
@@ -230,116 +169,47 @@ response = client.request('users/1', method: :get)
 ```
 
 **Middlewares Personalizados**
-Ideales para inyectar Auth o Headers de trazabilidad en todos los requests de un Recurso.
 
 ```ruby
-class Manager::Service < BugBunny::Resource
-  client_middleware do |stack|
-    stack.use(Class.new(BugBunny::Middleware::Base) do
-      def on_request(env)
-        env.headers['Authorization'] = "Bearer #{ENV['API_TOKEN']}"
-        env.headers['X-App-Version'] = '1.0.0'
-      end
-    end)
+class MyCustomMiddleware < BugBunny::Middleware::Base
+  def call(request)
+    puts "Enviando mensaje a: #{request.path}"
+    app.call(request)
   end
 end
-```
-
-**Personalización Avanzada de Errores**
-Si en tu aplicación necesitas mapear códigos HTTP de negocio (ej. `402 Payment Required`) a excepciones personalizadas, la forma más limpia es usar `Module#prepend` sobre el middleware nativo en un inicializador. De esta forma inyectas tus reglas sin perder el comportamiento por defecto para los demás errores:
-
-```ruby
-# config/initializers/bug_bunny_custom_errors.rb
-module CustomBugBunnyErrors
-  def on_complete(response)
-    status = response['status'].to_i
-
-    # 1. Reglas específicas de tu negocio
-    if status == 402
-      raise MyApp::PaymentRequiredError, response['body']['message']
-    elsif status == 403 && response['body']['reason'] == 'ip_blocked'
-      raise MyApp::IpBlockedError, response['body']['detail']
-    end
-
-    # 2. Delegar el resto de los errores (404, 422, 500) al middleware original
-    super(response)
-  end
-end
-
-BugBunny::Middleware::RaiseError.prepend(CustomBugBunnyErrors)
 ```
 
 ---
 
-## 📡 Modo Servidor: Controladores
+## 🔎 Observabilidad y Tracing
 
-A partir de BugBunny v4, el enrutamiento es **declarativo** y explícito, al igual que en Rails. Se utiliza un archivo de rutas centralizado para mapear los mensajes AMQP entrantes a los Controladores adecuados.
+BugBunny implementa Distributed Tracing nativo y sigue los estándares de observabilidad de **ExisRay** para logs estructurados.
 
-### 1. Ruteo Declarativo (Rutas)
-Crea un inicializador en tu aplicación (ej. `config/initializers/bug_bunny_routes.rb`) para definir tu mapa de rutas. BugBunny usará este DSL para extraer automáticamente parámetros dinámicos de las URLs.
+### 1. Logs Estructurados (Key-Value)
+A partir de la v4.3.0, todos los logs internos de la gema utilizan un formato `key=value` optimizado para motores de logs (CloudWatch, Datadog, ELK).
 
-```ruby
-# config/initializers/bug_bunny_routes.rb
+*   **Data First:** Las unidades están en la llave (`_s`, `_ms`, `_count`), permitiendo que los valores sean números puros para agregaciones automáticas.
+*   **Reloj Monotónico:** Las duraciones (`duration_s`) se calculan con precisión de microsegundos usando el reloj monotónico del sistema.
+*   **Campos de Identidad:** Todos los logs incluyen `component=bug_bunny` y un `event` semántico.
 
-BugBunny.routes.draw do
-  # 1. Colecciones Básicas y Filtrado
-  # Genera rutas para index, show y update únicamente
-  resources :services, only: [:index, :show, :update]
+**Ejemplos de Logs:**
+```text
+# Mensaje procesado con éxito (incluye duración y status numérico)
+component=bug_bunny event=consumer.message_processed status=200 duration_s=0.015432 controller=UsersController action=show
 
-  # 2. Rutas Anidadas (Member y Collection)
-  resources :nodes, except: [:create, :destroy] do
-    # Member inyecta el parámetro :id (ej. PUT nodes/:id/drain)
-    member do
-      put :drain
-      post :restart
-    end
+# Error de ejecución (campos estandarizados)
+component=bug_bunny event=consumer.execution_error error_class=NoMethodError error_message="undefined method..." duration_s=0.008123
 
-    # Collection opera sobre el conjunto (ej. GET nodes/stats)
-    collection do
-      get :stats
-    end
-  end
-
-  # 3. Rutas estáticas (Colecciones o Acciones Custom)
-  get 'health_checks/up', to: 'health_checks#up'
-
-  # 4. Extracción automática de variables dinámicas profundas
-  get 'api/v1/clusters/:cluster_id/nodes/:node_id/metrics', to: 'api/v1/metrics#show'
-end
+# Reintento de conexión con backoff (sufijos de unidad)
+component=bug_bunny event=consumer.connection_error error_message="..." attempt_count=3 retry_in_s=20
 ```
 
-### 2. El Controlador
-Ubicación: `app/rabbit/controllers/`.
-Los parámetros declarados en el archivo de rutas (como `:id` o `:cluster_id`) estarán disponibles automáticamente dentro del hash `params` de tu controlador.
+**Ventaja en Cloud:**
+Al usar `duration_s` como un float puro, puedes realizar consultas analíticas directamente en tu motor de logs sin parsear strings:
+`stats avg(duration_s), max(duration_s) by controller, action`
 
-```ruby
-class ServicesController < BugBunny::Controller
-  # Callbacks estándar
-  before_action :set_service, only: [:show, :update]
-
-  def show
-    # Renderiza JSON que viajará de vuelta por la cola reply-to
-    render status: 200, json: { id: @service.id, state: 'running' }
-  end
-
-  def create
-    # BugBunny envuelve los params automáticamente basándose en el resource_name
-    # params[:service] => { name: '...', replicas: ... }
-    if Service.create(params[:service])
-      render status: 201, json: { status: 'created' }
-    else
-      render status: 422, json: { errors: 'Invalid' }
-    end
-  end
-
-  private
-
-  def set_service
-    # params[:id] es extraído e inyectado por el BugBunny.routes
-    @service = Service.find(params[:id])
-  end
-end
-```
+### 2. Distributed Tracing
+El `correlation_id` se mantiene intacto a través de toda la cadena: `Producer -> RabbitMQ -> Consumer -> Controller`.
 
 ### 3. Manejo de Errores Declarativo
 Captura excepciones y devuélvelas como códigos de estado AMQP/HTTP.
@@ -351,128 +221,10 @@ class ApplicationController < BugBunny::Controller
   end
 
   rescue_from StandardError do |e|
-    BugBunny.configuration.logger.error(e)
+    safe_log(:error, "application.crash", **exception_metadata(e))
     render status: :internal_server_error, json: { error: "Crash" }
   end
 end
-```
-
----
-
-## 🔎 Observabilidad y Tracing
-
-BugBunny implementa Distributed Tracing nativo. El `correlation_id` se mantiene intacto a través de toda la cadena: `Producer -> RabbitMQ -> Consumer -> Controller`.
-
-### 1. Logs Automáticos (Consumer)
-No requiere configuración. El worker envuelve la ejecución en bloques de log etiquetados con el UUID.
-
-```text
-[d41d8cd9...] [BugBunny::Consumer] 📥 Received PUT "/nodes/4bv445vgc158hk" | RK: 'dbu55...'
-[d41d8cd9...] [BugBunny::Consumer] 🎯 Routed to Rabbit::Controllers::NodesController#drain
-```
-
-### 2. Logs de Negocio (Controller)
-Inyecta contexto rico (Tenant, Usuario, IP) en los logs usando `log_tags`.
-
-```ruby
-# app/rabbit/controllers/application_controller.rb
-class ApplicationController < BugBunny::Controller
-  self.log_tags = [
-    ->(c) { c.params[:tenant_id] }, # Agrega [Tenant-55]
-    ->(c) { c.headers['X-Source'] } # Agrega [Console]
-  ]
-end
-```
-
-### 3. Inyección en el Productor
-Para que tus logs de Rails y Rabbit coincidan, usa un middleware global:
-
-```ruby
-# config/initializers/bug_bunny.rb
-# Middleware para inyectar Current.request_id de Rails al mensaje Rabbit
-class CorrelationInjector < BugBunny::Middleware::Base
-  def on_request(env)
-    env.correlation_id = Current.request_id if defined?(Current)
-  end
-end
-
-BugBunny::Client.prepend(Module.new {
-  def initialize(pool:)
-    super
-    @stack.use CorrelationInjector
-  end
-})
-```
-
----
-
-## 🧵 Guía de Producción
-
-### Connection Pooling
-Es vital usar `ConnectionPool` si usas servidores web multi-hilo (Puma) o workers (Sidekiq). BugBunny no gestiona hilos internamente; se apoya en el pool.
-
-### Fork Safety
-BugBunny incluye un `Railtie` que detecta automáticamente cuando Rails hace un "Fork" (ej: Puma en modo Cluster o Spring). Desconecta automáticamente las conexiones heredadas para evitar corrupción de datos en los sockets TCP.
-
-### RPC y "Direct Reply-To"
-Para máxima velocidad, BugBunny usa `amq.rabbitmq.reply-to`.
-* **Trade-off:** Si el cliente (Rails) se reinicia justo después de enviar un mensaje RPC pero antes de recibir la respuesta, esa respuesta se pierde.
-* **Recomendación:** Diseña tus acciones RPC (`POST`, `PUT`) para que sean **idempotentes** (seguras de reintentar ante un timeout).
-
-### Seguridad
-El Router incluye protecciones contra **Remote Code Execution (RCE)**. El Consumer verifica estrictamente que el Controlador resuelto a través del archivo de rutas herede de `BugBunny::Controller` antes de ejecutarla, impidiendo la inyección de clases arbitrarias. Además, las llamadas a rutas no registradas fallan rápido con un `404 Not Found`.
-
-### Reconexión con Backoff Exponencial
-
-Cuando el Consumer pierde la conexión a RabbitMQ, reintenta automáticamente usando un backoff exponencial basado en `network_recovery_interval`:
-
-| Intento | Espera (base = 5s, techo = 60s) |
-|---------|----------------------------------|
-| 1       | 5s                               |
-| 2       | 10s                              |
-| 3       | 20s                              |
-| 4       | 40s                              |
-| 5+      | 60s (cap)                        |
-
-Por defecto reintenta indefinidamente (`max_reconnect_attempts: nil`). En entornos orquestados (Kubernetes, Docker Swarm), es preferible dejar que el orquestador reinicie el contenedor cuando la infraestructura no está disponible:
-
-```ruby
-BugBunny.configure do |config|
-  config.network_recovery_interval = 5   # Base del backoff
-  config.max_reconnect_interval    = 60  # Techo máximo de espera
-  config.max_reconnect_attempts    = 10  # Falla hard después de 10 intentos
-end
-```
-
-Con esta configuración, si RabbitMQ no vuelve en ~10 reintentos el proceso levanta la excepción y el orquestador lo reinicia con su propia política de restart.
-
-### Health Checks en Docker Swarm / Kubernetes
-Dado que un Worker se ejecuta en segundo plano sin exponer un servidor web tradicional, orquestadores como Docker Swarm o Kubernetes no pueden usar un endpoint HTTP para verificar si el proceso está saludable.
-
-BugBunny implementa el patrón **Touchfile**. Puedes configurar la gema para que actualice la fecha de modificación de un archivo temporal en cada latido exitoso (heartbeat) hacia RabbitMQ.
-
-**1. Configurar la gema:**
-```ruby
-# config/initializers/bug_bunny.rb
-BugBunny.configure do |config|
-  # Actualizará la fecha de este archivo si la conexión a la cola está sana
-  config.health_check_file = '/tmp/bug_bunny_health'
-end
-```
-
-**2. Configurar el Orquestador (Ejemplo docker-compose.yml):**
-Con esta configuración, Docker Swarm verificará que el archivo haya sido modificado (tocado) en los últimos 15 segundos. Si el worker se bloquea o pierde la conexión de manera irrecuperable, Docker reiniciará el contenedor automáticamente.
-
-```yaml
-services:
-  worker:
-    image: my_rails_app
-    command: bundle exec rake bug_bunny:work
-    healthcheck:
-      test: ["CMD-SHELL", "test $$(expr $$(date +%s) - $$(stat -c %Y /tmp/bug_bunny_health)) -lt 15 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
 ```
 
 ---

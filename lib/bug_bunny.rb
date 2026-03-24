@@ -5,6 +5,7 @@ require 'logger'
 require_relative 'bug_bunny/version'
 require_relative 'bug_bunny/exception'
 require_relative 'bug_bunny/configuration'
+require_relative 'bug_bunny/observability'
 require_relative 'bug_bunny/routing/route_set'
 require_relative 'bug_bunny/middleware/base'
 require_relative 'bug_bunny/middleware/stack'
@@ -22,6 +23,9 @@ require_relative 'bug_bunny/railtie' if defined?(Rails)
 # Módulo principal de la gema BugBunny.
 # Actúa como espacio de nombres y punto de configuración global.
 module BugBunny
+  extend BugBunny::Observability
+  private_class_method :safe_log, :exception_metadata, :observability_name
+
   class << self
     # @return [BugBunny::Configuration] La configuración global actual.
     attr_accessor :configuration
@@ -83,7 +87,9 @@ module BugBunny
 
     @global_connection.close if @global_connection.open?
     @global_connection = nil
-    configuration.logger.info('component=bug_bunny event=disconnect')
+    
+    @logger = configuration.logger
+    safe_log(:info, "bug_bunny.disconnect")
   end
 
   # @api private
