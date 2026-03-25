@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.4.1] - 2026-03-25
+
+### 🐛 Bug Fixes
+* **Producer:** Se corrigió el valor de retorno del método `fire` para que devuelva un Hash simbólico (`{ 'status' => 202 }`) en lugar del objeto Exchange. Esto previene errores de tipo `NoMethodError: undefined method []` en el cliente al realizar publicaciones asíncronas (`:publish`).
+
 ## [4.4.0] - 2026-03-24
 
 ### 📈 Standard Observability Pattern

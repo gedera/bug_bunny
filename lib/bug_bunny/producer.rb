@@ -36,7 +36,7 @@ module BugBunny
     # configuración y publica el mensaje sin esperar respuesta.
     #
     # @param request [BugBunny::Request] Objeto con la configuración del envío (body, exchange_options, etc).
-    # @return [void]
+    # @return [Hash] Un hash de éxito simbólico ({ 'status' => 202 }).
     def fire(request)
       # Obtenemos el exchange pasando las opciones específicas del request para la fusión en cascada
       x = @session.exchange(
@@ -51,6 +51,9 @@ module BugBunny
       log_request(request, payload)
 
       x.publish(payload, opts.merge(routing_key: request.final_routing_key))
+
+      # Devolvemos un hash para evitar NoMethodError en el cliente (que espera una respuesta tipo Hash)
+      { 'status' => 202, 'body' => nil }
     end
 
     # Envía un mensaje y bloquea el hilo actual esperando una respuesta (RPC).

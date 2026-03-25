@@ -107,8 +107,8 @@ BugBunny.routes.draw do
   end
 end
 
-# app/rabbit/controllers/nodes_controller.rb
-module Rabbit
+# app/controllers/bug_bunny/nodes_controller.rb
+module BugBunny
   module Controllers
     class NodesController < BugBunny::Controller
       def index
@@ -125,6 +125,13 @@ module Rabbit
   end
 end
 ```
+
+> **Namespace de Controladores:** Por defecto BugBunny busca los controladores bajo `BugBunny::Controllers`. Podés cambiarlo en la configuración:
+> ```ruby
+> BugBunny.configure do |config|
+>   config.controller_namespace = 'MyApp::RabbitControllers'
+> end
+> ```
 
 ---
 

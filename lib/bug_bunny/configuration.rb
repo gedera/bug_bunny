@@ -128,7 +128,7 @@ module BugBunny
       @health_check_file = nil
 
       # Configuración por defecto para mantener compatibilidad
-      @controller_namespace = 'Rabbit::Controllers'
+      @controller_namespace = 'BugBunny::Controllers'
 
       @log_tags = [:uuid]
 
