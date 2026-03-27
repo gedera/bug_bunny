@@ -1,5 +1,23 @@
 # Changelog
 
+## [4.5.0] - 2026-03-25
+
+### ✨ New Features & DX
+* **Controller Header API:** Se introdujo el método `headers` en `BugBunny::Controller` para permitir una manipulación intuitiva de las cabeceras de respuesta AMQP, siguiendo el patrón familiar de Rails.
+    * Ejemplo: `headers['X-Custom'] = 'Value'`.
+* **Observability Refinement:** Finalización de la migración al patrón de observabilidad estándar con nombres de eventos `clase.evento` en todos los componentes.
+
+## [4.4.2] - 2026-03-25
+
+
+### ✨ New Features
+* **Request#params:** Se agregó el atributo `params` al objeto `Request` para enviar query params de forma declarativa, al estilo Faraday. Los params se serializan como query string (`Rack::Utils.build_nested_query`) y viajan en el header AMQP `type`, que es el que usa el consumer para rutear al controlador. La `routing_key` del exchange no se ve afectada.
+* **Resource.where con params:** `Resource.where` ahora usa internamente `req.params` en lugar de construir la URL manualmente, unificando el comportamiento con el cliente directo.
+
+### 🐛 Bug Fixes
+* **Session#exchange:** El `name` y `type` del exchange se convierten a `String` via `.to_s` antes de pasarlos a Bunny, evitando `NoMethodError: undefined method 'gsub' for an instance of Symbol` al configurar exchanges con Symbols.
+* **Configuration:** Se corrigió el namespace por defecto de controladores de `'Rabbit::Controllers'` a `'BugBunny::Controllers'`.
+
 ## [4.4.2] - 2026-03-25
 
 ### 📈 Observability & Standards Final Polish

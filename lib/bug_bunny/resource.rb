@@ -4,7 +4,6 @@ require 'active_model'
 require 'active_support/core_ext/string/inflections'
 require 'uri'
 require 'set' # Necesario para el tracking manual
-require 'rack/utils'
 
 module BugBunny
   # Clase base para modelos remotos que implementan **Active Record over AMQP (RESTful)**.
@@ -194,17 +193,16 @@ module BugBunny
       # @return [Array<BugBunny::Resource>]
       def where(filters = {})
         rk = calculate_routing_key
-        path = resource_name
-        path += "?#{Rack::Utils.build_nested_query(filters)}" if filters.present?
 
         response = bug_bunny_client.request(
-          path,
+          resource_name,
           method: :get,
           exchange: current_exchange,
           exchange_type: current_exchange_type,
           routing_key: rk,
           exchange_options: current_exchange_options,
-          queue_options: current_queue_options
+          queue_options: current_queue_options,
+          params: filters.presence || {}
         )
 
         return [] unless response['body'].is_a?(Array)

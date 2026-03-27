@@ -89,6 +89,13 @@ end
 node = RemoteNode.find('node-123')
 node.status = 'active'
 node.save # Realiza un PUT a inventory_exchange con routing_key 'nodes.node-123'
+
+# Búsqueda con filtros (query params)
+# Los filtros se serializan como query string en el header 'type' del mensaje.
+# El consumer los recibe en params[] igual que en Rails.
+RemoteNode.all                               # GET nodes
+RemoteNode.where(status: 'active')           # GET nodes?status=active
+RemoteNode.where(q: { cpu_cores: 4 })        # GET nodes?q[cpu_cores]=4
 ```
 
 ---
@@ -167,7 +174,18 @@ client.send('users/1') do |req|
   req.timeout = 5
 end
 
-# 3. Métodos de conveniencia (Atajos)
+# 3. Query params (estilo Faraday)
+# Usá req.params para enviar filtros. La gema los serializa como query string
+# en el header 'type' del mensaje (que el consumer usa para rutear).
+# La routing_key del exchange NO se ve afectada.
+client.request('users') do |req|
+  req.method = :get
+  req.params = { q: { active: true }, page: 2 }
+end
+# Equivalente usando args:
+client.request('users', method: :get, params: { q: { active: true }, page: 2 })
+
+# 4. Métodos de conveniencia (Atajos)
 client.request('users/1') # Siempre :rpc
 client.publish('events', body: { type: 'click' }) # Siempre :publish
 

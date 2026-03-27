@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'rack/utils'
+
 module BugBunny
   # Encapsula toda la información necesaria para realizar una petición o publicación.
   #
@@ -9,6 +11,7 @@ module BugBunny
   #
   # @attr body [Object] El cuerpo del mensaje (Hash, Array o String).
   # @attr headers [Hash] Cabeceras personalizadas (Headers AMQP).
+  # @attr params [Hash] Parámetros de query string (ej: { q: { foo: :bar } }).
   # @attr path [String] La ruta lógica del recurso (ej: 'users', 'users/123').
   # @attr method [Symbol, String] El verbo HTTP (:get, :post, :put, :delete). Default: :get.
   # @attr exchange [String] El nombre del Exchange destino.
@@ -22,6 +25,7 @@ module BugBunny
   class Request
     attr_accessor :body
     attr_accessor :headers
+    attr_accessor :params
     attr_accessor :path
     attr_accessor :method
     attr_accessor :exchange
@@ -46,6 +50,7 @@ module BugBunny
       @path = path
       @method = :get # Verbo por defecto
       @headers = {}
+      @params = {}
       @content_type = 'application/json'
       @timestamp = Time.now.to_i
       @persistent = false
@@ -56,10 +61,20 @@ module BugBunny
       @exchange_options = {}
       @queue_options = {}
     end
+    # Combina el path con los params como query string.
+    #
+    # @return [String] El path completo con query string si hay params, o solo el path.
+    def full_path
+      return path if params.nil? || params.empty?
+
+      "#{path}?#{Rack::Utils.build_nested_query(params)}"
+    end
+
     # Calcula la Routing Key final que se usará en RabbitMQ.
     #
     # Principio: "Convention over Configuration".
     # Si no se define una `routing_key` manual, se asume que el `path` actúa como tal.
+    # Los params NO afectan la routing key — son metadata de la petición, no del enrutamiento del exchange.
     #
     # @return [String] La routing key definitiva.
     def final_routing_key
@@ -67,11 +82,11 @@ module BugBunny
     end
 
     # Calcula el valor para el header AMQP 'type'.
-    # En esta arquitectura REST, el 'type' es la URL del recurso (el path).
+    # En esta arquitectura REST, el 'type' es la URL completa del recurso (path + query string).
     #
     # @return [String] El tipo de mensaje definitivo.
     def final_type
-      type || path
+      type || full_path
     end
 
     # Genera el Hash de opciones limpio para la gema Bunny.

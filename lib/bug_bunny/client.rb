@@ -109,6 +109,7 @@ module BugBunny
       req.exchange_options = args[:exchange_options] if args[:exchange_options]
       req.queue_options    = args[:queue_options]    if args[:queue_options]
 
+      req.params                                     = args[:params]   if args[:params]
       req.headers.merge!(args[:headers])             if args[:headers]
 
       # 3. Configuración del usuario (bloque específico por request)

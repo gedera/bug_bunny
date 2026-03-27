@@ -33,12 +33,25 @@ module BugBunny
     attribute :raw_string
 
     # @return [Hash] Headers de respuesta que serán enviados de vuelta en RPC.
+    # @deprecated Use {#response_headers} instead or the helper {#headers}.
     attr_reader :response_headers
 
     # @return [Hash, nil] Respuesta final renderizada.
     attr_reader :rendered_response
 
     # @!endgroup
+
+    # API de Cabeceras de Respuesta (Estilo Rails)
+    # Permite manipular fácilmente los headers AMQP que se enviarán de vuelta al cliente.
+    #
+    # @example
+    #   headers['X-Custom-Header'] = 'Value'
+    #   headers[:content_type] = 'application/pdf'
+    #
+    # @return [Hash] El Hash de cabeceras de respuesta.
+    def headers
+      @response_headers
+    end
 
 
     # ==========================================
