@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.4.2] - 2026-03-25
+
+### 📈 Observability & Standards Final Polish
+* **Event Naming Standardization:** Se unificaron todos los nombres de eventos internos al formato estricto `clase.evento` (ej: `consumer.message_received`, `producer.rpc_waiting`) para una categorización impecable en motores de logs.
+* **Encoding & Mojibake Cleanup:** Limpieza profunda de artefactos de codificación en comentarios y documentación de toda la gema, garantizando legibilidad total en español.
+* **Internal Consistency:** Refactorización de llamadas a `safe_log` para utilizar metadatos simplificados y símbolos consistentes en todos los componentes clave.
+
 ## [4.4.1] - 2026-03-25
 
 ### 🐛 Bug Fixes

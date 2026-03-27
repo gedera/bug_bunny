@@ -73,7 +73,7 @@ module BugBunny
                     .merge(opts)
 
       # public_send permite llamar a :topic, :direct, etc. dinámicamente según el tipo
-      channel.public_send(type, name, merged_opts)
+      channel.public_send(type.to_s, name.to_s, merged_opts)
     end
 
     # Factory method para declarar o recuperar una Cola aplicando la cascada de configuración.
