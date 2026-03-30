@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'json'
+
 module BugBunny
   # @api private
   module Observability
@@ -21,6 +23,7 @@ module BugBunny
 
         formatted = case val
                     when Numeric then val
+                    when Hash    then val.to_json # Genera JSON compacto analizable
                     when String  then val.include?(" ") ? val.inspect : val
                     else val.to_s.include?(" ") ? val.to_s.inspect : val
                     end
