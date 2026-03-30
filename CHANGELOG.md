@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.5.2] - 2026-03-30
+
+### 🐛 Bug Fixes
+* **Controller:** Se eliminó el método `headers` introducido en v4.5.0 que pisaba el `attribute :headers` de ActiveModel. Esto causaba que `headers[:action]` fuera `nil` al procesar cualquier mensaje, resultando en `NoMethodError: undefined method 'to_sym' for nil`. Los response headers siguen siendo accesibles via `response_headers`.
+
 ## [4.5.1] - 2026-03-30
 
 ### ✨ New Features
