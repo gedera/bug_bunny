@@ -240,7 +240,7 @@ module BugBunny
 
       if body.is_a?(Hash)
         params.merge!(body)
-      elsif body.is_a?(String) && headers[:content_type].to_s.include?('json')
+      elsif body.is_a?(String) && body.present? && headers[:content_type].to_s.include?('json')
         begin
           params.merge!(JSON.parse(body))
         rescue JSON::ParserError => e

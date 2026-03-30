@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.5.3] - 2026-03-30
+
+### 🐛 Bug Fixes
+* **Controller:** Se corrigió `prepare_params` para ignorar el body cuando es un String vacío, evitando `BugBunny::BadRequest: Invalid JSON in request body` en peticiones GET sin body.
+
 ## [4.5.2] - 2026-03-30
 
 ### 🐛 Bug Fixes
