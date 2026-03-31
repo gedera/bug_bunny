@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.6.1] - 2026-03-31
+
+### 🐛 Bug Fixes
+* **Observability:** `safe_log` ahora serializa valores `Hash` siempre como JSON compacto (`val.to_json`), sin pasar por `.inspect`. Anteriormente, si el JSON del Hash contenía espacios, se llamaba `.inspect` produciendo strings escapados como `"{\"exclusive\":false}"` en lugar del objeto JSON esperado `{"exclusive":false}`. Afectaba a los eventos `consumer.start` (campo `queue_opts`) y `consumer.bound` (campo `exchange_opts`).
+
 ## [4.6.0] - 2026-03-31
 
 ### ✨ New Features
