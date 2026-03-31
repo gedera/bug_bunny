@@ -96,6 +96,23 @@ module BugBunny
     #   @example { durable: true, exclusive: false }
     attr_accessor :queue_options
 
+    # @return [BugBunny::ConsumerMiddleware::Stack] Stack de middlewares ejecutados antes de procesar cada mensaje.
+    #   Los middlewares se registran con {BugBunny::ConsumerMiddleware::Stack#use}.
+    attr_reader :consumer_middlewares
+
+    # @return [Proc, nil] Callback invocado justo antes del `basic_publish` del reply RPC.
+    #   Debe retornar un Hash de headers AMQP a inyectar en la respuesta.
+    #   Ideal para propagar trace context (ej: X-Amzn-Trace-Id) generado por el consumer.
+    #   @example
+    #     config.rpc_reply_headers = -> { { 'X-Amzn-Trace-Id' => ExisRay::Tracer.generate_trace_header } }
+    attr_accessor :rpc_reply_headers
+
+    # @return [Proc, nil] Callback invocado en el thread llamante tras recibir el reply RPC,
+    #   con los headers AMQP de la respuesta. Permite hidratar trace context en el publisher.
+    #   @example
+    #     config.on_rpc_reply = ->(headers) { ExisRay::Tracer.hydrate(headers['X-Amzn-Trace-Id']) }
+    attr_accessor :on_rpc_reply
+
     # @!endgroup
 
     # Inicializa la configuración con valores por defecto seguros.
@@ -135,6 +152,10 @@ module BugBunny
       # Inicialización de opciones de infraestructura como hashes vacíos para permitir fusiones posteriores.
       @exchange_options = {}
       @queue_options = {}
+
+      @consumer_middlewares = ConsumerMiddleware::Stack.new
+      @rpc_reply_headers = nil
+      @on_rpc_reply = nil
     end
 
     # Construye la URL de conexión AMQP basada en los atributos configurados.

@@ -82,13 +82,17 @@ module BugBunny
         safe_log(:debug, "producer.rpc_waiting", correlation_id: cid, timeout_s: wait_timeout)
 
         # Bloqueamos el hilo aquí hasta que llegue la respuesta o expire el timeout
-        response_payload = future.value(wait_timeout)
+        result = future.value(wait_timeout)
 
-        if response_payload.nil?
+        if result.nil?
           raise BugBunny::RequestTimeout, "Timeout waiting for RPC: #{request.path} [#{request.method}]"
         end
 
-        parse_response(response_payload)
+        BugBunny.configuration.on_rpc_reply&.call(result[:headers])
+
+        safe_log(:debug, "producer.rpc_response_received", correlation_id: cid)
+
+        parse_response(result[:body])
       ensure
         # Limpieza vital para evitar fugas de memoria en el mapa
         @pending_requests.delete(cid)
@@ -153,9 +157,8 @@ module BugBunny
         # Consumimos sin ack (auto-ack) porque reply-to no soporta acks manuales de forma estándar
         @session.channel.basic_consume('amq.rabbitmq.reply-to', '', true, false, nil) do |_, props, body|
           cid = props.correlation_id.to_s
-          safe_log(:debug, "producer.rpc_response_received", correlation_id: cid)
           if (future = @pending_requests[cid])
-            future.set(body)
+            future.set({ body: body, headers: props.headers || {} })
           else
             safe_log(:warn, "producer.rpc_response_orphaned", correlation_id: cid)
           end

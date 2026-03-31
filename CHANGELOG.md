@@ -1,5 +1,21 @@
 # Changelog
 
+## [4.6.0] - 2026-03-31
+
+### ✨ New Features
+* **Consumer Middleware Stack:** Se introdujo `BugBunny::ConsumerMiddleware::Stack`, un pipeline de middlewares que se ejecuta antes de que la gema procese cada mensaje AMQP (antes del primer log `consumer.message_received`). Es el punto de extensión oficial para tracing distribuido, autenticación y auditoría a nivel de consumer.
+    * Clase base `BugBunny::ConsumerMiddleware::Base` con interfaz `call(delivery_info, properties, body)`.
+    * Acceso directo via `BugBunny.consumer_middlewares.use MyMiddleware`.
+    * Soporte de **auto-registro transparente**: gemas externas como `exis_ray` pueden registrarse al ser requeridas sin que el usuario toque el bloque `configure`.
+    * Orden de ejecución FIFO. Sin middlewares registrados, el overhead es cero.
+* **RPC Trace Propagation (bidireccional):** BugBunny ahora propaga trace context en ambas direcciones del ciclo RPC:
+    * `config.rpc_reply_headers` (Proc) — callback invocado en el consumer justo antes del `basic_publish` del reply. Retorna headers AMQP a inyectar en la respuesta (ej: `X-Amzn-Trace-Id` actualizado con el span del consumer).
+    * `config.on_rpc_reply` (Proc) — callback invocado en el thread llamante del publisher tras recibir el reply, con los headers AMQP de la respuesta. Permite hidratar trace context en el publisher sin exponer los headers en la interfaz pública del método `rpc`.
+    * Ejemplo consumer: `config.rpc_reply_headers = -> { { 'X-Amzn-Trace-Id' => ExisRay::Tracer.generate_trace_header } }`
+    * Ejemplo publisher: `config.on_rpc_reply = ->(headers) { ExisRay::Tracer.hydrate(headers['X-Amzn-Trace-Id']) }` Retorna un Hash de headers AMQP que se inyectan en la respuesta, permitiendo propagar trace context generado por el consumer (ej: `X-Amzn-Trace-Id` actualizado). Cero overhead cuando no está configurado.
+    * Ejemplo: `config.rpc_reply_headers = -> { { 'X-Amzn-Trace-Id' => ExisRay::Tracer.generate_trace_header } }`
+* **Observability — Hash quoting:** `safe_log` ahora aplica la misma regla de quoting a valores `Hash` que a `String`: si el JSON contiene espacios, se inspecciona; si no, se emite sin comillas, facilitando el parseo automático en motores de logs.
+
 ## [4.5.3] - 2026-03-30
 
 ### 🐛 Bug Fixes

@@ -206,6 +206,59 @@ end
 
 ---
 
+## 🔗 Consumer Middleware Stack
+
+BugBunny expone un middleware stack que se ejecuta **antes** de que la gema procese cada mensaje entrante (antes del primer log `consumer.message_received`). Es el punto ideal para hidratar contexto de tracing distribuido, autenticación, auditoría, etc.
+
+### Implementar un middleware
+
+```ruby
+class MyMiddleware < BugBunny::ConsumerMiddleware::Base
+  def call(delivery_info, properties, body)
+    # lógica pre-procesamiento
+    # properties.headers contiene todos los headers AMQP custom
+    @app.call(delivery_info, properties, body)
+    # lógica post-procesamiento (opcional)
+  end
+end
+```
+
+### Registrar un middleware
+
+```ruby
+BugBunny.configure do |config|
+  # ...
+end
+
+BugBunny.consumer_middlewares.use MyMiddleware
+```
+
+### Auto-registro desde una gema externa
+
+Las gemas de integración pueden registrarse automáticamente al ser requeridas, sin que el usuario tenga que tocar el bloque `configure`:
+
+```ruby
+# lib/exis_ray/bug_bunny/consumer_tracing.rb
+require 'exis_ray/bug_bunny/consumer_tracing_middleware'
+BugBunny.consumer_middlewares.use ExisRay::BugBunny::ConsumerTracingMiddleware
+
+# El usuario solo necesita:
+# require 'exis_ray/bug_bunny/consumer_tracing'
+```
+
+### Datos disponibles en el middleware
+
+| Argumento | Tipo | Contenido |
+|---|---|---|
+| `delivery_info` | `Bunny::DeliveryInfo` | `routing_key`, `exchange`, `delivery_tag` |
+| `properties` | `Bunny::MessageProperties` | `headers` (headers AMQP custom), `correlation_id`, `reply_to`, `content_type` |
+| `body` | `String` | Payload crudo del mensaje |
+
+> **Orden de ejecución:** FIFO — el primero en registrarse es el primero en ejecutarse.
+> `Middleware A → Middleware B → process_message`
+
+---
+
 ## 🔎 Observabilidad y Tracing
 
 BugBunny implementa Distributed Tracing nativo y sigue los estándares de observabilidad de **ExisRay** para logs estructurados.

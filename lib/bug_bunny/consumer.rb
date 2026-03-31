@@ -87,16 +87,19 @@ module BugBunny
 
         q.subscribe(manual_ack: true, block: block) do |delivery_info, properties, body|
           trace_id = properties.correlation_id
-
           logger = BugBunny.configuration.logger
 
-          if logger.respond_to?(:tagged)
-            logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
-          elsif defined?(Rails) && Rails.logger.respond_to?(:tagged)
-            Rails.logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
-          else
-            process_message(delivery_info, properties, body)
-          end
+          core = -> {
+            if logger.respond_to?(:tagged)
+              logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
+            elsif defined?(Rails) && Rails.logger.respond_to?(:tagged)
+              Rails.logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
+            else
+              process_message(delivery_info, properties, body)
+            end
+          }
+
+          BugBunny.configuration.consumer_middlewares.call(delivery_info, properties, body, &core)
         end
       rescue StandardError => e
         attempt += 1
@@ -241,11 +244,13 @@ module BugBunny
     # @return [void]
     def reply(payload, reply_to, correlation_id)
       safe_log(:debug, "consumer.rpc_reply", reply_to: reply_to, correlation_id: correlation_id)
+      extra_headers = BugBunny.configuration.rpc_reply_headers&.call || {}
       session.channel.default_exchange.publish(
         payload.to_json,
         routing_key: reply_to,
         correlation_id: correlation_id,
-        content_type: 'application/json'
+        content_type: 'application/json',
+        headers: extra_headers
       )
     end
 

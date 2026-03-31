@@ -23,7 +23,9 @@ module BugBunny
 
         formatted = case val
                     when Numeric then val
-                    when Hash    then val.to_json # Genera JSON compacto analizable
+                    when Hash
+                      json = val.to_json
+                      json.include?(" ") ? json.inspect : json
                     when String  then val.include?(" ") ? val.inspect : val
                     else val.to_s.include?(" ") ? val.to_s.inspect : val
                     end

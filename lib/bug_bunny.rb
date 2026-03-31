@@ -9,6 +9,7 @@ require_relative 'bug_bunny/observability'
 require_relative 'bug_bunny/routing/route_set'
 require_relative 'bug_bunny/middleware/base'
 require_relative 'bug_bunny/middleware/stack'
+require_relative 'bug_bunny/consumer_middleware'
 require_relative 'bug_bunny/middleware/raise_error'
 require_relative 'bug_bunny/middleware/json_response'
 require_relative 'bug_bunny/client'
@@ -39,6 +40,12 @@ module BugBunny
   # @return [BugBunny::Routing::RouteSet] El motor global de enrutamiento.
   def self.routes
     @routes ||= Routing::RouteSet.new
+  end
+
+  # @return [BugBunny::ConsumerMiddleware::Stack] Stack global de middlewares del Consumer.
+  # Atajo para `BugBunny.configuration.consumer_middlewares`.
+  def self.consumer_middlewares
+    configuration.consumer_middlewares
   end
 
   # Configura la librería BugBunny.
