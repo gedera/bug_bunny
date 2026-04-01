@@ -7,4 +7,5 @@
 /spec/reports/
 /tmp/
 .env
-.claude/
+.claude/settings.json
+.claude/settings.local.json
