@@ -81,6 +81,23 @@ module BugBunny
 
       # @!endgroup
 
+      # Define un bloque de namespace para organizar controladores en módulos.
+      # Los namespaces pueden anidarse y se acumulan (ej: `namespace :api { namespace :v1 }`
+      # resulta en el namespace "Api::V1").
+      #
+      # @param name [Symbol, String] Nombre del namespace (ej: :api, :v1).
+      # @yield Bloque conteniendo las definiciones de rutas dentro de este namespace.
+      # @return [void]
+      # @example
+      #   namespace :api do
+      #     resources :users # Busca Api::UsersController
+      #   end
+      def namespace(name, &block)
+        with_scope({ type: :namespace, name: name.to_s.camelize }) do
+          instance_eval(&block)
+        end
+      end
+
       # Macro que genera automáticamente las rutas CRUD para un recurso RESTful.
       # Soporta filtrado mediante `only` y `except`, y acepta un bloque para rutas anidadas.
       #
@@ -177,7 +194,7 @@ module BugBunny
       #
       # @param method [String] Verbo HTTP entrante (ej. 'GET').
       # @param path [String] URL entrante (ej. 'nodes/123/drain').
-      # @return [Hash, nil] Hash con `:controller`, `:action` y `:params`, o `nil` si no hay match.
+      # @return [Hash, nil] Hash con `:controller`, `:action`, `:params` y `:namespace`, o `nil` si no hay match.
       def recognize(method, path)
         @routes.each do |route|
           if route.match?(method, path)
@@ -186,7 +203,8 @@ module BugBunny
             return {
               controller: route.controller,
               action: route.action,
-              params: extracted_params
+              params: extracted_params,
+              namespace: route.namespace
             }
           end
         end
@@ -223,7 +241,7 @@ module BugBunny
           raise ArgumentError, "Falta el destino 'to:' para la ruta #{method} '#{final_path}'. Usa la sintaxis 'controlador#accion'"
         end
 
-        @routes << Route.new(method, final_path, to: final_to)
+        @routes << Route.new(method, final_path, to: final_to, namespace: current_namespace)
       end
 
       # --- LÓGICA DE SCOPES INTERNOS ---
@@ -262,6 +280,15 @@ module BugBunny
           return scope[:name] if scope[:type] == :resource
         end
         nil
+      end
+
+      # Calcula el namespace acumulado recorriendo la pila de scopes.
+      #
+      # @return [String, nil] El namespace (ej: "Api::V1") o nil si no hay.
+      # @api private
+      def current_namespace
+        parts = @scopes.select { |s| s[:type] == :namespace }.map { |s| s[:name] }
+        parts.empty? ? nil : parts.join('::')
       end
     end
   end

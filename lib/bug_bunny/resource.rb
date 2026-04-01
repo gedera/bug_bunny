@@ -264,8 +264,8 @@ module BugBunny
     # Inicializa el recurso.
     # @param attributes [Hash]
     def initialize(attributes = {})
-      @remote_attributes = {}.with_indifferent_access
-      @dynamic_changes = Set.new # Rastreo manual para atributos dinámicos
+      @extra_attributes = {}.with_indifferent_access
+      @dynamic_changes = Set.new
       @persisted = false
 
       # Contexto de infraestructura
@@ -275,20 +275,29 @@ module BugBunny
       @exchange_options = self.class.thread_config(:exchange_options) || self.class.current_exchange_options
       @queue_options = self.class.thread_config(:queue_options) || self.class.current_queue_options
 
-      super()
-      assign_attributes(attributes)
+      super(attributes)
     end
 
-    # Limpia tanto el rastreo de ActiveModel como nuestro rastreo dinámico.
+    # Limpia el rastreo de ActiveModel y nuestro rastreo dinámico interno.
     def clear_changes_information
       super
       @dynamic_changes.clear
     end
 
+    # @return [Boolean] true si hay cambios nativos o dinámicos.
+    def changed?
+      super || @dynamic_changes.any?
+    end
+
+    # @return [Array<String>] Lista de atributos que han cambiado.
+    def changed
+      (super + @dynamic_changes.to_a).uniq
+    end
+
     # Serialización combinada.
     # @return [Hash]
     def attributes_for_serialization
-      @remote_attributes.merge(attributes)
+      @extra_attributes.merge(attributes)
     end
 
     # @return [String]
@@ -324,57 +333,58 @@ module BugBunny
     # Retorna el hash combinado de cambios (Tipados + Dinámicos).
     # @return [Hash]
     def changes_to_send
-      # 1. Cambios de ActiveModel (Tipados)
-      payload = changes.transform_values(&:last)
+      # 1. Obtener los nombres de todos los atributos que han cambiado (incluyendo dinámicos vía attribute_will_change!)
+      changed_keys = changed
 
-      # 2. Cambios Dinámicos (Manuales)
-      @dynamic_changes.each do |key|
-        payload[key] = @remote_attributes[key]
+      # 2. Construir el payload con los valores actuales de esas keys
+      payload = {}
+      changed_keys.each do |key|
+        payload[key] = public_send(key)
       end
 
       return payload unless payload.empty?
 
-      # Fallback: Si no hay cambios detectados, enviamos todo (útil para create)
+      # Fallback: Si no hay cambios detectados (ej: en un create), enviamos todo
       attributes_for_serialization.except('id', 'ID', 'Id', '_id')
     end
 
-    # Intercepta asignaciones dinámicas y las marca como sucias.
+    # Intercepta asignaciones dinámicas y las registra como cambios.
     def method_missing(method_name, *args, &block)
       attribute_name = method_name.to_s
       if attribute_name.end_with?('=')
         key = attribute_name.chop
         val = args.first
 
-        if @remote_attributes[key] != val
+        if @extra_attributes[key] != val
           @dynamic_changes << key
+          @extra_attributes[key] = val
         end
-
-        @remote_attributes[key] = val
       else
-        @remote_attributes.key?(attribute_name) ? @remote_attributes[attribute_name] : super
+        @extra_attributes.key?(attribute_name) ? @extra_attributes[attribute_name] : super
       end
     end
 
     def respond_to_missing?(method_name, include_private = false)
-      @remote_attributes.key?(method_name.to_s.sub(/=$/, '')) || super
+      @extra_attributes.key?(method_name.to_s.sub(/=$/, '')) || super
     end
 
     # @return [Object] Valor del ID buscando en múltiples nomenclaturas.
     def id
-      attributes['id'] || @remote_attributes['id'] || @remote_attributes['ID'] || @remote_attributes['Id'] || @remote_attributes['_id']
+      attributes['id'] || @extra_attributes['id'] || @extra_attributes['ID'] || @extra_attributes['Id'] || @extra_attributes['_id']
     end
 
     def id=(value)
       if self.class.attribute_names.include?('id')
         super(value)
       else
-        @remote_attributes['id'] = value
+        @dynamic_changes << 'id' if @extra_attributes['id'] != value
+        @extra_attributes['id'] = value
       end
     end
 
     def read_attribute_for_validation(attr)
       attr_s = attr.to_s
-      self.class.attribute_names.include?(attr_s) ? attribute(attr_s) : @remote_attributes[attr_s]
+      self.class.attribute_names.include?(attr_s) ? attribute(attr_s) : @extra_attributes[attr_s]
     end
 
     # @!group Persistencia

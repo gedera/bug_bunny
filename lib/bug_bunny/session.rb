@@ -9,6 +9,7 @@ module BugBunny
   # @api private
   class Session
     include BugBunny::Observability
+
     # @!group Opciones por Defecto (Nivel 1: Gema)
 
     # Opciones predeterminadas de la gema para Exchanges.
@@ -32,6 +33,7 @@ module BugBunny
       @connection = connection
       @publisher_confirms = publisher_confirms
       @channel = nil
+      @channel_mutex = Mutex.new
       @logger = BugBunny.configuration.logger
     end
 
@@ -43,12 +45,17 @@ module BugBunny
     # @return [Bunny::Channel] Un canal abierto y configurado.
     # @raise [BugBunny::CommunicationError] Si no se puede restablecer la conexión.
     def channel
-      # Si el canal existe y está abierto, lo devolvemos rápido.
+      # Fast path: canal abierto, sin adquirir el mutex.
       return @channel if @channel&.open?
 
-      # Si no, intentamos asegurar la conexión y crear el canal.
-      ensure_connection!
-      create_channel!
+      # Slow path: adquirimos el mutex y verificamos de nuevo (double-checked locking).
+      # Evita que múltiples threads creen canales simultáneamente cuando el canal cae.
+      @channel_mutex.synchronize do
+        return @channel if @channel&.open?
+
+        ensure_connection!
+        create_channel!
+      end
 
       @channel
     end
@@ -98,8 +105,10 @@ module BugBunny
     # Cierra el canal asociado a esta sesión de forma segura.
     # @return [void]
     def close
-      @channel&.close if @channel&.open?
-      @channel = nil
+      @channel_mutex.synchronize do
+        @channel&.close if @channel&.open?
+        @channel = nil
+      end
     end
 
     private
@@ -113,9 +122,7 @@ module BugBunny
 
       @channel.confirm_select if @publisher_confirms
 
-      if BugBunny.configuration.channel_prefetch
-        @channel.prefetch(BugBunny.configuration.channel_prefetch)
-      end
+      @channel.prefetch(BugBunny.configuration.channel_prefetch) if BugBunny.configuration.channel_prefetch
     rescue StandardError => e
       raise BugBunny::CommunicationError, "Failed to create channel: #{e.message}"
     end
@@ -127,10 +134,10 @@ module BugBunny
     def ensure_connection!
       return if @connection.open?
 
-      safe_log(:warn, "session.reconnect_attempt")
+      safe_log(:warn, 'session.reconnect_attempt')
       @connection.start
     rescue StandardError => e
-      safe_log(:error, "session.reconnect_failed", **exception_metadata(e))
+      safe_log(:error, 'session.reconnect_failed', **exception_metadata(e))
       raise BugBunny::CommunicationError, "Could not reconnect to RabbitMQ: #{e.message}"
     end
   end

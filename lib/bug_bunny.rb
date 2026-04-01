@@ -56,6 +56,7 @@ module BugBunny
   def self.configure
     self.configuration ||= Configuration.new
     yield(configuration)
+    configuration.validate!
   end
 
   # Crea e inicia una nueva conexión a RabbitMQ utilizando la gema Bunny.

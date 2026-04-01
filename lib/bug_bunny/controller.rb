@@ -9,7 +9,7 @@ module BugBunny
   #
   # Actúa como el receptor final de los mensajes enrutados desde el consumidor.
   # Implementa un ciclo de vida similar a ActionController en Rails, soportando:
-  # - Filtros (`before_action`, `around_action`).
+  # - Filtros (`before_action`, `around_action`, `after_action`).
   # - Manejo declarativo de errores (`rescue_from`).
   # - Parsing de parámetros unificados (`params`).
   # - Respuestas estructuradas (`render`).
@@ -49,6 +49,7 @@ module BugBunny
     # hacia las subclases (ej. de ApplicationController a ServicesController).
     class_attribute :before_actions, default: {}
     class_attribute :around_actions, default: {}
+    class_attribute :after_actions,  default: {}
     class_attribute :log_tags, default: []
     class_attribute :rescue_handlers, default: []
 
@@ -70,6 +71,17 @@ module BugBunny
     # @return [void]
     def self.around_action(method_name, **options)
       register_callback(:around_actions, method_name, options)
+    end
+
+    # Registra un filtro que se ejecutará **después** de la acción.
+    # No se ejecuta si un `before_action` halted la cadena (render anticipado)
+    # ni si la acción lanzó una excepción, siguiendo el comportamiento de Rails.
+    #
+    # @param method_name [Symbol] Nombre del método privado a ejecutar.
+    # @param options [Hash] Opciones como `only: [:create, :update]`.
+    # @return [void]
+    def self.after_action(method_name, **options)
+      register_callback(:after_actions, method_name, options)
     end
 
     # Manejo declarativo de excepciones.
@@ -126,9 +138,12 @@ module BugBunny
     # INICIALIZACIÓN Y CICLO DE VIDA
     # ==========================================
 
+    # @return [Hash] Headers que se enviarán en la respuesta.
+    attr_accessor :response_headers
+
     def initialize(attributes = {})
       super
-      @response_headers = {}
+      @response_headers = {}.with_indifferent_access
       @logger = BugBunny.configuration.logger
     end
 
@@ -160,6 +175,8 @@ module BugBunny
         else
           raise NameError, "Action '#{action_name}' not found in #{self.class.name}"
         end
+
+        run_after_actions(action_name)
       end
 
       # Construir e invocar la cadena de responsabilidad (Middlewares/Around Actions)
@@ -219,14 +236,15 @@ module BugBunny
     #
     # @param status [Symbol, Integer] Código HTTP (ej. :ok, :not_found, 201).
     # @param json [Object] El payload a serializar como JSON.
+    # @param headers [Hash] Headers adicionales opcionales para esta respuesta.
     # @return [Hash] La estructura renderizada interna.
-    def render(status:, json: nil)
+    def render(status:, json: nil, headers: {})
       code = Rack::Utils::SYMBOL_TO_STATUS_CODE[status] || status.to_i
       code = 200 if code.zero? # Fallback de seguridad
 
       @rendered_response = {
         status: code,
-        headers: response_headers,
+        headers: response_headers.merge(headers),
         body: json
       }
     end
@@ -265,6 +283,13 @@ module BugBunny
         return false if rendered_response
       end
       true
+    end
+
+    # Ejecuta secuencialmente todos los after_actions.
+    # Solo se invoca si la cadena no fue interrumpida por before_action ni por una excepción.
+    def run_after_actions(action_name)
+      current_afters = resolve_callbacks(self.class.after_actions, action_name)
+      current_afters.uniq.each { |method_name| send(method_name) }
     end
 
     # --- LÓGICA DE LOGGING ENCAPSULADA ---

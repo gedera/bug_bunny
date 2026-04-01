@@ -1,0 +1,63 @@
+📋 Plan de Testing: BugBunny v3.1 (Extendido)
+🟢 Nivel 0: Infraestructura (Los Cimientos)
+Test 0.0: test_helper capaz de levantar consumers con Exchanges Direct, Topic y Fanout.
+
+Test 0.1: Control de "Namespace" dinámico en los tests para evitar colisión de nombres de clase.
+
+🔵 Nivel 1: El Recurso (Resource ORM)
+Test 1.1: CRUD Completo (Create, Find, Update) con Exchange Topic (Default).
+
+Test 1.2: Manejo de Errores (404, 500, Timeout).
+
+Test 1.3: Resource.where con filtros anidados (Query String).
+
+🟠 Nivel 2: Cliente Manual (Publisher Mode)
+Este nivel prueba el uso de la gema como un cliente RabbitMQ puro, sin la magia de Active Record.
+
+Test 2.1 (Fire-and-Forget):
+
+Usar client.publish('logs.error', body: { msg: 'Crash' }).
+
+Verificar que el mensaje llega a la cola sin esperar respuesta.
+
+Test 2.2 (RPC Manual):
+
+Usar client.request('users/123', method: :get).
+
+Verificar que devuelve un hash parseado y maneja el timeout.
+
+Test 2.3 (Raw Bytes):
+
+Enviar un string crudo (no JSON) y verificar que llega intacto.
+
+🟣 Nivel 3: Topologías de Exchange (Routing Complejo)
+Aquí probamos que la gema respeta las reglas de RabbitMQ.
+
+Test 3.1 (Topic Wildcards):
+
+Worker escucha en notifications.*.
+
+Cliente envía a notifications.email y notifications.sms.
+
+Verificar que ambos llegan.
+
+Test 3.2 (Direct Strict):
+
+Worker escucha en orders_queue (Direct).
+
+Cliente envía con routing key incorrecta.
+
+Verificar que NO llega (o se va a Dead Letter si hubiera).
+
+Test 3.3 (Fanout Broadcast):
+
+Levantar 2 Workers escuchando el mismo Exchange Fanout.
+
+Cliente publica 1 mensaje.
+
+Verificar que AMBOS workers reciben el mensaje.
+
+🟡 Nivel 4: Observabilidad y Middlewares
+Test 4.1 (Tracing): Inyección y propagación de correlation_id (Cliente Manual -> Worker).
+
+Test 4.2 (Middleware Chain): Verificar que un middleware puede modificar el body antes de salir.

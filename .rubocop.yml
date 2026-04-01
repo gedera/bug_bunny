@@ -1,0 +1,64 @@
+# .rubocop.yml
+
+# --- ELIMINAMOS LOS REQUIRES QUE DABAN ERROR ---
+# require:
+#   - rubocop-performance
+
+AllCops:
+  NewCops: enable
+  # Tu gemspec dice que soportas desde Ruby 2.6
+  TargetRubyVersion: 2.6
+  SuggestExtensions: false
+  Exclude:
+    - 'bin/**/*'
+    - 'vendor/**/*'
+    - 'pkg/**/*'
+    - 'spec/**/*'
+    - 'test/**/*'
+    - 'Gemfile'
+    - 'Rakefile'
+    - 'bin_suite.rb'
+    - 'bin_worker.rb'
+    - 'bin_client.rb'
+    - '*.gemspec'
+
+# === Estilo y Calidad para Gemas ===
+
+# Obligatorio para performance (hace que los strings no se re-creen siempre)
+Style/FrozenStringLiteralComment:
+  Enabled: true
+
+# Documentación: En una gema es VITAL documentar las clases
+Style/Documentation:
+  Enabled: true
+  Exclude:
+    - 'lib/bug_bunny/version.rb'
+    - 'test/**/*'
+
+# Longitud de línea: 120 es el estándar moderno (80 es muy viejo)
+Layout/LineLength:
+  Max: 120
+
+# Métricas relajadas (para no trabarnos refactorizando ahora)
+Metrics/MethodLength:
+  Max: 25
+  CountComments: false
+
+Metrics/ClassLength:
+  Max: 150
+
+Metrics/ParameterLists:
+  Max: 5
+  CountKeywordArgs: true
+
+Metrics/BlockLength:
+  Exclude:
+    - 'test/**/*' # Los bloques de test suelen ser largos
+
+# Nombres de archivos correctos
+Naming/FileName:
+  Enabled: true
+
+# Seguridad básica
+Style/RescueStandardError:
+  Enabled: true

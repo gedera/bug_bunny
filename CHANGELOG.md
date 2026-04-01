@@ -1,5 +1,27 @@
 # Changelog
 
+## [4.7.0] - 2026-04-01
+
+### ✨ New Features
+* **Routing — Namespace blocks:** Nuevo método `namespace` en el DSL de rutas para organizar controladores en módulos Ruby. Los namespaces son acumulativos y anidables: `namespace :api { namespace :v1 { resources :metrics } }` resuelve a `Api::V1::MetricsController`. El namespace de la ruta tiene precedencia sobre `config.controller_namespace`.
+* **Controller — `after_action`:** Nuevo callback que se ejecuta después de la acción exitosa. No se invoca si un `before_action` haltó la cadena ni si la acción lanzó una excepción, siguiendo el comportamiento de Rails. Soporta `only:` y `except:`, y se hereda entre controladores.
+* **Controller — `render` con `headers:`:** El método `render` acepta un keyword `headers:` para adjuntar headers por-respuesta sin mutar `response_headers`. `response_headers` se inicializa con `with_indifferent_access`.
+* **Consumer — `shutdown`:** Nuevo método público que detiene el health check timer y cierra el canal AMQP de forma ordenada. Se invoca automáticamente vía `ensure` cuando `subscribe` termina por cualquier motivo (señal, error, fin de loop), garantizando limpieza completa de recursos.
+* **Configuration — `validate!`:** `BugBunny.configure` invoca `validate!` al final del bloque. Verifica presencia de campos requeridos (`host`, `port`, `username`, `password`, `vhost`) y rangos válidos para timeouts y `channel_prefetch`. Lanza `BugBunny::ConfigurationError` con mensaje descriptivo en lugar de fallar silenciosamente al conectar.
+
+### ⚡ Performance & Robustness
+* **Client — Session & Producer pooling:** `BugBunny::Client` ya no crea ni destruye un `Session` (canal AMQP) y un `Producer` por request. Ambos se cachean como ivars sobre el objeto conexión del pool (`@_bug_bunny_session`, `@_bug_bunny_producer`) y se reutilizan en todos los requests del mismo slot. El cacheo del `Producer` es crítico: el Producer registra un `basic_consume` en el canal para escuchar replies RPC; recrearlo sobre un canal reutilizado intentaría un segundo `basic_consume` causando un error AMQP. Thread-safe sin mutex adicional: `ConnectionPool` garantiza que cada slot es usado por un único thread a la vez.
+* **Session — Double-checked locking:** El método `channel` usa un patrón de double-checked locking con `@channel_mutex` para evitar que múltiples threads creen canales simultáneamente cuando el canal cae. `close` también está protegido por el mismo mutex.
+* **ConsumerMiddleware::Stack — Thread safety:** `use`, `empty?` y `call` están protegidos por un `Mutex`. `call` toma un snapshot del array bajo mutex y ejecuta la cadena fuera del lock, evitando serializar el procesamiento de mensajes durante registros concurrentes.
+
+### 🔍 Observability
+* **`Observability::SENSITIVE_KEYS` expandido:** La lista de claves filtradas en logs crece de 5 a 11 entradas: se agregan `authorization`, `credential`, `private_key`, `csrf`, `session_id` y `passwd`. El matching pasa de comparación exacta por symbol a substring matching en lowercase con normalización de hyphens a underscores, cubriendo variantes como `X-Api-Key`, `user_password` o `accessToken`.
+* **`Observability.sensitive_key?` público:** El método de detección de claves sensibles se expone como método de módulo reutilizable por componentes externos (middlewares, integraciones).
+
+### 🐛 Bug Fixes
+* **Resource — dirty tracking híbrido:** Se corrigen los overrides `changed?` y `changed` para combinar correctamente el tracking nativo de `ActiveModel::Dirty` (atributos tipados) con el tracking manual de atributos dinámicos (`@dynamic_changes`). Anteriormente, `changed?` solo reflejaba atributos tipados. `id=` ahora registra el cambio en `@dynamic_changes` cuando `id` no está declarado como `attribute`.
+* **Resource — inicialización:** `initialize` pasa `attributes` directamente a `super` en lugar del patrón `super() + assign_attributes`, delegando correctamente a `ActiveModel::Model`.
+
 ## [4.6.1] - 2026-03-31
 
 ### 🐛 Bug Fixes
@@ -78,33 +100,33 @@
 
 ## [4.2.0] - 2026-03-22
 
-### ðŸ”  Observability & Structured Logging
-* **Structured Logs (Key-Value):** Se migraron todos los logs del framework a un formato \`key=value\` estructurado, ideal para herramientas de monitoreo como Datadog o CloudWatch. Se eliminaron emojis y texto libre para mejorar el parseo automÃ¡tico.
-* **Lazy Evaluation (Debug Blocks):** Las llamadas a \`logger.debug\` ahora utilizan bloques para evitar la interpolaciÃ³n de strings innecesaria en producciÃ³n, optimizando el uso de CPU y memoria.
+### Observability & Structured Logging
+* **Structured Logs (Key-Value):** Se migraron todos los logs del framework a un formato `key=value` estructurado, ideal para herramientas de monitoreo como Datadog o CloudWatch. Se eliminaron emojis y texto libre para mejorar el parseo automático.
+* **Lazy Evaluation (Debug Blocks):** Las llamadas a `logger.debug` ahora utilizan bloques para evitar la interpolación de strings innecesaria en producción, optimizando el uso de CPU y memoria.
 
-### ðŸ›¡ï¸  Resilience & Connectivity
-* **Exponential Backoff:** El \`Consumer\` ahora implementa un algoritmo de reintento exponencial para reconectarse a RabbitMQ, evitando picos de carga durante caÃ­das del broker.
-* **Max Reconnect Attempts:** Nueva configuraciÃ³n \`max_reconnect_attempts\` que permite que el worker falle definitivamente tras N intentos, facilitando el reinicio del Pod por parte de orquestadores como Kubernetes.
-* **Performance Tuning:** Se desactivaron los \`publisher_confirms\` en el canal del \`Consumer\` al responder RPCs para reducir la latencia de respuesta (round-trips innecesarios).
+### Resilience & Connectivity
+* **Exponential Backoff:** El `Consumer` ahora implementa un algoritmo de reintento exponencial para reconectarse a RabbitMQ, evitando picos de carga durante caídas del broker.
+* **Max Reconnect Attempts:** Nueva configuración `max_reconnect_attempts` que permite que el worker falle definitivamente tras N intentos, facilitando el reinicio del Pod por parte de orquestadores como Kubernetes.
+* **Performance Tuning:** Se desactivaron los `publisher_confirms` en el canal del `Consumer` al responder RPCs para reducir la latencia de respuesta (round-trips innecesarios).
 
 ## [4.1.2] - 2026-03-22
 
-### ✨ Improvements
-* **Controller:** Ahora lanza una excepciÃ³n \`BugBunny::BadRequest\` (400) si el cuerpo de la peticiÃ³n contiene un JSON invÃ¡lido, mejorando la depuraciÃ³n en el cliente.
-* **Resource:** Se aÃ±adiÃ³ una protecciÃ³n a \`.with\` (\`ScopeProxy\`) para asegurar que el contexto sea de un solo uso, evitando efectos secundarios en llamadas encadenadas.
+### Improvements
+* **Controller:** Ahora lanza una excepción `BugBunny::BadRequest` (400) si el cuerpo de la petición contiene un JSON inválido, mejorando la depuración en el cliente.
+* **Resource:** Se añadió una protección a `.with` (`ScopeProxy`) para asegurar que el contexto sea de un solo uso, evitando efectos secundarios en llamadas encadenadas.
 
 ## [4.1.1] - 2026-03-22
 
 ### 🐛 Bug Fixes
-* **Consumer:** Previene memory leak al detener el `TimerTask` de health check previo antes de realizar una reconexiÃ³n.
-* **Controller:** Corrige la mutaciÃ³n accidental de \`log_tags\` globales al usar una lÃ³gica de herencia no destructiva en \`compute_tags\`.
+* **Consumer:** Previene memory leak al detener el `TimerTask` de health check previo antes de realizar una reconexión.
+* **Controller:** Corrige la mutación accidental de `log_tags` globales al usar una lógica de herencia no destructiva en `compute_tags`.
 
 ## [4.1.0] - 2026-03-22
 
 ### 🚀 New Features & Improvements
-* **Faraday-style Client API:** Se introdujo el mÃ©todo \`Client#send\` como punto de entrada genÃ©rico, permitiendo una sintaxis mÃ¡s familiar y flexible.
-* **Flexible Delivery Modes:** IntroducciÃ³n del atributo \`delivery_mode\` (:rpc o :publish). Ahora es posible configurar la estrategia de envÃ­o a nivel de cliente o por cada peticiÃ³n individual.
-* **Smart Request Defaults:** Los mÃ©todos \`request\` y \`publish\` ahora delegan internamente en \`send\`, manteniendo la compatibilidad pero beneficiÃ¡ndose de la nueva arquitectura de peticiones.
+* **Faraday-style Client API:** Se introdujo el método `Client#send` como punto de entrada genérico, permitiendo una sintaxis más familiar y flexible.
+* **Flexible Delivery Modes:** Introducción del atributo `delivery_mode` (:rpc o :publish). Ahora es posible configurar la estrategia de envío a nivel de cliente o por cada petición individual.
+* **Smart Request Defaults:** Los métodos `request` y `publish` ahora delegan internamente en `send`, manteniendo la compatibilidad pero beneficiándose de la nueva arquitectura de peticiones.
 
 ## [4.0.1] - 2026-03-13
 

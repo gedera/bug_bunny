@@ -5,6 +5,28 @@ require 'json'
 module BugBunny
   # @api private
   module Observability
+    # Patrones de keys que deben ser ocultados en los logs.
+    # Se usa substring matching en lowercase para cubrir variantes como
+    # "user_password", "accessToken", "X-Authorization", etc.
+    # Excluye "pass" y "session" bare para evitar falsos positivos
+    # en keys como "passport_number" o "processing_session_count".
+    SENSITIVE_KEYS = %w[
+      password passwd secret token api_key auth authorization
+      credential private_key csrf session_id
+    ].freeze
+
+    # Determina si una key es sensible y debe filtrarse en los logs.
+    # Accesible como método de módulo para que otros componentes puedan reutilizarlo.
+    #
+    # @param key [String, Symbol] La clave a evaluar.
+    # @return [Boolean] `true` si la key es sensible.
+    def self.sensitive_key?(key)
+      # Normalize hyphens → underscores so HTTP headers like "X-Api-Key"
+      # match the same patterns as Ruby symbol keys like :api_key.
+      key_str = key.to_s.downcase.tr('-', '_')
+      SENSITIVE_KEYS.any? { |sensitive| key_str.include?(sensitive) }
+    end
+
     private
 
     # Registra un evento estructurado. Nunca eleva excepciones.
@@ -18,7 +40,7 @@ module BugBunny
       fields = { component: observability_name, event: event }.merge(metadata)
 
       log_line = fields.map do |k, v|
-        val = %i[password token secret api_key auth].include?(k.to_sym) ? "[FILTERED]" : v
+        val = BugBunny::Observability.sensitive_key?(k) ? '[FILTERED]' : v
         next if val.nil?
 
         formatted = case val

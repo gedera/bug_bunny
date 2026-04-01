@@ -17,6 +17,9 @@ module BugBunny
       # @return [String] El nombre del controlador en formato snake_case (ej. 'api/v1/metrics').
       attr_reader :controller
 
+      # @return [String, nil] El namespace del controlador si existe (ej. 'Api::V1').
+      attr_reader :namespace
+
       # @return [String] El nombre de la acción a ejecutar (ej. 'show').
       attr_reader :action
 
@@ -25,10 +28,12 @@ module BugBunny
       # @param http_method [String, Symbol] Verbo HTTP (ej. :get, 'POST').
       # @param path_pattern [String] Patrón de la URL. Los parámetros dinámicos deben iniciar con ':' (ej. 'users/:id').
       # @param to [String] Destino en formato 'controlador#accion' (ej. 'users#show').
+      # @param namespace [String, nil] El namespace del controlador (ej: 'Api::V1').
       # @raise [ArgumentError] Si el formato del destino `to` es inválido.
-      def initialize(http_method, path_pattern, to:)
+      def initialize(http_method, path_pattern, to:, namespace: nil)
         @http_method = http_method.to_s.upcase
         @path_pattern = normalize_path(path_pattern)
+        @namespace = namespace
 
         parse_destination!(to)
         compile_regex!

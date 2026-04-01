@@ -63,7 +63,8 @@ module BugBunny
     # @param queue_opts [Hash] Opciones adicionales para la cola (durable, auto_delete).
     # @param block [Boolean] Si es `true`, bloquea el hilo actual (loop infinito).
     # @return [void]
-    def subscribe(queue_name:, exchange_name:, routing_key:, exchange_type: 'direct', exchange_opts: {}, queue_opts: {}, block: true)
+    def subscribe(queue_name:, exchange_name:, routing_key:, exchange_type: 'direct', exchange_opts: {},
+                  queue_opts: {}, block: true)
       attempt = 0
 
       begin
@@ -74,14 +75,15 @@ module BugBunny
 
         # 📊 LOGGING DE OBSERVABILIDAD: Calculamos las opciones finales para mostrarlas en consola
         final_x_opts = BugBunny::Session::DEFAULT_EXCHANGE_OPTIONS
-                         .merge(BugBunny.configuration.exchange_options || {})
-                         .merge(exchange_opts || {})
+                       .merge(BugBunny.configuration.exchange_options || {})
+                       .merge(exchange_opts || {})
         final_q_opts = BugBunny::Session::DEFAULT_QUEUE_OPTIONS
-                         .merge(BugBunny.configuration.queue_options || {})
-                         .merge(queue_opts || {})
+                       .merge(BugBunny.configuration.queue_options || {})
+                       .merge(queue_opts || {})
 
-        safe_log(:info, "consumer.start", queue: queue_name, queue_opts: final_q_opts)
-        safe_log(:info, "consumer.bound", exchange: exchange_name, exchange_type: exchange_type, routing_key: routing_key, exchange_opts: final_x_opts)
+        safe_log(:info, 'consumer.start', queue: queue_name, queue_opts: final_q_opts)
+        safe_log(:info, 'consumer.bound', exchange: exchange_name, exchange_type: exchange_type,
+                                          routing_key: routing_key, exchange_opts: final_x_opts)
 
         start_health_check(queue_name)
 
@@ -89,7 +91,7 @@ module BugBunny
           trace_id = properties.correlation_id
           logger = BugBunny.configuration.logger
 
-          core = -> {
+          core = lambda {
             if logger.respond_to?(:tagged)
               logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
             elsif defined?(Rails) && Rails.logger.respond_to?(:tagged)
@@ -106,19 +108,35 @@ module BugBunny
         max_attempts = BugBunny.configuration.max_reconnect_attempts
 
         if max_attempts && attempt >= max_attempts
-          safe_log(:error, "consumer.reconnect_exhausted", max_attempts_count: max_attempts, **exception_metadata(e))
+          safe_log(:error, 'consumer.reconnect_exhausted', max_attempts_count: max_attempts, **exception_metadata(e))
           raise
         end
 
         wait = [
-          BugBunny.configuration.network_recovery_interval * (2 ** (attempt - 1)),
+          BugBunny.configuration.network_recovery_interval * (2**(attempt - 1)),
           BugBunny.configuration.max_reconnect_interval
         ].min
 
-        safe_log(:error, "consumer.connection_error", attempt_count: attempt, max_attempts_count: max_attempts || 'infinity', retry_in_s: wait, **exception_metadata(e))
+        safe_log(:error, 'consumer.connection_error', attempt_count: attempt,
+                                                      max_attempts_count: max_attempts || 'infinity', retry_in_s: wait, **exception_metadata(e))
         sleep wait
         retry
       end
+    ensure
+      shutdown
+    end
+
+    # Detiene el health check timer y cierra el canal de forma ordenada.
+    #
+    # Llamar explícitamente al hacer shutdown del worker (SIGTERM, at_exit, etc.).
+    # También se invoca automáticamente cuando `subscribe` termina por cualquier motivo.
+    #
+    # @return [void]
+    def shutdown
+      safe_log(:info, 'consumer.shutdown')
+      @health_timer&.shutdown
+      @health_timer = nil
+      session.close
     end
 
     private
@@ -138,7 +156,7 @@ module BugBunny
       path = properties.type || (properties.headers && properties.headers['path'])
 
       if path.nil? || path.empty?
-        safe_log(:error, "consumer.message_rejected", reason: :missing_type_header)
+        safe_log(:error, 'consumer.message_rejected', reason: :missing_type_header)
         session.channel.reject(delivery_info.delivery_tag, false)
         return
       end
@@ -147,8 +165,9 @@ module BugBunny
       headers_hash = properties.headers || {}
       http_method = (headers_hash['x-http-method'] || headers_hash['method'] || 'GET').to_s.upcase
 
-      safe_log(:info, "consumer.message_received", method: http_method, path: path, routing_key: delivery_info.routing_key)
-      safe_log(:debug, "consumer.message_received_body", body: body.truncate(200))
+      safe_log(:info, 'consumer.message_received', method: http_method, path: path,
+                                                   routing_key: delivery_info.routing_key)
+      safe_log(:debug, 'consumer.message_received_body', body: body.truncate(200))
 
       # ===================================================================
       # 3. Ruteo Declarativo
@@ -157,16 +176,14 @@ module BugBunny
 
       # Extraemos query params (ej. /nodes?status=active)
       query_params = uri.query ? Rack::Utils.parse_nested_query(uri.query) : {}
-      if defined?(ActiveSupport::HashWithIndifferentAccess)
-        query_params = query_params.with_indifferent_access
-      end
+      query_params = query_params.with_indifferent_access if defined?(ActiveSupport::HashWithIndifferentAccess)
 
       # Le preguntamos al motor de rutas global quién debe manejar esto
       route_info = BugBunny.routes.recognize(http_method, uri.path)
 
       if route_info.nil?
-        safe_log(:warn, "consumer.route_not_found", method: http_method, path: uri.path)
-        handle_fatal_error(properties, 404, "Not Found", "No route matches [#{http_method}] \"/#{uri.path}\"")
+        safe_log(:warn, 'consumer.route_not_found', method: http_method, path: uri.path)
+        handle_fatal_error(properties, 404, 'Not Found', "No route matches [#{http_method}] \"/#{uri.path}\"")
         session.channel.reject(delivery_info.delivery_tag, false)
         return
       end
@@ -177,28 +194,28 @@ module BugBunny
       # ===================================================================
       # 4. Instanciación del Controlador
       # ===================================================================
-      namespace = BugBunny.configuration.controller_namespace
+      base_namespace = route_info[:namespace] || BugBunny.configuration.controller_namespace
       controller_name = route_info[:controller].camelize
-      controller_class_name = "#{namespace}::#{controller_name}Controller"
+      controller_class_name = "#{base_namespace}::#{controller_name}Controller"
 
       begin
         controller_class = controller_class_name.constantize
       rescue NameError
-        safe_log(:warn, "consumer.controller_not_found", controller: controller_class_name)
-        handle_fatal_error(properties, 404, "Not Found", "Controller #{controller_class_name} not found")
+        safe_log(:warn, 'consumer.controller_not_found', controller: controller_class_name)
+        handle_fatal_error(properties, 404, 'Not Found', "Controller #{controller_class_name} not found")
         session.channel.reject(delivery_info.delivery_tag, false)
         return
       end
 
       # Verificación estricta de Seguridad (RCE Prevention)
       unless controller_class < BugBunny::Controller
-        safe_log(:error, "consumer.security_violation", reason: :invalid_controller, controller: controller_class)
-        handle_fatal_error(properties, 403, "Forbidden", "Invalid Controller Class")
+        safe_log(:error, 'consumer.security_violation', reason: :invalid_controller, controller: controller_class)
+        handle_fatal_error(properties, 403, 'Forbidden', 'Invalid Controller Class')
         session.channel.reject(delivery_info.delivery_tag, false)
         return
       end
 
-      safe_log(:debug, "consumer.route_matched", controller: controller_class_name, action: route_info[:action])
+      safe_log(:debug, 'consumer.route_matched', controller: controller_class_name, action: route_info[:action])
 
       request_metadata = {
         type: path,
@@ -217,22 +234,19 @@ module BugBunny
       # ===================================================================
       response_payload = controller_class.call(headers: request_metadata, body: body)
 
-      if properties.reply_to
-        reply(response_payload, properties.reply_to, properties.correlation_id)
-      end
+      reply(response_payload, properties.reply_to, properties.correlation_id) if properties.reply_to
 
       session.channel.ack(delivery_info.delivery_tag)
 
-      safe_log(:info, "consumer.message_processed",
+      safe_log(:info, 'consumer.message_processed',
                status: response_payload[:status],
                duration_s: duration_s(start_time),
                controller: controller_class_name,
                action: route_info[:action])
-
     rescue StandardError => e
-      safe_log(:error, "consumer.execution_error", duration_s: duration_s(start_time), **exception_metadata(e))
-      safe_log(:debug, "consumer.execution_error_backtrace", backtrace: e.backtrace.first(5).join(' | '))
-      handle_fatal_error(properties, 500, "Internal Server Error", e.message)
+      safe_log(:error, 'consumer.execution_error', duration_s: duration_s(start_time), **exception_metadata(e))
+      safe_log(:debug, 'consumer.execution_error_backtrace', backtrace: e.backtrace.first(5).join(' | '))
+      handle_fatal_error(properties, 500, 'Internal Server Error', e.message)
       session.channel.reject(delivery_info.delivery_tag, false)
     end
 
@@ -243,7 +257,7 @@ module BugBunny
     # @param correlation_id [String] ID para correlacionar la respuesta con la petición original.
     # @return [void]
     def reply(payload, reply_to, correlation_id)
-      safe_log(:debug, "consumer.rpc_reply", reply_to: reply_to, correlation_id: correlation_id)
+      safe_log(:debug, 'consumer.rpc_reply', reply_to: reply_to, correlation_id: correlation_id)
       extra_headers = BugBunny.configuration.rpc_reply_headers&.call || {}
       session.channel.default_exchange.publish(
         payload.to_json,
@@ -294,7 +308,7 @@ module BugBunny
         # 2. Si llegamos aquí, RabbitMQ y la cola están vivos. Avisamos al orquestador actualizando el archivo.
         touch_health_file(file_path) if file_path
       rescue StandardError => e
-        safe_log(:warn, "consumer.health_check_failed", queue: q_name, **exception_metadata(e))
+        safe_log(:warn, 'consumer.health_check_failed', queue: q_name, **exception_metadata(e))
         session.close
       end
       @health_timer.execute
@@ -309,7 +323,7 @@ module BugBunny
     def touch_health_file(file_path)
       FileUtils.touch(file_path)
     rescue StandardError => e
-      safe_log(:error, "consumer.health_check_file_error", path: file_path, **exception_metadata(e))
+      safe_log(:error, 'consumer.health_check_file_error', path: file_path, **exception_metadata(e))
     end
   end
 end

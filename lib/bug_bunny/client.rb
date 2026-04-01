@@ -116,26 +116,49 @@ module BugBunny
       yield req if block_given?
 
       # 4. Ejecución dentro del Pool
+      # Session y Producer se reutilizan por slot de conexión (ver #session_for / #producer_for).
       @pool.with do |conn|
-        session = BugBunny::Session.new(conn)
-        producer = BugBunny::Producer.new(session)
+        session  = session_for(conn)
+        producer = producer_for(conn, session)
 
-        begin
-          # Mapeo de delivery_mode al método del productor (:rpc o :fire)
-          # :publish se mapea a :fire por consistencia interna.
-          method_name = req.delivery_mode == :publish ? :fire : :rpc
+        # Mapeo de delivery_mode al método del productor (:rpc o :fire)
+        method_name  = req.delivery_mode == :publish ? :fire : :rpc
 
-          # Onion Architecture: La acción final es llamar al Producer real.
-          final_action = ->(env) { producer.send(method_name, env) }
+        # Onion Architecture: La acción final es llamar al Producer real.
+        final_action = ->(env) { producer.send(method_name, env) }
 
-          # Construimos y ejecutamos la cadena de middlewares
-          app = @stack.build(final_action)
-          app.call(req)
-        ensure
-          # Aseguramos el cierre del canal pero mantenemos la conexión del pool
-          session.close
-        end
+        # Construimos y ejecutamos la cadena de middlewares
+        app = @stack.build(final_action)
+        app.call(req)
       end
+    end
+
+    # Recupera o crea la Session asociada al slot de conexión dado.
+    #
+    # La Session (y su canal AMQP) se almacena como ivar en el objeto `conn`.
+    # Thread-safe sin mutex adicional: ConnectionPool garantiza que cada `conn`
+    # es usado por un único thread a la vez.
+    #
+    # @param conn [Bunny::Session] Conexión activa del pool.
+    # @return [BugBunny::Session]
+    def session_for(conn)
+      conn.instance_variable_get(:@_bug_bunny_session) ||
+        conn.instance_variable_set(:@_bug_bunny_session, BugBunny::Session.new(conn))
+    end
+
+    # Recupera o crea el Producer asociado al slot de conexión dado.
+    #
+    # El Producer debe cachearse junto con la Session porque registra un
+    # `basic_consume` sobre el canal para escuchar replies RPC. Si se creara
+    # un Producer nuevo por request (con el canal reutilizado), se intentaría
+    # registrar un segundo consumidor sobre el mismo canal, causando un error AMQP.
+    #
+    # @param conn [Bunny::Session] Conexión activa del pool.
+    # @param session [BugBunny::Session] Session ya resuelta para `conn`.
+    # @return [BugBunny::Producer]
+    def producer_for(conn, session)
+      conn.instance_variable_get(:@_bug_bunny_producer) ||
+        conn.instance_variable_set(:@_bug_bunny_producer, BugBunny::Producer.new(session))
     end
   end
 end

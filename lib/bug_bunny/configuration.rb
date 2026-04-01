@@ -14,6 +14,28 @@ module BugBunny
   #     config.health_check_file = '/tmp/bug_bunny_health'
   #   end
   class Configuration
+    # Reglas de validación por atributo.
+    # Solo cubre los atributos de conexión y timeout — los demás (logger, procs, hashes)
+    # son tipos arbitrarios que no tienen sentido validar de forma genérica.
+    #
+    # Claves soportadas:
+    # - `:type`     — clase que debe responder `is_a?`
+    # - `:required` — si `true`, nil o string vacío lanzan ConfigurationError
+    # - `:range`    — rango válido de valores (solo para Integer)
+    VALIDATIONS = {
+      host: { type: String, required: true },
+      port: { type: Integer, required: true, range: 1..65_535 },
+      username: { type: String, required: true },
+      password: { type: String, required: true },
+      vhost: { type: String, required: true },
+      heartbeat: { type: Integer, range: 0..3_600 },
+      connection_timeout: { type: Integer, range: 1..300 },
+      read_timeout: { type: Integer, range: 1..300 },
+      write_timeout: { type: Integer, range: 1..300 },
+      rpc_timeout: { type: Integer, range: 1..3_600 },
+      channel_prefetch: { type: Integer, range: 1..10_000 }
+    }.freeze
+
     # @return [String] Host o IP del servidor RabbitMQ (ej: 'localhost').
     attr_accessor :host
 
@@ -162,6 +184,47 @@ module BugBunny
     # @return [String] URL formateada amqp://user:pass@host:port/vhost
     def url
       "amqp://#{username}:#{password}@#{host}:#{port}/#{vhost}"
+    end
+
+    # Valida todos los atributos definidos en {VALIDATIONS}.
+    # Se invoca automáticamente al final de {BugBunny.configure}.
+    #
+    # @raise [BugBunny::ConfigurationError] Si algún atributo es inválido.
+    # @return [void]
+    def validate!
+      VALIDATIONS.each do |attr, rules|
+        value = send(attr)
+        validate_required!(attr, value, rules)
+        next if value.nil?
+
+        validate_type!(attr, value, rules)
+        validate_range!(attr, value, rules)
+      end
+    end
+
+    private
+
+    def validate_required!(attr, value, rules)
+      return unless rules[:required]
+      return unless value.nil? || (value.is_a?(String) && value.empty?)
+
+      raise BugBunny::ConfigurationError, "#{attr} is required"
+    end
+
+    def validate_type!(attr, value, rules)
+      return unless rules[:type]
+      return if value.is_a?(rules[:type])
+
+      raise BugBunny::ConfigurationError,
+            "#{attr} must be a #{rules[:type]}, got #{value.class}"
+    end
+
+    def validate_range!(attr, value, rules)
+      return unless rules[:range]
+      return if rules[:range].cover?(value)
+
+      raise BugBunny::ConfigurationError,
+            "#{attr} must be in #{rules[:range]}, got #{value.inspect}"
     end
   end
 end

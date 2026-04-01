@@ -11,6 +11,10 @@ module BugBunny
   # Suele envolver excepciones nativas de la gema `bunny` (ej: TCP connection failure).
   class CommunicationError < Error; end
 
+  # Error lanzado cuando la configuración de la gema es inválida.
+  # Se levanta al final de {BugBunny.configure} si algún atributo no pasa las validaciones.
+  class ConfigurationError < Error; end
+
   # Error lanzado cuando ocurren un acceso no permitido a controladores.
   # Protege contra vulnerabilidades de RCE validando la herencia de las clases enrutadas.
   class SecurityError < Error; end
