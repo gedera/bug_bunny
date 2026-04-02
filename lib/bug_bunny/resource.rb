@@ -25,8 +25,7 @@ module BugBunny
     define_model_callbacks :save, :create, :update, :destroy
 
     attr_reader :remote_attributes
-    attr_accessor :persisted
-    attr_accessor :routing_key, :exchange, :exchange_type
+    attr_accessor :persisted, :routing_key, :exchange, :exchange_type
 
     # @return [Hash] Opciones específicas de instancia para exchange y queue.
     attr_accessor :exchange_options, :queue_options
@@ -38,7 +37,9 @@ module BugBunny
       attr_writer :exchange_options, :queue_options
 
       # @api private
-      def thread_config(key); Thread.current["bb_#{object_id}_#{key}"]; end
+      def thread_config(key)
+        Thread.current["bb_#{object_id}_#{key}"]
+      end
 
       # Resuelve la configuración buscando en el hilo, luego en la jerarquía de clases.
       # @param key [Symbol] Clave en el Thread.current.
@@ -47,29 +48,41 @@ module BugBunny
       def resolve_config(key, instance_var)
         val = thread_config(key)
         return val if val
+
         target = self
         while target <= BugBunny::Resource
           value = target.instance_variable_get(instance_var)
           return value.respond_to?(:call) ? value.call : value unless value.nil?
+
           target = target.superclass
         end
         nil
       end
 
       # @return [ConnectionPool, nil]
-      def connection_pool; resolve_config(:pool, :@connection_pool); end
+      def connection_pool
+        resolve_config(:pool, :@connection_pool)
+      end
 
       # @return [String] Nombre del exchange actual.
-      def current_exchange; resolve_config(:exchange, :@exchange) || raise(ArgumentError, "Exchange not defined for #{name}"); end
+      def current_exchange
+        resolve_config(:exchange, :@exchange) || raise(ArgumentError, "Exchange not defined for #{name}")
+      end
 
       # @return [String] Tipo de exchange ('direct', 'topic', 'fanout').
-      def current_exchange_type; resolve_config(:exchange_type, :@exchange_type) || 'direct'; end
+      def current_exchange_type
+        resolve_config(:exchange_type, :@exchange_type) || 'direct'
+      end
 
       # @return [Hash] Opciones de exchange específicas (Nivel 3 de la cascada).
-      def current_exchange_options; resolve_config(:exchange_options, :@exchange_options) || {}; end
+      def current_exchange_options
+        resolve_config(:exchange_options, :@exchange_options) || {}
+      end
 
       # @return [Hash] Opciones de cola específicas.
-      def current_queue_options; resolve_config(:queue_options, :@queue_options) || {}; end
+      def current_queue_options
+        resolve_config(:queue_options, :@queue_options) || {}
+      end
 
       # @return [String] Nombre del recurso para la construcción de rutas.
       def resource_name
@@ -126,7 +139,8 @@ module BugBunny
       # @param pool [ConnectionPool] Pool de conexiones.
       # @param exchange_options [Hash] Opciones de infraestructura.
       # @param queue_options [Hash] Opciones de cola.
-      def with(exchange: nil, routing_key: nil, exchange_type: nil, pool: nil, exchange_options: nil, queue_options: nil)
+      def with(exchange: nil, routing_key: nil, exchange_type: nil, pool: nil, exchange_options: nil,
+               queue_options: nil)
         keys = {
           exchange: "bb_#{object_id}_exchange",
           exchange_type: "bb_#{object_id}_exchange_type",
@@ -163,9 +177,7 @@ module BugBunny
         end
 
         def method_missing(method, *args, &block)
-          if @used
-            ::Kernel.raise ::BugBunny::Error, "ScopeProxy is single-use. Call .with again for a new context."
-          end
+          ::Kernel.raise ::BugBunny::Error, 'ScopeProxy is single-use. Call .with again for a new context.' if @used
           @used = true
           @target.public_send(method, *args, &block)
         ensure
@@ -176,11 +188,13 @@ module BugBunny
       # Calcula la routing key final.
       # @param id [String, nil] ID del recurso.
       # @return [String]
-      def calculate_routing_key(id = nil)
+      def calculate_routing_key(_id = nil)
         manual_rk = thread_config(:routing_key)
         return manual_rk if manual_rk
+
         static_rk = resolve_config(:routing_key, :@routing_key)
         return static_rk if static_rk.present?
+
         resource_name
       end
 
@@ -206,6 +220,7 @@ module BugBunny
         )
 
         return [] unless response['body'].is_a?(Array)
+
         response['body'].map do |attrs|
           inst = new(attrs)
           inst.persisted = true
@@ -218,7 +233,9 @@ module BugBunny
 
       # Devuelve todos los registros.
       # @return [Array<BugBunny::Resource>]
-      def all; where({}); end
+      def all
+        where({})
+      end
 
       # Busca un registro por ID (GET).
       # Mapea un 404 (NotFound) devolviendo un objeto nulo.
@@ -275,7 +292,7 @@ module BugBunny
       @exchange_options = self.class.thread_config(:exchange_options) || self.class.current_exchange_options
       @queue_options = self.class.thread_config(:queue_options) || self.class.current_queue_options
 
-      super(attributes)
+      super
     end
 
     # Limpia el rastreo de ActiveModel y nuestro rastreo dinámico interno.
@@ -301,24 +318,35 @@ module BugBunny
     end
 
     # @return [String]
-    def calculate_routing_key(id=nil); @routing_key || self.class.calculate_routing_key(id); end
+    def calculate_routing_key(id = nil)
+      @routing_key || self.class.calculate_routing_key(id)
+    end
 
     # @return [String]
-    def current_exchange; @exchange || self.class.current_exchange; end
+    def current_exchange
+      @exchange || self.class.current_exchange
+    end
 
     # @return [String]
-    def current_exchange_type; @exchange_type || self.class.current_exchange_type; end
+    def current_exchange_type
+      @exchange_type || self.class.current_exchange_type
+    end
 
     # @return [BugBunny::Client]
-    def bug_bunny_client; self.class.bug_bunny_client; end
+    def bug_bunny_client
+      self.class.bug_bunny_client
+    end
 
     # @return [Boolean]
-    def persisted?; !!@persisted; end
+    def persisted?
+      !!@persisted
+    end
 
     # Asignación masiva de atributos.
     # @param new_attributes [Hash]
     def assign_attributes(new_attributes)
       return if new_attributes.nil?
+
       new_attributes.each { |k, v| public_send("#{k}=", v) }
     end
 
@@ -375,7 +403,7 @@ module BugBunny
 
     def id=(value)
       if self.class.attribute_names.include?('id')
-        super(value)
+        super
       else
         @dynamic_changes << 'id' if @extra_attributes['id'] != value
         @extra_attributes['id'] = value
@@ -433,6 +461,7 @@ module BugBunny
     # @return [Boolean]
     def destroy
       return false unless persisted?
+
       run_callbacks(:destroy) do
         path = "#{self.class.resource_name}/#{id}"
         rk = calculate_routing_key(id)
@@ -459,6 +488,7 @@ module BugBunny
     # Carga errores remotos en el objeto local (utilizado al recibir 422).
     def load_remote_rabbit_errors(errors_hash)
       return if errors_hash.nil? || errors_hash.empty?
+
       if errors_hash.is_a?(String)
         errors.add(:base, errors_hash)
       else

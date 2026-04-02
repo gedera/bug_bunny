@@ -79,18 +79,16 @@ module BugBunny
       begin
         fire(request)
 
-        safe_log(:debug, "producer.rpc_waiting", correlation_id: cid, timeout_s: wait_timeout)
+        safe_log(:debug, 'producer.rpc_waiting', correlation_id: cid, timeout_s: wait_timeout)
 
         # Bloqueamos el hilo aquí hasta que llegue la respuesta o expire el timeout
         result = future.value(wait_timeout)
 
-        if result.nil?
-          raise BugBunny::RequestTimeout, "Timeout waiting for RPC: #{request.path} [#{request.method}]"
-        end
+        raise BugBunny::RequestTimeout, "Timeout waiting for RPC: #{request.path} [#{request.method}]" if result.nil?
 
         BugBunny.configuration.on_rpc_reply&.call(result[:headers])
 
-        safe_log(:debug, "producer.rpc_response_received", correlation_id: cid)
+        safe_log(:debug, 'producer.rpc_response_received', correlation_id: cid)
 
         parse_response(result[:body])
       ensure
@@ -113,12 +111,12 @@ module BugBunny
 
       # 📊 LOGGING DE OBSERVABILIDAD: Calculamos las opciones finales para mostrarlas en consola
       final_x_opts = BugBunny::Session::DEFAULT_EXCHANGE_OPTIONS
-                       .merge(BugBunny.configuration.exchange_options || {})
-                       .merge(request.exchange_options || {})
+                     .merge(BugBunny.configuration.exchange_options || {})
+                     .merge(request.exchange_options || {})
 
-      safe_log(:info, "producer.publish", method: verb, path: target, routing_key: rk, correlation_id: id)
-      safe_log(:debug, "producer.publish_detail", exchange: request.exchange, exchange_opts: final_x_opts)
-      safe_log(:debug, "producer.publish_payload", payload: payload.truncate(300)) if payload.is_a?(String)
+      safe_log(:info, 'producer.publish', method: verb, path: target, routing_key: rk, correlation_id: id)
+      safe_log(:debug, 'producer.publish_detail', exchange: request.exchange, exchange_opts: final_x_opts)
+      safe_log(:debug, 'producer.publish_payload', payload: payload.truncate(300)) if payload.is_a?(String)
     end
 
     # Serializa el mensaje para su transporte.
@@ -137,7 +135,7 @@ module BugBunny
     def parse_response(payload)
       JSON.parse(payload)
     rescue JSON::ParserError
-      raise BugBunny::InternalServerError, "Invalid JSON response"
+      raise BugBunny::InternalServerError, 'Invalid JSON response'
     end
 
     # Inicia el consumidor de respuestas RPC de forma perezosa (Lazy Initialization).
@@ -152,7 +150,7 @@ module BugBunny
       @reply_listener_mutex.synchronize do
         return if @reply_listener_started
 
-        safe_log(:debug, "producer.reply_listener_start")
+        safe_log(:debug, 'producer.reply_listener_start')
 
         # Consumimos sin ack (auto-ack) porque reply-to no soporta acks manuales de forma estándar
         @session.channel.basic_consume('amq.rabbitmq.reply-to', '', true, false, nil) do |_, props, body|
@@ -160,7 +158,7 @@ module BugBunny
           if (future = @pending_requests[cid])
             future.set({ body: body, headers: props.headers || {} })
           else
-            safe_log(:warn, "producer.rpc_response_orphaned", correlation_id: cid)
+            safe_log(:warn, 'producer.rpc_response_orphaned', correlation_id: cid)
           end
         end
         @reply_listener_started = true

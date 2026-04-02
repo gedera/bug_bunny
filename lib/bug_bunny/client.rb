@@ -31,6 +31,7 @@ module BugBunny
     # @raise [ArgumentError] Si no se proporciona un `pool`.
     def initialize(pool:)
       raise ArgumentError, "BugBunny::Client requiere un 'pool:'" if pool.nil?
+
       @pool = pool
       @stack = BugBunny::Middleware::Stack.new
       @delivery_mode = :rpc
@@ -96,7 +97,7 @@ module BugBunny
       req = BugBunny::Request.new(url)
 
       # 2. Syntactic Sugar: Mapeo de argumentos a atributos del Request
-      req.delivery_mode    = delivery_mode           # Default del cliente
+      req.delivery_mode    = delivery_mode # Default del cliente
       req.delivery_mode    = args[:delivery_mode]    if args[:delivery_mode]
       req.method           = args[:method]           if args[:method]
       req.body             = args[:body]             if args[:body]
@@ -109,8 +110,8 @@ module BugBunny
       req.exchange_options = args[:exchange_options] if args[:exchange_options]
       req.queue_options    = args[:queue_options]    if args[:queue_options]
 
-      req.params                                     = args[:params]   if args[:params]
-      req.headers.merge!(args[:headers])             if args[:headers]
+      req.params = args[:params] if args[:params]
+      req.headers.merge!(args[:headers]) if args[:headers]
 
       # 3. Configuración del usuario (bloque específico por request)
       yield req if block_given?

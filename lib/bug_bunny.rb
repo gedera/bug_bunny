@@ -25,6 +25,7 @@ require_relative 'bug_bunny/railtie' if defined?(Rails)
 # Actúa como espacio de nombres y punto de configuración global.
 module BugBunny
   extend BugBunny::Observability
+
   private_class_method :safe_log, :exception_metadata, :observability_name
 
   class << self
@@ -95,9 +96,9 @@ module BugBunny
 
     @global_connection.close if @global_connection.open?
     @global_connection = nil
-    
+
     @logger = configuration.logger
-    safe_log(:info, "bug_bunny.disconnect")
+    safe_log(:info, 'bug_bunny.disconnect')
   end
 
   # @api private

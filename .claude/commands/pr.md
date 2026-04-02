@@ -4,10 +4,21 @@ Creá un PR desde la rama actual hacia `main` usando `gh`.
 
 ## Pasos
 
-1. Verificá que hay commits en la rama que no están en main: `git log main..HEAD --oneline`
-2. Revisá todos los cambios del PR: `git diff main...HEAD`
-3. Determiná el tipo de cambio (feature, bugfix, refactor, docs, chore)
-4. Creá el PR con `gh pr create`:
+1. **Correr tests** — si fallan, detener todo:
+   ```bash
+   source /opt/homebrew/opt/chruby/share/chruby/chruby.sh && chruby ruby-3.3.8
+   bundle exec rspec
+   ```
+2. **autocorregir rubocop** - si fallan, detener todo
+   ```bash
+   bundle exec rubocop -a
+   ```
+3. **Ejecutar `/gem-ai-setup`** — genera/actualiza `docs/howto/`, `docs/ai/` y `README.md`.
+   Esperar aprobación del developer antes de continuar.
+4. Verificá que hay commits en la rama que no están en main: `git log main..HEAD --oneline`
+5. Revisá todos los cambios del PR: `git diff main...HEAD`
+6. Determiná el tipo de cambio (feature, bugfix, refactor, docs, chore)
+7. Creá el PR con `gh pr create`:
 
 ```bash
 gh pr create --title "tipo: descripción breve" --body "$(cat <<'EOF'

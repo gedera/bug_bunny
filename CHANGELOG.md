@@ -1,5 +1,18 @@
 # Changelog
 
+## [4.8.0] - 2026-04-02
+
+### ✨ AI Documentation Standard (v4.3)
+* **Gema de Referencia:** BugBunny se convierte en la implementación de referencia para el nuevo Estándar de Documentación AI.
+* **Knowledge Base (Capa 1):** Implementación completa del directorio `docs/ai/` con los 8 archivos de conocimiento estructurado (Glosario, Arquitectura, API, Errores, Antipatrones, FAQs) optimizados para RAG ( chunks ≤ 400 tokens).
+* **Distribución Automática:** Nueva tarea `rake bug_bunny:sync` que permite a cualquier microservicio consumidor sincronizar y referenciar la base de conocimientos de la gema en su propio `CLAUDE.md`.
+* **Generadores:** El `InstallGenerator` ahora inyecta automáticamente el bloque de configuración AI en el proyecto consumidor y crea la estructura de directorios bajo `app/bug_bunny`.
+* **Metadatos:** Inclusión de `documentation_uri` en el `gemspec` para descubrimiento automático de manuales por herramientas de IA externas.
+
+### 🛠️ Tooling & DX
+* **Comandos Enriquecidos:** `/release` y `/pr` ahora incluyen orquestación automatizada de calidad (RuboCop, Tests) y generación de documentación antes de proceder con el ciclo de Git.
+* **Skill Integration:** Soporte para la skill `rabbitmq-expert` localizada en `.agents/skills/` para asistir en decisiones técnicas profundas de AMQP.
+
 ## [4.7.0] - 2026-04-01
 
 ### ✨ New Features

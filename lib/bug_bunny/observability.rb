@@ -47,11 +47,11 @@ module BugBunny
                     when Numeric then val
                     when Hash
                       val.to_json
-                    when String  then val.include?(" ") ? val.inspect : val
-                    else val.to_s.include?(" ") ? val.to_s.inspect : val
+                    when String then val.include?(' ') ? val.inspect : val
+                    else val.to_s.include?(' ') ? val.to_s.inspect : val
                     end
         "#{k}=#{formatted}"
-      end.compact.join(" ")
+      end.compact.join(' ')
 
       @logger.send(level) { log_line }
     rescue StandardError
@@ -89,9 +89,9 @@ module BugBunny
     # @return [String] Nombre del componente en snake_case.
     def observability_name
       klass = is_a?(Class) ? self : self.class
-      klass.name.split("::").first.gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase
+      klass.name.split('::').first.gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase
     rescue StandardError
-      "unknown"
+      'unknown'
     end
   end
 end

@@ -57,27 +57,37 @@ module BugBunny
       # Registra una ruta para el verbo GET.
       # @param path [String, Symbol] Patrón de la URL.
       # @param to [String, nil] Destino (controlador#accion). Si es nil, se infiere del scope.
-      def get(path, to: nil);    add_route('GET', path, to: to); end
+      def get(path, to: nil)
+        add_route('GET', path, to: to)
+      end
 
       # Registra una ruta para el verbo POST.
       # @param path [String, Symbol] Patrón de la URL.
       # @param to [String, nil] Destino (controlador#accion). Si es nil, se infiere del scope.
-      def post(path, to: nil);   add_route('POST', path, to: to); end
+      def post(path, to: nil)
+        add_route('POST', path, to: to)
+      end
 
       # Registra una ruta para el verbo PUT.
       # @param path [String, Symbol] Patrón de la URL.
       # @param to [String, nil] Destino (controlador#accion). Si es nil, se infiere del scope.
-      def put(path, to: nil);    add_route('PUT', path, to: to); end
+      def put(path, to: nil)
+        add_route('PUT', path, to: to)
+      end
 
       # Registra una ruta para el verbo PATCH.
       # @param path [String, Symbol] Patrón de la URL.
       # @param to [String, nil] Destino (controlador#accion). Si es nil, se infiere del scope.
-      def patch(path, to: nil);  add_route('PATCH', path, to: to); end
+      def patch(path, to: nil)
+        add_route('PATCH', path, to: to)
+      end
 
       # Registra una ruta para el verbo DELETE.
       # @param path [String, Symbol] Patrón de la URL.
       # @param to [String, nil] Destino (controlador#accion). Si es nil, se infiere del scope.
-      def delete(path, to: nil); add_route('DELETE', path, to: to); end
+      def delete(path, to: nil)
+        add_route('DELETE', path, to: to)
+      end
 
       # @!endgroup
 
@@ -113,7 +123,7 @@ module BugBunny
         resource_path = name.to_s
 
         # Todas las acciones estándar disponibles
-        actions = [:index, :show, :create, :update, :destroy]
+        actions = %i[index show create update destroy]
 
         # Aplicamos los filtros si existen
         if only
@@ -131,10 +141,10 @@ module BugBunny
         delete "#{resource_path}/:id", to: "#{resource_path}#destroy" if actions.include?(:destroy)
 
         # Si se pasa un bloque, abrimos un Scope de Recurso para rutas anidadas
-        if block_given?
-          with_scope({ type: :resource, name: resource_path }) do
-            instance_eval(&block)
-          end
+        return unless block_given?
+
+        with_scope({ type: :resource, name: resource_path }) do
+          instance_eval(&block)
         end
       end
 
@@ -197,16 +207,16 @@ module BugBunny
       # @return [Hash, nil] Hash con `:controller`, `:action`, `:params` y `:namespace`, o `nil` si no hay match.
       def recognize(method, path)
         @routes.each do |route|
-          if route.match?(method, path)
-            extracted_params = route.extract_params(path)
+          next unless route.match?(method, path)
 
-            return {
-              controller: route.controller,
-              action: route.action,
-              params: extracted_params,
-              namespace: route.namespace
-            }
-          end
+          extracted_params = route.extract_params(path)
+
+          return {
+            controller: route.controller,
+            action: route.action,
+            params: extracted_params,
+            namespace: route.namespace
+          }
         end
 
         # Si llegamos aquí, es un 404 seguro.
@@ -238,7 +248,8 @@ module BugBunny
         end
 
         if final_to.nil?
-          raise ArgumentError, "Falta el destino 'to:' para la ruta #{method} '#{final_path}'. Usa la sintaxis 'controlador#accion'"
+          raise ArgumentError,
+                "Falta el destino 'to:' para la ruta #{method} '#{final_path}'. Usa la sintaxis 'controlador#accion'"
         end
 
         @routes << Route.new(method, final_path, to: final_to, namespace: current_namespace)

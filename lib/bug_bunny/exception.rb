@@ -67,7 +67,7 @@ module BugBunny
   # Indica que la solicitud fue bien formada pero contenía errores semánticos,
   # típicamente fallos de validación en el modelo remoto (ActiveRecord).
   #
-  # Esta excepción es "inteligente": intenta parsear automáticamente el cuerpo 
+  # Esta excepción es "inteligente": intenta parsear automáticamente el cuerpo
   # de la respuesta para extraer y exponer los mensajes de error de forma estructurada,
   # buscando por convención la clave `errors`.
   class UnprocessableEntity < ClientError

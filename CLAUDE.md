@@ -6,6 +6,18 @@ BugBunny es una gema Ruby que implementa una capa de enrutamiento RESTful sobre 
 
 **Problema que resuelve:** Eliminar el acoplamiento directo entre microservicios via HTTP, usando RabbitMQ como bus de mensajes con la misma ergonomía de un framework web.
 
+## Knowledge Base
+
+- **Docs AI:** `docs/ai/` — conocimiento estructurado para agentes
+- **Index:** `docs/ai/_index.md` — manifest con versión, audiencias y archivos
+- **Docs humanos:** `docs/_index.md` — manifest de toda la documentación (`howto/`, `concepts.md`)
+
+## Skills disponibles
+
+- `.agents/skills/rabbitmq-expert/` — arquitectura AMQP, exchanges, quorum queues, DLX, HA, clustering
+
+---
+
 ## Arquitectura
 
 ```

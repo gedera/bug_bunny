@@ -14,9 +14,7 @@ module BugBunny
     # 1. Configuración de Autoload
     initializer 'bug_bunny.add_autoload_paths' do |app|
       rabbit_path = File.join(app.root, 'app', 'rabbit')
-      if Dir.exist?(rabbit_path)
-        app.config.paths.add 'app/rabbit', eager_load: true
-      end
+      app.config.paths.add 'app/rabbit', eager_load: true if Dir.exist?(rabbit_path)
     end
 
     # 2. Gestión de Forks (Puma / Spring / otros)
@@ -25,9 +23,7 @@ module BugBunny
     # el hijo empiece a trabajar, para evitar compartir el mismo socket TCP.
     config.after_initialize do
       # Estrategia 1: Rails 7.1+ ForkTracker (La forma estándar moderna)
-      if defined?(ActiveSupport::ForkTracker)
-        ActiveSupport::ForkTracker.after_fork { BugBunny.disconnect }
-      end
+      ActiveSupport::ForkTracker.after_fork { BugBunny.disconnect } if defined?(ActiveSupport::ForkTracker)
 
       # Estrategia 2: Hook específico de Puma (Legacy)
       # Solo intentamos usarlo si la API 'events' está disponible (Puma < 5).
@@ -38,7 +34,12 @@ module BugBunny
       end
     end
 
-    # 3. Hook de Spring (Preloader)
+    # 3. Rake tasks (bug_bunny:sync)
+    rake_tasks do
+      load File.expand_path('../tasks/bug_bunny.rake', __dir__)
+    end
+
+    # 4. Hook de Spring (Preloader)
     if defined?(Spring)
       Spring.after_fork do
         BugBunny.disconnect

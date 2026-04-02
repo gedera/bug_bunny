@@ -35,7 +35,7 @@ module BugBunny
 
         case status
         when 200..299
-          return # Flujo normal (Success)
+          nil # Flujo normal (Success)
         when 400
           raise BugBunny::BadRequest, format_error_message(body)
         when 404
@@ -66,12 +66,12 @@ module BugBunny
       # @param body [Hash, String, nil] El cuerpo de la respuesta.
       # @return [String] Un mensaje de error limpio y estructurado.
       def format_error_message(body)
-        return "Unknown Error" if body.nil? || (body.respond_to?(:empty?) && body.empty?)
+        return 'Unknown Error' if body.nil? || (body.respond_to?(:empty?) && body.empty?)
         return body if body.is_a?(String)
 
         # Si el worker devolvió un JSON con una key 'error' (nuestra convención en Controller)
         if body.is_a?(Hash) && body['error']
-          detail = body['detail'] ? " - #{body['detail']}" : ""
+          detail = body['detail'] ? " - #{body['detail']}" : ''
           "#{body['error']}#{detail}"
         else
           # Fallback: Convertir todo el Hash a JSON string para que se vea claro en Sentry/Logs

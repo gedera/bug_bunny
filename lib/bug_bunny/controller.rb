@@ -40,7 +40,6 @@ module BugBunny
 
     # @!endgroup
 
-
     # ==========================================
     # INFRAESTRUCTURA DE FILTROS Y LOGS (HEREDABLES)
     # ==========================================
@@ -102,7 +101,7 @@ module BugBunny
       raise ArgumentError, "Need a handler. Supply 'with: :method' or a block." unless handler
 
       # Duplicamos el array del padre para no mutarlo al registrar reglas en el hijo
-      new_handlers = self.rescue_handlers.dup
+      new_handlers = rescue_handlers.dup
 
       klasses.each do |klass|
         new_handlers.unshift([klass, handler])
@@ -132,7 +131,6 @@ module BugBunny
 
     # Aplicamos automáticamente las etiquetas de logs a todas las acciones.
     around_action :apply_log_tags
-
 
     # ==========================================
     # INICIALIZACIÓN Y CICLO DE VIDA
@@ -170,25 +168,22 @@ module BugBunny
       core_execution = lambda do
         return unless run_before_actions(action_name)
 
-        if respond_to?(action_name)
-          public_send(action_name)
-        else
-          raise NameError, "Action '#{action_name}' not found in #{self.class.name}"
-        end
+        raise NameError, "Action '#{action_name}' not found in #{self.class.name}" unless respond_to?(action_name)
+
+        public_send(action_name)
 
         run_after_actions(action_name)
       end
 
       # Construir e invocar la cadena de responsabilidad (Middlewares/Around Actions)
       execution_chain = current_arounds.reverse.inject(core_execution) do |next_step, method_name|
-        lambda { send(method_name, &next_step) }
+        -> { send(method_name, &next_step) }
       end
 
       execution_chain.call
 
       # Si no hubo renderización explícita, devuelve 204 No Content
       rendered_response || { status: 204, headers: response_headers, body: nil }
-
     rescue StandardError => e
       handle_exception(e)
     end
@@ -223,12 +218,13 @@ module BugBunny
       end
 
       # Fallback genérico si la excepción no fue mapeada
-      safe_log(:error, "controller.unhandled_exception", backtrace: exception.backtrace.first(5).join(" | "), **exception_metadata(exception))
+      safe_log(:error, 'controller.unhandled_exception', backtrace: exception.backtrace.first(5).join(' | '),
+                                                         **exception_metadata(exception))
 
       {
         status: 500,
         headers: response_headers,
-        body: { error: "Internal Server Error", detail: exception.message, type: exception.class.name }
+        body: { error: 'Internal Server Error', detail: exception.message, type: exception.class.name }
       }
     end
 
@@ -294,10 +290,10 @@ module BugBunny
 
     # --- LÓGICA DE LOGGING ENCAPSULADA ---
 
-    def apply_log_tags
+    def apply_log_tags(&block)
       tags = compute_tags
       if defined?(Rails) && Rails.logger.respond_to?(:tagged) && tags.any?
-        Rails.logger.tagged(*tags) { yield }
+        Rails.logger.tagged(*tags, &block)
       else
         yield
       end

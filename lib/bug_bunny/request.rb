@@ -23,20 +23,11 @@ module BugBunny
   # @attr exchange_options [Hash] Opciones específicas para la declaración del Exchange en esta petición.
   # @attr queue_options [Hash] Opciones específicas para la declaración de la Cola en esta petición.
   class Request
-    attr_accessor :body
-    attr_accessor :headers
-    attr_accessor :params
-    attr_accessor :path
-    attr_accessor :method
-    attr_accessor :exchange
-    attr_accessor :exchange_type
-    attr_accessor :routing_key
-    attr_accessor :timeout
-    attr_accessor :delivery_mode
+    attr_accessor :body, :headers, :params, :path, :method, :exchange, :exchange_type, :routing_key, :timeout,
+                  :delivery_mode, :queue_options
 
     # Configuración de Infraestructura Específica
     attr_accessor :exchange_options
-    attr_accessor :queue_options
 
     # Metadatos AMQP Estándar
     attr_accessor :app_id, :content_type, :content_encoding, :priority,
@@ -61,6 +52,7 @@ module BugBunny
       @exchange_options = {}
       @queue_options = {}
     end
+
     # Combina el path con los params como query string.
     #
     # @return [String] El path completo con query string si hay params, o solo el path.

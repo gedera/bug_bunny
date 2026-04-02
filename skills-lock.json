@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "rabbitmq-expert": {
+      "source": "martinholovsky/claude-skills-generator",
+      "sourceType": "github",
+      "computedHash": "584e368d2811078acfb437c22ca07f1c93da52cbdcabcc8c24562128185c4b6b"
+    }
+  }
+}

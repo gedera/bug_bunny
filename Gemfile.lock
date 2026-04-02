@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    bug_bunny (4.6.2)
+    bug_bunny (4.7.0)
       activemodel (>= 6.1)
       activesupport (>= 6.1)
       bunny (~> 2.24)
