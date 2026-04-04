@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.8.1] - 2026-04-04
+
+### Mejoras internas
+* **Skills System:** Migración completa del sistema de documentación AI de `docs/` y `.claude/commands/` al nuevo estándar de skills. La documentación AI ahora se distribuye como `skill/SKILL.md` empaquetada en la gema, con 7 archivos de referencia detallados en `skill/references/`.
+* **CLAUDE.md simplificado:** Se eliminaron ~230 líneas de instrucciones hardcodeadas. `CLAUDE.md` ahora delega el conocimiento a las skills en `.agents/skills/` y `skill/`.
+* **Gemspec:** `documentation_uri` actualizado de `docs` a `skill/` para apuntar a la ubicación correcta de la documentación.
+* **Skills de desarrollo:** Se incorporan 7 skills locales en `.agents/skills/` (documentation-writer, gem-release, quality-code, sentry, skill-builder, skill-manager, yard) con `skills.yml` como manifiesto de dependencias.
+
 ## [4.8.0] - 2026-04-02
 
 ### ✨ AI Documentation Standard (v4.3)

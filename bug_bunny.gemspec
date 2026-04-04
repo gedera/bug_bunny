@@ -19,7 +19,7 @@ Gem::Specification.new do |spec|
   spec.metadata["homepage_uri"] = spec.homepage
   spec.metadata["source_code_uri"] = "https://github.com/gedera/bug_bunny"
   spec.metadata["changelog_uri"] = "https://github.com/gedera/bug_bunny/blob/main/CHANGELOG.md"
-  spec.metadata["documentation_uri"] = "https://github.com/gedera/bug_bunny/blob/v#{spec.version}/docs"
+  spec.metadata["documentation_uri"] = "https://github.com/gedera/bug_bunny/blob/v#{spec.version}/skill"
 
   gemspec = File.basename(__FILE__)
   spec.files = IO.popen(%w[git ls-files -z], chdir: __dir__, err: IO::NULL) do |ls|

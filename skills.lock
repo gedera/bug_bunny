@@ -1,0 +1,24 @@
+---
+synced_at: '2026-04-04 12:24:37'
+skills:
+- name: documentation-writer
+  scope: local
+  path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/documentation-writer"
+- name: gem-release
+  scope: local
+  path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/gem-release"
+- name: quality-code
+  scope: local
+  path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/quality-code"
+- name: rabbitmq-expert
+  scope: local
+  path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/rabbitmq-expert"
+- name: skill-builder
+  scope: local
+  path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/skill-builder"
+- name: skill-manager
+  scope: local
+  path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/skill-manager"
+- name: yard
+  scope: local
+  path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/yard"
