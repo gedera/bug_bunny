@@ -214,15 +214,17 @@ BugBunny.consumer_middlewares.use TracingMiddleware
 
 ## Observability
 
-All internal events are emitted as structured key=value logs compatible with Datadog, CloudWatch, and ELK.
+BugBunny implementa de forma nativa las [OpenTelemetry semantic conventions for messaging](https://opentelemetry.io/docs/specs/otel/trace/semantic-conventions/messaging/), inyectando automáticamente campos como `messaging_system`, `messaging_operation`, `messaging_destination_name` y `messaging_message_id` tanto en los headers AMQP como en los log events estructurados.
+
+Todos los eventos internos se emiten como logs `key=value` compatibles con Datadog, CloudWatch, ELK y ExisRay.
 
 ```
-component=bug_bunny event=consumer.message_processed status=200 duration_s=0.012 controller=NodesController action=show
+component=bug_bunny event=consumer.message_processed status=200 duration_s=0.012 messaging_operation=process controller=NodesController action=show
 component=bug_bunny event=consumer.execution_error error_class=RuntimeError error_message="..." duration_s=0.003
 component=bug_bunny event=consumer.connection_error attempt_count=2 retry_in_s=10 error_message="..."
 ```
 
-Sensitive keys (`password`, `token`, `secret`, `api_key`, `authorization`, etc.) are automatically filtered to `[FILTERED]` in all log output.
+Las claves sensibles (`password`, `token`, `secret`, `api_key`, `authorization`, etc.) se filtran automáticamente a `[FILTERED]` en toda la salida de logs.
 
 ---
 

@@ -79,7 +79,7 @@ module BugBunny
       begin
         fire(request)
 
-        safe_log(:debug, 'producer.rpc_waiting', correlation_id: cid, timeout_s: wait_timeout)
+        safe_log(:debug, 'producer.rpc_waiting', messaging_message_id: cid, timeout_s: wait_timeout)
 
         # Bloqueamos el hilo aquí hasta que llegue la respuesta o expire el timeout
         result = future.value(wait_timeout)
@@ -88,7 +88,8 @@ module BugBunny
 
         BugBunny.configuration.on_rpc_reply&.call(result[:headers])
 
-        safe_log(:debug, 'producer.rpc_response_received', correlation_id: cid)
+        safe_log(:debug, 'producer.rpc_response_received',
+                 messaging_system: 'rabbitmq', messaging_operation: 'receive', messaging_message_id: cid)
 
         parse_response(result[:body])
       ensure
@@ -109,13 +110,21 @@ module BugBunny
       rk = request.final_routing_key
       id = request.correlation_id
 
+      otel_fields = BugBunny::OTel.messaging_headers(
+        operation: 'publish',
+        destination: request.exchange,
+        routing_key: rk,
+        message_id: id
+      )
+
       # 📊 LOGGING DE OBSERVABILIDAD: Calculamos las opciones finales para mostrarlas en consola
       final_x_opts = BugBunny::Session::DEFAULT_EXCHANGE_OPTIONS
                      .merge(BugBunny.configuration.exchange_options || {})
                      .merge(request.exchange_options || {})
 
-      safe_log(:info, 'producer.publish', method: verb, path: target, routing_key: rk, correlation_id: id)
-      safe_log(:debug, 'producer.publish_detail', exchange: request.exchange, exchange_opts: final_x_opts)
+      safe_log(:info, 'producer.publish', method: verb, path: target, **otel_fields)
+      safe_log(:debug, 'producer.publish_detail', messaging_destination_name: request.exchange,
+                                                  exchange_opts: final_x_opts)
       safe_log(:debug, 'producer.publish_payload', payload: payload.truncate(300)) if payload.is_a?(String)
     end
 

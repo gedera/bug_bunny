@@ -18,13 +18,31 @@ consumer = BugBunny::Consumer.subscribe(
 ## Flujo de Procesamiento
 
 1. Escucha en la queue con `manual_ack: true`.
-2. Valida que el mensaje tenga header `type` (path).
-3. Parsea el método HTTP de headers (`x-http-method` o `method`).
-4. Reconoce la ruta con `BugBunny.routes.recognize(method, path)`.
-5. Resuelve el controlador validando herencia de `BugBunny::Controller`.
-6. Ejecuta consumer middlewares → controller callbacks → acción.
-7. Responde via `reply_to` si está presente (RPC).
-8. Hace `ack` del mensaje. En caso de error, `reject`.
+2. Extrae campos **OTel messaging** del mensaje para logs estructurados (sin mutar headers).
+3. Valida que el mensaje tenga header `type` (path).
+4. Parsea el método HTTP de headers (`x-http-method` o `method`).
+5. Emite log `consumer.message_received` con campos OTel (`messaging_operation: 'process'`).
+6. Reconoce la ruta con `BugBunny.routes.recognize(method, path)`.
+7. Resuelve el controlador validando herencia de `BugBunny::Controller`.
+8. Ejecuta consumer middlewares → controller callbacks → acción.
+9. Responde via `reply_to` si está presente (RPC), inyectando campos OTel (`messaging_operation: 'publish'`).
+10. Emite log `consumer.message_processed` con campos OTel y duraciones.
+11. Hace `ack` del mensaje. En caso de error, `reject`.
+
+## Observability: OTel Fields
+
+El consumer construye automáticamente el hash de campos OTel al inicio de `process_message`:
+
+```ruby
+otel_fields = BugBunny::OTel.messaging_headers(
+  operation: 'process',
+  destination: delivery_info.exchange,
+  routing_key: delivery_info.routing_key,
+  message_id: properties.correlation_id
+)
+```
+
+Estos campos se mergean en todos los eventos de log del ciclo de vida del mensaje, permitiendo que ExisRay los rastree sin necesidad de propagarlos manualmente en los headers del usuario.
 
 ## Lifecycle
 

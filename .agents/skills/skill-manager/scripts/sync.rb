@@ -27,7 +27,7 @@ module SkillsSync
         exit 1
       end
 
-      config = YAML.safe_load_file(config_path)
+      config = load_config(config_path)
       @local_skills_path = File.join(Dir.pwd, SKILLS_DIR)
       FileUtils.mkdir_p(@local_skills_path)
 
@@ -52,6 +52,15 @@ module SkillsSync
     end
 
     private
+
+    # --- Config parsing ---
+
+    # Lee skills.yml y expande variables de entorno ${VAR}
+    def load_config(path)
+      content = File.read(path)
+      content = content.gsub(/\$\{(\w+)\}/) { ENV[Regexp.last_match(1)].to_s }
+      YAML.safe_load(content)
+    end
 
     # --- Lock file ---
 
@@ -96,6 +105,9 @@ module SkillsSync
 
     # --- Scope resolution ---
 
+    # Retorna un hash { dest:, install: } donde install indica si hay que descargar.
+    # Si install es false (porque ya existe globalmente), dest contiene el path global
+    # para que igualmente se registre en el lock y no se borre en cleanup.
     def resolve_dest(name, scope)
       case scope
       when 'global'
@@ -109,16 +121,17 @@ module SkillsSync
           FileUtils.rm_rf(local_path)
         end
 
-        dest
+        { dest: dest, install: true }
       else # local o sin especificar
-        # Si existe global, saltear
+        # Si existe global, saltear la instalación pero registrar en el lock
         existing_global = find_global_path(name)
         if existing_global
-          puts "  #{name} — disponible globalmente en #{File.join(existing_global, name)}. Saltando."
-          return nil
+          global_dest = File.join(existing_global, name)
+          puts "  #{name} — disponible globalmente en #{global_dest}. Saltando."
+          return { dest: global_dest, install: false }
         end
 
-        File.join(@local_skills_path, name)
+        { dest: File.join(@local_skills_path, name), install: true }
       end
     end
 
@@ -139,12 +152,18 @@ module SkillsSync
 
     # --- Sync methods ---
 
+    # Nuevo formato: gems es un array de strings (nombres de gemas)
     def sync_gems(gems)
-      gems.each do |gem_config|
-        name = gem_config['name']
-        scope = gem_config['scope']
-        dest = resolve_dest(name, scope)
-        next unless dest
+      return unless gems.is_a?(Array)
+
+      gems.each do |name|
+        resolution = resolve_dest(name, 'local')
+        next unless resolution
+
+        unless resolution[:install]
+          record_lock(name, 'local', resolution[:dest])
+          next
+        end
 
         begin
           spec = Gem::Specification.find_by_name(name)
@@ -161,44 +180,71 @@ module SkillsSync
           next
         end
 
-        scope_label = scope == 'global' ? 'global' : 'local'
-        puts "  #{name} v#{spec.version} (#{scope_label})"
-        replace_dir(dest)
-        FileUtils.cp_r(Dir[File.join(skill_dir, '*')], dest)
-        record_lock(name, scope, dest)
+        puts "  #{name} v#{spec.version} (local)"
+        replace_dir(resolution[:dest])
+        FileUtils.cp_r(Dir[File.join(skill_dir, '*')], resolution[:dest])
+        record_lock(name, 'local', resolution[:dest])
       end
     end
 
+    # Nuevo formato: services es un Hash { nombre => config }
+    # Cada servicio tiene: repo (requerido), scope (opcional)
     def sync_services(services)
-      services.each do |service|
-        name = service['name']
-        scope = service['scope']
-        dest = resolve_dest(name, scope)
-        next unless dest
+      return unless services.is_a?(Hash)
 
-        repo = service['repo']
+      services.each do |name, service_config|
+        service_config ||= {}
+        scope = service_config['scope']
+        resolution = resolve_dest(name, scope)
+        next unless resolution
+
+        unless resolution[:install]
+          record_lock(name, scope, resolution[:dest])
+          next
+        end
+
+        repo = service_config['repo']
+        unless repo
+          puts "  WARNING: service '#{name}' no tiene 'repo' definido. Saltando."
+          next
+        end
+
         scope_label = scope == 'global' ? 'global' : 'local'
         puts "  #{name} (GitHub: #{repo}, skill/) [#{scope_label}]"
-        replace_dir(dest)
-        download_github_dir(repo, 'main', 'skill', dest)
-        record_lock(name, scope, dest)
+        replace_dir(resolution[:dest])
+        download_github_dir(repo, 'main', 'skill', resolution[:dest])
+        record_lock(name, scope, resolution[:dest])
       end
     end
 
+    # Nuevo formato: skills es un Hash { nombre => config }
+    # Cada skill tiene: repo (requerido), scope (opcional), path (opcional), environment (opcional)
     def sync_skills(skills)
-      skills.each do |skill|
-        name = skill['name']
-        scope = skill['scope']
-        dest = resolve_dest(name, scope)
-        next unless dest
+      return unless skills.is_a?(Hash)
 
-        repo = skill['repo']
-        remote_path = skill['path'] || "#{SKILLS_DIR}/#{name}"
+      skills.each do |name, skill_config|
+        skill_config ||= {}
+        scope = skill_config['scope']
+        resolution = resolve_dest(name, scope)
+        next unless resolution
+
+        unless resolution[:install]
+          record_lock(name, scope, resolution[:dest])
+          next
+        end
+
+        repo = skill_config['repo']
+        unless repo
+          puts "  WARNING: skill '#{name}' no tiene 'repo' definido. Saltando."
+          next
+        end
+
+        remote_path = skill_config['path'] || "skills/#{name}"
         scope_label = scope == 'global' ? 'global' : 'local'
         puts "  #{name} (GitHub: #{repo}, #{remote_path}/) [#{scope_label}]"
-        replace_dir(dest)
-        download_github_dir(repo, 'main', remote_path, dest)
-        record_lock(name, scope, dest)
+        replace_dir(resolution[:dest])
+        download_github_dir(repo, 'main', remote_path, resolution[:dest])
+        record_lock(name, scope, resolution[:dest])
       end
     end
 

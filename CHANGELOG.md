@@ -1,5 +1,11 @@
 # Changelog
 
+## [4.9.0] - 2026-04-05
+
+### ✨ New Features
+* **OTel messaging semantic conventions:** BugBunny ahora emite los campos del estándar [OpenTelemetry semantic conventions for messaging](https://opentelemetry.io/docs/specs/otel/trace/semantic-conventions/messaging/) tanto en los headers AMQP de publish/reply como en los log events del consumer. Los campos emitidos son `messaging.system` (`"rabbitmq"`), `messaging.operation` (`"publish"` / `"process"`), `messaging.destination.name`, `messaging.rabbitmq.destination.routing_key` y `messaging.message.id` (cuando hay `correlation_id`). Permite que dashboards OTel-native (Tempo, Jaeger, Honeycomb) rendericen correctamente los spans de RabbitMQ y que ExisRay los consuma automáticamente desde `properties.headers`.
+* **`BugBunny::OTel` module:** Nuevo módulo con las constantes de las claves OTel y el helper `messaging_headers` para construir el hash de campos. Los headers del usuario pueden sobrescribir valores OTel como escape hatch, pero `x-http-method` sigue siendo inmutable.
+
 ## [4.8.1] - 2026-04-04
 
 ### Mejoras internas

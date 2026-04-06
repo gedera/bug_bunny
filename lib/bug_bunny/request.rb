@@ -86,10 +86,22 @@ module BugBunny
     # **Importante:** Inyecta el verbo HTTP en los headers bajo la clave `x-http-method`.
     # Esto permite al Consumer enrutar correctamente a la acción del controlador.
     #
+    # También inyecta los campos de OTel semantic conventions for messaging
+    # (ver {BugBunny::OTel}) con `operation=publish`. Los headers del usuario
+    # pueden sobrescribir los valores OTel (escape hatch); `x-http-method`
+    # nunca se pisa porque es lo último en el merge.
+    #
     # @return [Hash] Opciones listas para pasar a `exchange.publish`.
     def amqp_options
-      # Inyectamos el verbo HTTP en los headers para el Router del Consumer
-      final_headers = headers.merge('x-http-method' => method.to_s.upcase)
+      otel_headers = BugBunny::OTel.messaging_headers(
+        operation: 'publish',
+        destination: exchange,
+        routing_key: final_routing_key,
+        message_id: correlation_id
+      )
+      # Orden del merge: OTel base -> headers del usuario -> x-http-method (inmutable)
+      # OTel keys son symbols internamente; los stringificamos para Bunny AMQP headers.
+      final_headers = otel_headers.transform_keys(&:to_s).merge(headers).merge('x-http-method' => method.to_s.upcase)
 
       {
         type: final_type,

@@ -9,3 +9,6 @@
 .env
 .claude/settings.json
 .claude/settings.local.json
+.agents/
+# Variables de entorno
+.env

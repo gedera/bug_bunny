@@ -53,41 +53,89 @@ Si no existe `skills.yml` en la raíz, crealo detectando dependencias en el `Gem
 # skills.yml — Manifiesto único de skills del proyecto
 
 # --- MCPs requeridos ---
-# Declara qué MCPs necesita el proyecto. Las skills verifican
-# disponibilidad antes de usarlos. Si falta alguno, avisan pero no se rompen.
+# Declara qué MCPs necesita el proyecto.
 
 mcps:
   - github
   - clickup
 
-# --- Dependencias (sync) ---
+# --- Gemas ---
+# Array de nombres. El sync busca skill/ en cada gema instalada.
 
-gems:              # Skills empaquetadas en gemas (copia local)
-  - name: mi_gema
+gems:
+  - mi_gema
+  - otra_gema
 
-services:          # Skills de microservicios (GitHub → skill/)
-  - name: mi_servicio
+# --- Servicios ---
+# Hash { nombre => config }. Descarga skill/ del repo remoto.
+
+services:
+  mi_servicio:
     repo: wispro/mi_servicio
 
-skills:            # Skills de repos GitHub (con path opcional)
-  # Sin path → usa convención .agents/skills/[name]/
-  - name: gem-release
-    repo: wispro/ai_knowledge
-  - name: skill-manager
-    repo: wispro/ai_knowledge
-  # Con path → para skills.sh u otros repos con estructura distinta
-  - name: rabbitmq-expert
+# --- Skills ---
+# Hash { nombre => config }. Formato estilo docker-compose.
+# Cada skill es una clave con su configuración.
+#
+# Claves disponibles:
+# - repo (requerido): org/repo de GitHub
+# - scope (opcional): global | local (default: local)
+# - path (opcional): path custom en el repo (default: skills/[nombre])
+# - environment (opcional): configuración específica de la skill
+
+skills:
+  skill-manager:
+    repo: sequre/ai_knowledge
+    scope: global
+  quality-code:
+    repo: sequre/ai_knowledge
+    scope: global
+  gem-release:
+    repo: sequre/ai_knowledge
+  service-release:
+    repo: sequre/ai_knowledge
+  skill-builder:
+    repo: sequre/ai_knowledge
+  yard:
+    repo: sequre/ai_knowledge
+  sentry:
+    repo: sequre/ai_knowledge
+    environment:
+      url: "https://sentry.cloud.wispro.co"
+      org: "wispro"
+      projects:
+        - billing-api
+        - billing-workers
+  agent-review:
+    repo: sequre/ai_knowledge
+    environment:
+      space_id: "90144913465"
+      list_id: "901415149921"
+  ai-reports:
+    repo: sequre/ai_knowledge
+    environment:
+      space_id: "90144913465"
+      bug_reports_list_id: "901415148810"
+      improvements_list_id: "901415148812"
+  # Skills externas con path custom
+  documentation-writer:
+    repo: github/awesome-copilot
+    path: skills/documentation-writer
+  rabbitmq-expert:
     repo: martinholovsky/claude-skills-generator
     path: skills/rabbitmq-expert
+```
 
-# --- Configuración de skills ---
-# Cada skill puede tener su sección de configuración específica.
-# Las skills leen su sección del skills.yml del proyecto.
+### Variables de entorno en skills.yml
+El parser expande `${VAR}` con el valor de la variable de entorno. Útil para tokens o IDs sensibles:
 
-sentry:
-  projects:
-    - billing-api
-    - billing-workers
+```yaml
+skills:
+  ai-reports:
+    repo: sequre/ai_knowledge
+    environment:
+      space_id: "${CLICKUP_SPACE_ID}"
+      bug_reports_list_id: "${CLICKUP_BUG_REPORTS_LIST}"
 ```
 
 *Mostrá diff y pedí confirmación.*
@@ -97,14 +145,17 @@ Asegurate de que el script de sync esté configurado para ejecutarse:
 - Agregá al final de `bin/setup`:
   ```bash
   ruby .agents/skills/skill-manager/scripts/sync.rb
+
   ```
 
 ### Paso 6 — Git
-- Agregá las skills de dependencias al `.gitignore` (cada entrada declarada en `skills.yml`):
+- Agregá `.agents/skills/` completo al `.gitignore`:
   ```gitignore
-  # Skills de dependencias (generadas por skill-manager sync)
-  .agents/skills/[dep-name]/
+  # Skills locales (descargadas por sync + propias del dev)
+  .agents/skills/
   ```
+- `.agents/skills/` es siempre local y no se commitea. Contiene skills descargadas por el sync y opcionalmente skills privadas del dev.
+- Si una skill debe ser compartida, se declara en `skills.yml` y se distribuye via sync.
 
 ### Paso 7 — CLAUDE.md
 El bloque "Knowledge Base" debe estar al **tope absoluto** del archivo:
@@ -112,7 +163,8 @@ El bloque "Knowledge Base" debe estar al **tope absoluto** del archivo:
 ## Knowledge Base
 - **Mandato Crítico:** Las skills en `.agents/skills/` incluyen conocimiento de dependencias.
 - **Protocolo de Consulta:** El agente DEBE leer la skill de una dependencia antes de responder sobre ella.
-- **Rebuild:** `ruby .agents/skills/skill-manager/scripts/sync.rb` actualiza las skills de dependencias.
+- **Rebuild:** `ruby .agents/skills/skill-manager/scripts/sync.rb
+` actualiza las skills de dependencias.
 ```
 
 ---
@@ -125,11 +177,12 @@ El script `scripts/sync.rb` lee `skills.yml` y sincroniza todas las skills de de
 |---|---|---|
 | `gems` | Gema Ruby instalada | Copia local desde `gem_dir/skill/` |
 | `services` | Repo de microservicio | GitHub API → `skill/` del repo |
-| `skills` | Repo GitHub | GitHub API → path configurable (default: `.agents/skills/[name]/`) |
+| `skills` | Repo GitHub | GitHub API → path configurable (default: `skills/[name]/`) |
 
 ### Ejecución directa
 ```bash
 ruby .agents/skills/skill-manager/scripts/sync.rb
+
 ```
 
 ### Requisitos del script

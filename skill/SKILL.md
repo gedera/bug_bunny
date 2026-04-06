@@ -68,8 +68,31 @@ Skill de conocimiento completo sobre BugBunny. Consultame para cualquier pregunt
 | `BugBunny::Routing::RouteSet` | DSL de rutas: `resources`, `namespace`, `member`, `collection`. |
 | `BugBunny::Observability` | Mixin de logging estructurado. `safe_log` nunca lanza excepciones. Filtra keys sensibles. |
 | `BugBunny::Middleware::Stack` | Builder de middlewares client-side (onion architecture tipo Faraday). |
-| `BugBunny::Request` | Value object del mensaje saliente con metadata AMQP completa. |
-| `BugBunny::Railtie` | Integración Rails: autoload de `app/rabbit`, fork safety (Puma, Spring). |
+| BugBunny::Request | Value object del mensaje saliente con metadata AMQP completa. |
+| BugBunny::OTel | Helpers para emitir campos siguiendo las OTel semantic conventions for messaging. |
+| BugBunny::Railtie | Integración Rails: autoload de `app/rabbit`, fork safety (Puma, Spring). |
+
+---
+
+## Observability: OpenTelemetry
+
+BugBunny implementa las [OpenTelemetry semantic conventions for messaging](https://opentelemetry.io/docs/specs/otel/trace/semantic-conventions/messaging/) de forma nativa para garantizar la trazabilidad entre servicios en entornos distribuidos.
+
+### Campos Estándar (Flat-naming)
+
+| Campo | Valor / Origen | Propósito |
+|---|---|---|
+| `messaging_system` | `"rabbitmq"` | Identifica el broker. |
+| `messaging_operation` | `"publish"`, `"receive"`, `"process"` | Tipo de interacción. |
+| `messaging_destination_name` | `exchange_name` | Exchange destino (o `""` para default). |
+| `messaging_routing_key` | `routing_key` | Clave de ruteo final. |
+| `messaging_message_id` | `correlation_id` | ID único para correlación y traza. |
+
+### Inyección y Extracción
+
+- **Publisher:** Inyecta estos campos en los headers AMQP bajo el prefijo `messaging_`. El usuario puede sobrescribirlos como *escape hatch* desde `headers`.
+- **Consumer:** Extrae los campos de los logs estructurados sin mutar los headers originales. Los eventos `consumer.message_received` y `consumer.message_processed` incluyen estos campos automáticamente.
+- **RPC Reply:** El consumer inyecta los mismos campos en el reply para cerrar el ciclo de traza del lado del cliente.
 
 ---
 

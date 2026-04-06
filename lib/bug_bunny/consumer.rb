@@ -152,6 +152,15 @@ module BugBunny
     def process_message(delivery_info, properties, body)
       start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
+      # Campos OTel semantic conventions para los log events del consumer.
+      # Se mergean con ** en los safe_log de recepción y procesamiento.
+      otel_fields = BugBunny::OTel.messaging_headers(
+        operation: 'process',
+        destination: delivery_info.exchange,
+        routing_key: delivery_info.routing_key,
+        message_id: properties.correlation_id
+      )
+
       # 1. Validación de Headers (URL path)
       path = properties.type || (properties.headers && properties.headers['path'])
 
@@ -166,7 +175,7 @@ module BugBunny
       http_method = (headers_hash['x-http-method'] || headers_hash['method'] || 'GET').to_s.upcase
 
       safe_log(:info, 'consumer.message_received', method: http_method, path: path,
-                                                   routing_key: delivery_info.routing_key)
+                                                   routing_key: delivery_info.routing_key, **otel_fields)
       safe_log(:debug, 'consumer.message_received_body', body: body.truncate(200))
 
       # ===================================================================
@@ -239,10 +248,11 @@ module BugBunny
       session.channel.ack(delivery_info.delivery_tag)
 
       safe_log(:info, 'consumer.message_processed',
-               status: response_payload[:status],
+               response_status: response_payload[:status],
                duration_s: duration_s(start_time),
                controller: controller_class_name,
-               action: route_info[:action])
+               action: route_info[:action],
+               **otel_fields)
     rescue StandardError => e
       safe_log(:error, 'consumer.execution_error', duration_s: duration_s(start_time), **exception_metadata(e))
       safe_log(:debug, 'consumer.execution_error_backtrace', backtrace: e.backtrace.first(5).join(' | '))
@@ -257,14 +267,20 @@ module BugBunny
     # @param correlation_id [String] ID para correlacionar la respuesta con la petición original.
     # @return [void]
     def reply(payload, reply_to, correlation_id)
-      safe_log(:debug, 'consumer.rpc_reply', reply_to: reply_to, correlation_id: correlation_id)
+      safe_log(:debug, 'consumer.rpc_reply', reply_to: reply_to, messaging_message_id: correlation_id)
+      otel_headers = BugBunny::OTel.messaging_headers(
+        operation: 'publish',
+        destination: '',
+        routing_key: reply_to,
+        message_id: correlation_id
+      )
       extra_headers = BugBunny.configuration.rpc_reply_headers&.call || {}
       session.channel.default_exchange.publish(
         payload.to_json,
         routing_key: reply_to,
         correlation_id: correlation_id,
         content_type: 'application/json',
-        headers: extra_headers
+        headers: otel_headers.transform_keys(&:to_s).merge(extra_headers)
       )
     end
 

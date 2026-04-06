@@ -1,18 +1,24 @@
 ---
-synced_at: '2026-04-04 12:24:37'
+synced_at: '2026-04-05 13:40:39'
 skills:
+- name: agent-review
+  scope: local
+  path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/agent-review"
+- name: ai-reports
+  scope: local
+  path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/ai-reports"
 - name: documentation-writer
   scope: local
   path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/documentation-writer"
+- name: find-skills
+  scope: local
+  path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/find-skills"
 - name: gem-release
   scope: local
   path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/gem-release"
 - name: quality-code
   scope: local
   path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/quality-code"
-- name: rabbitmq-expert
-  scope: local
-  path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/rabbitmq-expert"
 - name: skill-builder
   scope: local
   path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/skill-builder"

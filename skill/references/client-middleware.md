@@ -107,6 +107,23 @@ El método `call` del `Base` invoca `on_request`, delega a `@app.call`, y luego 
 
 **JsonResponse** — Auto-parsea `response['body']` de String a Hash/Array. Aplica `HashWithIndifferentAccess` si disponible.
 
+## OpenTelemetry: Publisher Injection
+
+El `Producer` (vía `Request#amqp_options`) inyecta automáticamente los campos de OTel semantic conventions en los headers AMQP del mensaje saliente.
+
+```ruby
+# Headers inyectados automáticamente
+{
+  'messaging_system' => 'rabbitmq',
+  'messaging_operation' => 'publish',
+  'messaging_destination_name' => 'exchange_name',
+  'messaging_routing_key' => 'rk',
+  'messaging_message_id' => 'uuid'
+}
+```
+
+El orden de merge es: **OTel base** → **headers del usuario** → **x-http-method**. Esto permite al desarrollador sobrescribir valores de OTel si es necesario, pero garantiza que el ruteo interno (`x-http-method`) se mantenga íntegro.
+
 ## Request Object
 
 Value object con toda la metadata AMQP:

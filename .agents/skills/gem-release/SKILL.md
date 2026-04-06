@@ -20,7 +20,7 @@ Ejecutá `quality-code` para validar linting, tests, YARD incremental y skill.
 No asumas rutas fijas. Investigá el entorno:
 - Detectá el nombre de la gema del `.gemspec`.
 - Localizá el archivo de versión (`lib/**/version.rb`).
-- Leé la versión actual.
+- **Versión actual:** Obtené el último tag publicado en el remoto (`git tag --sort=-v:refname | head -1` o `git ls-remote --tags origin`). El tag remoto es la fuente de verdad — NO leer `version.rb` para determinar la versión actual, ya que puede estar modificado localmente.
 - **Análisis de cambios:** Revisá **todas** las fuentes de cambios:
   1. Commits desde el último tag: `git log [último-tag]...HEAD`
   2. Diff commiteado contra el tag: `git diff [último-tag]...HEAD`
@@ -50,10 +50,12 @@ No asumas rutas fijas. Investigá el entorno:
    - `git commit -m "release: v[NUEVA_VERSION]"`
    - `git tag -a v[NUEVA_VERSION] -m "Version [NUEVA_VERSION]"`
 
-### Paso 5 — Publicación (Requiere confirmación final)
-- Construí la gema: `gem build [nombre].gemspec`
-- Empujá a RubyGems: `gem push [nombre]-[NUEVA_VERSION].gem`
-- Eliminá el artefacto `.gem` local después de subirlo.
+### Paso 5 — Push (Requiere confirmación)
+Mostrá un resumen del commit y el tag creados. Esperá confirmación explícita antes de pushear.
+- `git push origin main`
+- `git push origin v[NUEVA_VERSION]`
+
+**Nota:** No es necesario hacer `gem build` ni `gem push` manualmente. Un GitHub Action se encarga de buildear y publicar la gema en RubyGems cuando detecta el tag.
 
 ---
 

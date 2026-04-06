@@ -210,11 +210,72 @@ Si el catálogo es extenso, mantener los errores más comunes acá y extraer el 
 
 ## Paso 4 — Actualizar README.md
 
-Actualizá `README.md` (máx 150 líneas) con:
-- Descripción en una línea.
-- Setup básico y Quick start.
-- Features principales.
-- Link a `skill/SKILL.md` para conocimiento profundo.
+Invocá la skill `documentation-writer` para auditar y actualizar el README.
+
+**Regla fundamental:** El README es para **humanos** (devs que usan la gema/servicio). La skill (`skill/`) es para **agentes**. Son audiencias distintas. **Nunca referenciar `skill/` desde el README.**
+
+### README de una gema (máx 150 líneas)
+
+```markdown
+# [Nombre de la gema]
+
+Descripción en una línea.
+
+## Instalación
+
+gem 'nombre', '~> X.X'
+
+## Quick Start
+
+[Ejemplo mínimo funcional — copiar, pegar, funciona]
+
+## Uso
+
+[Ejemplos de las operaciones principales]
+
+## Configuración
+
+[Bloque de configuración con opciones, defaults y descripción]
+
+## Contribuir
+
+[Cómo correr tests, linting, etc.]
+```
+
+### README de un servicio (máx 150 líneas)
+
+```markdown
+# [Nombre del servicio]
+
+Descripción en una línea.
+
+## Setup
+
+[Pasos para levantar el servicio localmente: bin/setup, docker, etc.]
+
+## Endpoints / Contratos
+
+[Resumen de los endpoints o queues principales]
+
+## Variables de entorno
+
+[Lista de env vars necesarias]
+
+## Testing
+
+[Cómo correr tests]
+
+## Deploy
+
+[Cómo se despliega: branch, tag, Codefresh]
+```
+
+### Qué NO poner en el README
+- Links a `skill/` ni a `skill/SKILL.md`
+- Documentación interna para agentes
+- Diagramas ASCII extensos (esos van en la skill)
+- Catálogo completo de errores (eso va en la skill)
+- FAQ técnico detallado (eso va en la skill)
 
 ---
 
