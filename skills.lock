@@ -1,5 +1,5 @@
 ---
-synced_at: '2026-04-05 13:40:39'
+synced_at: '2026-04-06 14:08:54'
 skills:
 - name: agent-review
   scope: local
@@ -19,6 +19,9 @@ skills:
 - name: quality-code
   scope: local
   path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/quality-code"
+- name: rabbitmq-expert
+  scope: local
+  path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/rabbitmq-expert"
 - name: skill-builder
   scope: local
   path: "/Users/gabriel/src/gems/bug_bunny/.agents/skills/skill-builder"

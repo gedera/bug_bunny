@@ -38,3 +38,7 @@ skills:
     repo: vercel-labs/skills
     path: skills/find-skills
     scope: local
+  rabbitmq-expert:
+    repo: martinholovsky/claude-skills-generator
+    path: skills/rabbitmq-expert
+    scope: local
