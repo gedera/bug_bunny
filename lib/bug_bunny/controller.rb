@@ -165,7 +165,7 @@ module BugBunny
       current_arounds = resolve_callbacks(self.class.around_actions, action_name)
 
       # Definir el núcleo de ejecución
-      core_execution = lambda do
+      core_execution = proc do
         return unless run_before_actions(action_name)
 
         raise NameError, "Action '#{action_name}' not found in #{self.class.name}" unless respond_to?(action_name)

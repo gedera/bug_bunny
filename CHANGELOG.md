@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.9.1] - 2026-04-06
+
+### Correcciones
+- Corregir `ArgumentError` en `Controller#process` con ActiveSupport 8.1: `Rails.logger.tagged` ahora pasa el logger como argumento al bloque (`yield self`), lo que causa error de aridad en lambdas estrictos. Se reemplaza `lambda do` por `proc do` en `core_execution` para ignorar argumentos extra. Compatible con Rails 6, 7 y 8. — @Gabriel
+
 ## [4.9.0] - 2026-04-05
 
 ### ✨ New Features
