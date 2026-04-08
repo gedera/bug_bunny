@@ -176,5 +176,34 @@ RSpec.describe BugBunny::Routing::Route do
         expect(route_not_found_event[:kwargs][:path]).to eq('services/otaigccd59q0k7kxb1h193go2/restart')
       end
     end
+
+    context 'when properties.type includes query string' do
+      let(:properties) do
+        double('properties',
+               type: 'secrets?q%5Bname%5D=postgres_password',
+               headers: { 'x-http-method' => 'GET' },
+               correlation_id: 'corr-abc-123',
+               reply_to: nil,
+               content_type: 'application/json')
+      end
+
+      it 'strips query string before route recognition' do
+        allow(BugBunny.routes).to receive(:recognize).and_return(nil)
+
+        test_consumer.send(:process_message, delivery_info, properties, '')
+
+        expect(BugBunny.routes).to have_received(:recognize).with('GET', 'secrets')
+      end
+
+      it 'logs route_not_found with clean path (without query string)' do
+        allow(BugBunny.routes).to receive(:recognize).and_return(nil)
+
+        test_consumer.send(:process_message, delivery_info, properties, '')
+
+        route_not_found_event = logged_events.find { |e| e[:event] == 'consumer.route_not_found' }
+        expect(route_not_found_event).not_to be_nil
+        expect(route_not_found_event[:kwargs][:path]).to eq('secrets')
+      end
+    end
   end
 end

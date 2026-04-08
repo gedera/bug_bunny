@@ -184,17 +184,18 @@ module BugBunny
       normalized_path = path.gsub(%r{^/|/$}, '')
 
       uri = URI.parse("http://dummy/#{normalized_path}")
+      clean_path = uri.path.delete_prefix('/dummy/').delete_prefix('/')
 
       # Extraemos query params (ej. /nodes?status=active)
       query_params = uri.query ? Rack::Utils.parse_nested_query(uri.query) : {}
       query_params = query_params.with_indifferent_access if defined?(ActiveSupport::HashWithIndifferentAccess)
 
       # Le preguntamos al motor de rutas global quién debe manejar esto
-      route_info = BugBunny.routes.recognize(http_method, normalized_path)
+      route_info = BugBunny.routes.recognize(http_method, clean_path)
 
       if route_info.nil?
-        safe_log(:warn, 'consumer.route_not_found', method: http_method, path: normalized_path)
-        handle_fatal_error(properties, 404, 'Not Found', "No route matches [#{http_method}] \"#{normalized_path}\"")
+        safe_log(:warn, 'consumer.route_not_found', method: http_method, path: clean_path)
+        handle_routing_error(properties, "No route matches [#{http_method}] \"#{clean_path}\"")
         session.channel.reject(delivery_info.delivery_tag, false)
         return
       end
@@ -213,7 +214,7 @@ module BugBunny
         controller_class = controller_class_name.constantize
       rescue NameError
         safe_log(:warn, 'consumer.controller_not_found', controller: controller_class_name)
-        handle_fatal_error(properties, 404, 'Not Found', "Controller #{controller_class_name} not found")
+        handle_routing_error(properties, "Controller #{controller_class_name} not found")
         session.channel.reject(delivery_info.delivery_tag, false)
         return
       end
@@ -300,6 +301,22 @@ module BugBunny
     # @param detail [String] Detalle del error.
     # @param exception [StandardError, nil] Excepción original (para status 500).
     # @api private
+    # Maneja errores de enrutamiento (ruta o controller no encontrado).
+    #
+    # Envía una respuesta 404 con `error_type: 'routing_error'` para que el
+    # middleware del productor pueda levantar {BugBunny::RoutingError} en vez
+    # de un {BugBunny::NotFound} genérico.
+    #
+    # @param properties [Bunny::MessageProperties] Headers y propiedades AMQP.
+    # @param detail [String] Descripción del error de routing.
+    # @api private
+    def handle_routing_error(properties, detail)
+      return unless properties.reply_to
+
+      body = { error: 'Not Found', detail: detail, error_type: 'routing_error' }
+      reply({ status: 404, body: body }, properties.reply_to, properties.correlation_id)
+    end
+
     def handle_fatal_error(properties, status, error_title, detail, exception = nil)
       return unless properties.reply_to
 

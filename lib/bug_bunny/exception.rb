@@ -35,6 +35,15 @@ module BugBunny
   # El recurso solicitado (o la ruta RPC) no existe en el servidor remoto.
   class NotFound < ClientError; end
 
+  # Error 404 específico de enrutamiento.
+  # Se lanza cuando el servicio remoto no tiene una ruta registrada para el verbo y path solicitados.
+  # Análogo a `ActionController::RoutingError` en Rails.
+  #
+  # @example
+  #   rescue BugBunny::RoutingError => e
+  #     e.message # => 'No route matches [GET] "secrets"'
+  class RoutingError < NotFound; end
+
   # Error 406: Not Acceptable.
   # El servidor no puede generar una respuesta con las características de contenido aceptadas.
   class NotAcceptable < ClientError; end

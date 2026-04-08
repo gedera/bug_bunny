@@ -39,7 +39,7 @@ module BugBunny
         when 400
           raise BugBunny::BadRequest, format_error_message(body)
         when 404
-          raise BugBunny::NotFound
+          raise_not_found(body)
         when 406
           raise BugBunny::NotAcceptable
         when 408
@@ -85,6 +85,20 @@ module BugBunny
           # Fallback: Convertir todo el Hash a JSON string para que se vea claro en Sentry/Logs
           body.to_json
         end
+      end
+
+      # Distingue un error de routing (ruta/controller no existe en el servicio remoto)
+      # de un 404 genérico de recurso no encontrado.
+      #
+      # @param body [Hash, String, nil] El cuerpo de la respuesta 404.
+      # @raise [BugBunny::RoutingError] Si el consumer marcó `error_type: 'routing_error'`.
+      # @raise [BugBunny::NotFound] Para 404 genéricos.
+      def raise_not_found(body)
+        if body.is_a?(Hash) && body['error_type'] == 'routing_error'
+          raise BugBunny::RoutingError, format_error_message(body)
+        end
+
+        raise BugBunny::NotFound, format_error_message(body)
       end
 
       # Maneja códigos de error genéricos no mapeados explícitamente en el `case`.
