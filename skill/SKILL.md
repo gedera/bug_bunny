@@ -238,6 +238,10 @@ No registrar consumer middlewares durante la ejecución de `call()`. El stack to
 **Causa:** Fallo de validación en el servicio remoto.
 **Resolución:** `resource.save` devuelve `false`. Acceder a `resource.errors` o `rescue` con `e.error_messages`.
 
+### BugBunny::RemoteError (500)
+**Causa:** Excepción no manejada en el controller remoto. Se serializa y propaga al cliente RPC con clase, mensaje y backtrace originales.
+**Resolución:** `rescue BugBunny::RemoteError => e` y acceder a `e.original_class`, `e.original_message`, `e.original_backtrace`. Revisar logs del consumer (`event=controller.unhandled_exception`).
+
 ### BugBunny::CommunicationError
 **Causa:** Fallo de conexión o reconexión agotada.
 **Resolución:** Verificar conectividad a RabbitMQ. Revisar `max_reconnect_attempts` y logs de reconexión.

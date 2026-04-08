@@ -83,7 +83,12 @@ module BugBunny
   # @raise [Bunny::TCPConnectionFailed] Si no se puede conectar al servidor.
   def self.create_connection(**options)
     conn_options = merge_connection_options(options)
-    Bunny.new(conn_options).tap(&:start)
+    Bunny.new(conn_options).tap do |conn|
+      conn.after_recovery_completed do
+        safe_log(:info, 'bug_bunny.connection_recovered', host: conn_options[:host])
+      end
+      conn.start
+    end
   end
 
   # Cierra la conexión global si existe.

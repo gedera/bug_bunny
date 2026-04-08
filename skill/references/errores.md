@@ -86,18 +86,36 @@ end
 
 ### BugBunny::RemoteError (500)
 **Causa:** Excepción no manejada en el controller remoto. El error se serializa y propaga al cliente RPC.
+
+**Flujo completo:**
+1. El controller remoto lanza una excepción (ej: `TypeError`).
+2. `BugBunny::Controller#handle_exception` la captura y serializa con `RemoteError.serialize(exception)` → `{ class:, message:, backtrace: }` (máx 25 líneas).
+3. El consumer responde con status 500 y el campo `bug_bunny_exception` en el body.
+4. El middleware `RaiseError` del cliente detecta `bug_bunny_exception`, reconstituye un `BugBunny::RemoteError` y lo lanza localmente.
+
 **Acceso a detalles:**
 ```ruby
+# Con Client directo
 begin
-  client.request('users/42')
+  client.request('users/42', method: :get)
 rescue BugBunny::RemoteError => e
-  e.original_class     # String: clase original (ej: "TypeError")
-  e.original_message  # String: mensaje original
-  e.original_backtrace # Array<String>: backtrace original
+  e.original_class     # => "TypeError"
+  e.original_message   # => "nil can't be coerced into Integer"
+  e.original_backtrace # => Array<String> (backtrace del servicio remoto)
+  e.to_s               # => "BugBunny::RemoteError(TypeError): nil can't be coerced into Integer"
+end
+
+# Con Resource ORM
+begin
+  RemoteNode.find('node-123')
+rescue BugBunny::RemoteError => e
+  Rails.logger.error("Remote #{e.original_class}: #{e.original_message}")
 end
 ```
-**Serialización:** El controller captura excepciones con `rescue_from` → `handle_exception` → serializa con clase, mensaje y primeras 25 líneas del backtrace.
-**Propagación:** El middleware `RaiseError` del cliente reconstituye `RemoteError` y la lanza localmente.
+
+**Compatibilidad:** Si la respuesta 500 no contiene `bug_bunny_exception` (ej: servicio remoto con versión anterior de BugBunny), se lanza `BugBunny::InternalServerError` en su lugar.
+
+**Herencia:** `RemoteError < ServerError < Error < StandardError`. Se puede capturar con `rescue BugBunny::ServerError` para atrapar tanto `RemoteError` como `InternalServerError`.
 
 ## Formato de Mensajes de Error
 

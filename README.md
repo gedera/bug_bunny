@@ -228,6 +228,57 @@ Las claves sensibles (`password`, `token`, `secret`, `api_key`, `authorization`,
 
 ---
 
+## Error Handling
+
+BugBunny maps RabbitMQ responses to a semantic exception hierarchy, similar to how HTTP clients handle status codes.
+
+### Exception Hierarchy
+
+```
+BugBunny::Error
+├── ClientError (4xx)
+│   ├── BadRequest (400)
+│   ├── NotFound (404)
+│   ├── NotAcceptable (406)
+│   ├── RequestTimeout (408)
+│   ├── Conflict (409)
+│   └── UnprocessableEntity (422)
+└── ServerError (5xx)
+    ├── InternalServerError (500+)
+    └── RemoteError (500)
+```
+
+### Remote Exception Propagation
+
+When a controller raises an unhandled exception, BugBunny serializes it and sends it back to the caller as a 500 response. The client-side middleware reconstructs it as a `BugBunny::RemoteError` with full access to the original exception details:
+
+```ruby
+begin
+  node = RemoteNode.find('node-123')
+rescue BugBunny::RemoteError => e
+  e.original_class     # => "TypeError"
+  e.original_message   # => "nil can't be coerced into Integer"
+  e.original_backtrace # => Array<String> from the remote service
+rescue BugBunny::NotFound
+  # Resource doesn't exist
+rescue BugBunny::RequestTimeout
+  # Consumer didn't respond in time
+end
+```
+
+### Validation Errors
+
+`Resource#save` returns `false` on validation failure and loads remote errors into the model:
+
+```ruby
+order = RemoteOrder.new(total: -1)
+unless order.save
+  order.errors.full_messages # => ["total must be greater than 0"]
+end
+```
+
+---
+
 ## Documentation
 
 - [Concepts](docs/concepts.md) — What BugBunny is, AMQP in 5 minutes, RPC vs fire-and-forget
