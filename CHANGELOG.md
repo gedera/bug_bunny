@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.11.0] - 2026-04-08
+
+### Correcciones
+- **Query string en route matching:** El consumer incluía el query string como parte del path al hacer route matching (ej. `secrets?q%5Bname%5D=postgres_password`), causando 404 en rutas válidas con query params. Ahora se separa el path limpio via `URI.parse` antes de invocar `RouteSet#recognize`. — @Gabriel
+
+### ✨ New Features
+- **`BugBunny::RoutingError`:** Nueva excepción `RoutingError < NotFound` análoga a `ActionController::RoutingError` en Rails. Permite al productor distinguir "la ruta no existe en el servicio remoto" de "el recurso no fue encontrado". El consumer ahora envía `error_type: 'routing_error'` en el body del 404 cuando la ruta o el controller no existen, y el middleware `RaiseError` levanta `RoutingError` con el detalle del error. `rescue BugBunny::NotFound` sigue capturando ambos casos. — @Gabriel
+
 ## [4.10.2] - 2026-04-08
 
 ### Correcciones
