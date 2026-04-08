@@ -176,7 +176,7 @@ module BugBunny
 
       safe_log(:info, 'consumer.message_received', method: http_method, path: path,
                                                    routing_key: delivery_info.routing_key, **otel_fields)
-      safe_log(:debug, 'consumer.message_received_body', body: body.truncate(200))
+      safe_log(:info, 'consumer.message_received_body', body: body&.truncate(500), body_size: body&.size || 0)
 
       # ===================================================================
       # 3. Ruteo Declarativo
@@ -267,7 +267,12 @@ module BugBunny
     # @param correlation_id [String] ID para correlacionar la respuesta con la petición original.
     # @return [void]
     def reply(payload, reply_to, correlation_id)
-      safe_log(:debug, 'consumer.rpc_reply', reply_to: reply_to, messaging_message_id: correlation_id)
+      safe_log(:info, 'consumer.rpc_reply',
+               reply_to: reply_to,
+               messaging_message_id: correlation_id,
+               response_status: payload[:status],
+               response_body: payload[:body]&.truncate(500),
+               response_body_size: payload[:body]&.to_json&.size || 0)
       otel_headers = BugBunny::OTel.messaging_headers(
         operation: 'publish',
         destination: '',

@@ -110,4 +110,48 @@ RSpec.describe BugBunny::Resource, :integration do
       end
     end
   end
+
+  describe '#inspect' do
+    let(:node) { SpecNode.new(id: '123', name: 'test-node', status: 'active', ip: '192.168.1.1', port: 8080) }
+
+    it 'muestra id y persisted' do
+      expect(node.inspect).to include('id="123"')
+      expect(node.inspect).to include('persisted=false')
+    end
+
+    it 'muestra atributos principales sin detalles de infraestructura' do
+      result = node.inspect
+
+      expect(result).to include('name="test-node"')
+      expect(result).to include('status="active"')
+      expect(result).to include('ip="192.168.1.1"')
+      expect(result).to include('port=8080')
+      expect(result).not_to include('routing_key')
+      expect(result).not_to include('exchange')
+    end
+
+    it 'filtra atributos de infraestructura cuando están presentes' do
+      node.routing_key = 'radius_1'
+      node.exchange = 'test_exchange'
+      node.exchange_type = 'topic'
+      node.exchange_options = { durable: true }
+      node.persisted = true
+
+      result = node.inspect
+
+      expect(result).not_to include('routing_key')
+      expect(result).not_to include('exchange')
+      expect(result).not_to include('exchange_type')
+      expect(result).not_to include('exchange_options')
+      expect(result).to include('persisted=true')
+    end
+
+    it 'limita a 5 atributos principales' do
+      node = SpecNode.new(id: '1', a: '1', b: '2', c: '3', d: '4', e: '5', f: '6')
+
+      result = node.inspect
+
+      expect(result.scan('=').length).to be <= 7 # id + persisted + max 5 attrs
+    end
+  end
 end
