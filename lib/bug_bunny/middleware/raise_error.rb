@@ -50,6 +50,14 @@ module BugBunny
           # Pasamos el body crudo; UnprocessableEntity lo procesará en exception.rb
           raise BugBunny::UnprocessableEntity, body
         when 500..599
+          if body.is_a?(Hash) && body['bug_bunny_exception']
+            exception_data = body['bug_bunny_exception']
+            raise BugBunny::RemoteError.new(
+              exception_data['class'],
+              exception_data['message'],
+              exception_data['backtrace'] || []
+            )
+          end
           raise BugBunny::InternalServerError, format_error_message(body)
         else
           handle_unknown_error(status, body)

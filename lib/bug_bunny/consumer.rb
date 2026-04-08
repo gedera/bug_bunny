@@ -256,7 +256,7 @@ module BugBunny
     rescue StandardError => e
       safe_log(:error, 'consumer.execution_error', duration_s: duration_s(start_time), **exception_metadata(e))
       safe_log(:debug, 'consumer.execution_error_backtrace', backtrace: e.backtrace.first(5).join(' | '))
-      handle_fatal_error(properties, 500, 'Internal Server Error', e.message)
+      handle_fatal_error(properties, 500, 'Internal Server Error', e.message, e)
       session.channel.reject(delivery_info.delivery_tag, false)
     end
 
@@ -287,14 +287,20 @@ module BugBunny
     # Maneja errores fatales asegurando que el cliente reciba una respuesta.
     # Evita que el cliente RPC se quede esperando hasta el timeout.
     #
+    # @param properties [Bunny::MessageProperties] Headers y propiedades AMQP.
+    # @param status [Integer] Código de estado HTTP.
+    # @param error_title [String] Título del error.
+    # @param detail [String] Detalle del error.
+    # @param exception [StandardError, nil] Excepción original (para status 500).
     # @api private
-    def handle_fatal_error(properties, status, error_title, detail)
+    def handle_fatal_error(properties, status, error_title, detail, exception = nil)
       return unless properties.reply_to
 
-      error_payload = {
-        status: status,
-        body: { error: error_title, detail: detail }
-      }
+      body = { error: error_title, detail: detail }
+
+      body[:bug_bunny_exception] = BugBunny::RemoteError.serialize(exception) if status == 500 && exception
+
+      error_payload = { status: status, body: body }
       reply(error_payload, properties.reply_to, properties.correlation_id)
     end
 
