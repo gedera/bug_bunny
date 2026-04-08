@@ -271,7 +271,7 @@ module BugBunny
                reply_to: reply_to,
                messaging_message_id: correlation_id,
                response_status: payload[:status],
-               response_body: payload[:body]&.truncate(500),
+               response_body: payload[:body]&.to_json&.truncate(500),
                response_body_size: payload[:body]&.to_json&.size || 0)
       otel_headers = BugBunny::OTel.messaging_headers(
         operation: 'publish',
