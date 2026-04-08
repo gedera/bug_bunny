@@ -230,6 +230,10 @@ No registrar consumer middlewares durante la ejecución de `call()`. El stack to
 **Causa:** El mensaje intenta ejecutar un controlador que no hereda de `BugBunny::Controller`.
 **Resolución:** Verificar la jerarquía de controladores y que `config.controller_namespace` coincida.
 
+### BugBunny::RouteNotFoundError (404)
+**Causa:** El path del mensaje no coincide con ninguna ruta registrada. El path debe estar normalizado (sin slashes iniciales/trailing).
+**Resolución:** Verificar que el cliente envíe el path sin leading/trailing slashes (ej: `users/42`, no `/users/42/`).
+
 ### BugBunny::UnprocessableEntity (422)
 **Causa:** Fallo de validación en el servicio remoto.
 **Resolución:** `resource.save` devuelve `false`. Acceder a `resource.errors` o `rescue` con `e.error_messages`.

@@ -21,13 +21,14 @@ consumer = BugBunny::Consumer.subscribe(
 2. Extrae campos **OTel messaging** del mensaje para logs estructurados (sin mutar headers).
 3. Valida que el mensaje tenga header `type` (path).
 4. Parsea el método HTTP de headers (`x-http-method` o `method`).
-5. Emite log `consumer.message_received` con campos OTel (`messaging_operation: 'process'`).
-6. Reconoce la ruta con `BugBunny.routes.recognize(method, path)`.
-7. Resuelve el controlador validando herencia de `BugBunny::Controller`.
-8. Ejecuta consumer middlewares → controller callbacks → acción.
-9. Responde via `reply_to` si está presente (RPC), inyectando campos OTel (`messaging_operation: 'publish'`).
-10. Emite log `consumer.message_processed` con campos OTel y duraciones.
-11. Hace `ack` del mensaje. En caso de error, `reject`.
+5. **Normaliza el path**: remueve slashes iniciales/trailing (`path.gsub(%r{^/|/$}, '')`).
+6. Emite log `consumer.message_received` con campos OTel (`messaging_operation: 'process'`).
+7. Reconoce la ruta con `BugBunny.routes.recognize(method, normalized_path)`.
+8. Resuelve el controlador validando herencia de `BugBunny::Controller`.
+9. Ejecuta consumer middlewares → controller callbacks → acción.
+10. Responde via `reply_to` si está presente (RPC), inyectando campos OTel (`messaging_operation: 'publish'`).
+11. Emite log `consumer.message_processed` con campos OTel y duraciones.
+12. Hace `ack` del mensaje. En caso de error, `reject`.
 
 ## Observability: OTel Fields
 

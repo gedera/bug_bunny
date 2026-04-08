@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.10.1] - 2026-04-08
+
+### Correcciones
+- Corregir route matching 404: el path del cliente ahora se normaliza antes de pasarlo a `RouteSet#recognize`. Antes, `URI.parse("http://dummy/#{path}")` prependead un `/` extra al path, causando que rutas existentes no hicieran match. Ahora se usa `path.gsub(%r{^/|/$}, '')` antes del recognize. — @Gabriel
+
 ## [4.9.1] - 2026-04-06
 
 ### Correcciones

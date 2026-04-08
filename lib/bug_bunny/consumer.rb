@@ -181,18 +181,20 @@ module BugBunny
       # ===================================================================
       # 3. Ruteo Declarativo
       # ===================================================================
-      uri = URI.parse("http://dummy/#{path}")
+      normalized_path = path.gsub(%r{^/|/$}, '')
+
+      uri = URI.parse("http://dummy/#{normalized_path}")
 
       # Extraemos query params (ej. /nodes?status=active)
       query_params = uri.query ? Rack::Utils.parse_nested_query(uri.query) : {}
       query_params = query_params.with_indifferent_access if defined?(ActiveSupport::HashWithIndifferentAccess)
 
       # Le preguntamos al motor de rutas global quién debe manejar esto
-      route_info = BugBunny.routes.recognize(http_method, uri.path)
+      route_info = BugBunny.routes.recognize(http_method, normalized_path)
 
       if route_info.nil?
-        safe_log(:warn, 'consumer.route_not_found', method: http_method, path: uri.path)
-        handle_fatal_error(properties, 404, 'Not Found', "No route matches [#{http_method}] \"/#{uri.path}\"")
+        safe_log(:warn, 'consumer.route_not_found', method: http_method, path: normalized_path)
+        handle_fatal_error(properties, 404, 'Not Found', "No route matches [#{http_method}] \"#{normalized_path}\"")
         session.channel.reject(delivery_info.delivery_tag, false)
         return
       end
