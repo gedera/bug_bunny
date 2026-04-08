@@ -16,7 +16,8 @@ StandardError
     │   ├── BugBunny::Conflict (409)
     │   └── BugBunny::UnprocessableEntity (422)
     └── BugBunny::ServerError (5xx)
-        └── BugBunny::InternalServerError (500+)
+        ├── BugBunny::InternalServerError (500+)
+        └── BugBunny::RemoteError (500)
 ```
 
 ## Errores de Infraestructura
@@ -82,6 +83,21 @@ end
 ### BugBunny::ServerError (base 5xx)
 **Causa:** Cualquier error de servidor no mapeado a InternalServerError.
 **Resolución:** Similar a InternalServerError.
+
+### BugBunny::RemoteError (500)
+**Causa:** Excepción no manejada en el controller remoto. El error se serializa y propaga al cliente RPC.
+**Acceso a detalles:**
+```ruby
+begin
+  client.request('users/42')
+rescue BugBunny::RemoteError => e
+  e.original_class     # String: clase original (ej: "TypeError")
+  e.original_message  # String: mensaje original
+  e.original_backtrace # Array<String>: backtrace original
+end
+```
+**Serialización:** El controller captura excepciones con `rescue_from` → `handle_exception` → serializa con clase, mensaje y primeras 25 líneas del backtrace.
+**Propagación:** El middleware `RaiseError` del cliente reconstituye `RemoteError` y la lanza localmente.
 
 ## Formato de Mensajes de Error
 

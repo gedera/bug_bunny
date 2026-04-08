@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.10.2] - 2026-04-08
+
+### Correcciones
+- **RemoteError#to_s recursión infinita:** Corregir `SystemStackError` al invocar `to_s` en `BugBunny::RemoteError` en IRB. Antes, `to_s` llamaba a `message`, que en Ruby delega a `to_s`, generando recursión infinita. Ahora usa `super` para invocar `Exception#to_s` directamente. — @Gabriel
+
 ## [4.10.1] - 2026-04-08
 
 ### Correcciones

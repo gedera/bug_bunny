@@ -49,7 +49,7 @@ module BugBunny
 
     # @return [String] Representación legible de la excepción.
     def to_s
-      "#{self.class.name}(#{original_class}): #{message}"
+      "#{self.class.name}(#{original_class}): #{super}"
     end
   end
 end
