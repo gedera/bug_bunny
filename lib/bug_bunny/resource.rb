@@ -401,6 +401,17 @@ module BugBunny
       attributes['id'] || @extra_attributes['id'] || @extra_attributes['ID'] || @extra_attributes['Id'] || @extra_attributes['_id']
     end
 
+    # Representación legible del recurso.
+    # Muestra solo ID y atributos principales, sin detalles de infraestructura.
+    #
+    # @return [String]
+    def inspect
+      infra_keys = %w[routing_key exchange exchange_type exchange_options queue_options _id]
+      attrs = @extra_attributes.merge(attributes).reject { |k, _| infra_keys.include?(k) || k == 'id' }
+      attr_str = attrs.first(5).map { |k, v| "#{k}=#{v.inspect}" }.join(' ')
+      "#<#{self.class.name} id=#{id.inspect} persisted=#{@persisted}#{" #{attr_str}" unless attr_str.empty?}>"
+    end
+
     def id=(value)
       if self.class.attribute_names.include?('id')
         super
@@ -461,6 +472,7 @@ module BugBunny
     # @return [Boolean]
     def destroy
       return false unless persisted?
+      return false unless id
 
       run_callbacks(:destroy) do
         path = "#{self.class.resource_name}/#{id}"

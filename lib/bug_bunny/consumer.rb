@@ -176,7 +176,7 @@ module BugBunny
 
       safe_log(:info, 'consumer.message_received', method: http_method, path: path,
                                                    routing_key: delivery_info.routing_key, **otel_fields)
-      safe_log(:debug, 'consumer.message_received_body', body: body.truncate(200))
+      safe_log(:info, 'consumer.message_received_body', body: body&.truncate(500), body_size: body&.size || 0)
 
       # ===================================================================
       # 3. Ruteo Declarativo
@@ -256,7 +256,7 @@ module BugBunny
     rescue StandardError => e
       safe_log(:error, 'consumer.execution_error', duration_s: duration_s(start_time), **exception_metadata(e))
       safe_log(:debug, 'consumer.execution_error_backtrace', backtrace: e.backtrace.first(5).join(' | '))
-      handle_fatal_error(properties, 500, 'Internal Server Error', e.message)
+      handle_fatal_error(properties, 500, 'Internal Server Error', e.message, e)
       session.channel.reject(delivery_info.delivery_tag, false)
     end
 
@@ -267,7 +267,12 @@ module BugBunny
     # @param correlation_id [String] ID para correlacionar la respuesta con la petición original.
     # @return [void]
     def reply(payload, reply_to, correlation_id)
-      safe_log(:debug, 'consumer.rpc_reply', reply_to: reply_to, messaging_message_id: correlation_id)
+      safe_log(:info, 'consumer.rpc_reply',
+               reply_to: reply_to,
+               messaging_message_id: correlation_id,
+               response_status: payload[:status],
+               response_body: payload[:body]&.to_json&.truncate(500),
+               response_body_size: payload[:body]&.to_json&.size || 0)
       otel_headers = BugBunny::OTel.messaging_headers(
         operation: 'publish',
         destination: '',
@@ -287,14 +292,20 @@ module BugBunny
     # Maneja errores fatales asegurando que el cliente reciba una respuesta.
     # Evita que el cliente RPC se quede esperando hasta el timeout.
     #
+    # @param properties [Bunny::MessageProperties] Headers y propiedades AMQP.
+    # @param status [Integer] Código de estado HTTP.
+    # @param error_title [String] Título del error.
+    # @param detail [String] Detalle del error.
+    # @param exception [StandardError, nil] Excepción original (para status 500).
     # @api private
-    def handle_fatal_error(properties, status, error_title, detail)
+    def handle_fatal_error(properties, status, error_title, detail, exception = nil)
       return unless properties.reply_to
 
-      error_payload = {
-        status: status,
-        body: { error: error_title, detail: detail }
-      }
+      body = { error: error_title, detail: detail }
+
+      body[:bug_bunny_exception] = BugBunny::RemoteError.serialize(exception) if status == 500 && exception
+
+      error_payload = { status: status, body: body }
       reply(error_payload, properties.reply_to, properties.correlation_id)
     end
 

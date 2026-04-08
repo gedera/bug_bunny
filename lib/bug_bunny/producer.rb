@@ -89,7 +89,9 @@ module BugBunny
         BugBunny.configuration.on_rpc_reply&.call(result[:headers])
 
         safe_log(:debug, 'producer.rpc_response_received',
-                 messaging_system: 'rabbitmq', messaging_operation: 'receive', messaging_message_id: cid)
+                 messaging_system: 'rabbitmq', messaging_operation: 'receive', messaging_message_id: cid,
+                 response_body: result[:body]&.truncate(500),
+                 response_headers: result[:headers]&.to_json&.truncate(300))
 
         parse_response(result[:body])
       ensure
@@ -125,7 +127,12 @@ module BugBunny
       safe_log(:info, 'producer.publish', method: verb, path: target, **otel_fields)
       safe_log(:debug, 'producer.publish_detail', messaging_destination_name: request.exchange,
                                                   exchange_opts: final_x_opts)
-      safe_log(:debug, 'producer.publish_payload', payload: payload.truncate(300)) if payload.is_a?(String)
+      return unless payload.is_a?(String)
+
+      safe_log(:info, 'producer.publish_payload',
+               payload: payload.truncate(500),
+               payload_class: payload.class.name,
+               body_size: request.body.nil? ? 0 : request.body.size)
     end
 
     # Serializa el mensaje para su transporte.

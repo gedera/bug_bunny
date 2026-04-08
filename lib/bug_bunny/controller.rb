@@ -224,7 +224,12 @@ module BugBunny
       {
         status: 500,
         headers: response_headers,
-        body: { error: 'Internal Server Error', detail: exception.message, type: exception.class.name }
+        body: {
+          error: 'Internal Server Error',
+          detail: exception.message,
+          type: exception.class.name,
+          bug_bunny_exception: BugBunny::RemoteError.serialize(exception)
+        }
       }
     end
 
