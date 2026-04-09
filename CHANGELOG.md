@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.11.1] - 2026-04-09
+
+### Correcciones
+- **`Resource#destroy` expone errores del servidor:** Antes, `destroy` capturaba `ClientError` y `ServerError` silenciosamente retornando `false` sin cargar mensajes de error en el objeto. Ahora, `UnprocessableEntity` (422) carga errores estructurados via `load_remote_rabbit_errors` y otros `ClientError` (400, 409, etc.) cargan el mensaje en `errors[:base]`, igual que `#save`. `ServerError` sigue retornando `false` sin errores. — @Gabriel
+
 ## [4.11.0] - 2026-04-08
 
 ### Correcciones
