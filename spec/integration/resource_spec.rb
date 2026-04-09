@@ -109,6 +109,37 @@ RSpec.describe BugBunny::Resource, :integration do
         expect(node.persisted?).to be(false)
       end
     end
+
+    it 'carga errores de validación cuando el servidor responde 422' do
+      node = SpecNode.new(id: '1')
+      node.persisted = true
+
+      error = BugBunny::UnprocessableEntity.new({ 'errors' => { 'base' => ['resource is in use'] } })
+      allow(node).to receive(:bug_bunny_client).and_raise(error)
+
+      expect(node.destroy).to be(false)
+      expect(node.errors[:base]).to include('resource is in use')
+    end
+
+    it 'carga el mensaje de error cuando el servidor responde 4xx' do
+      node = SpecNode.new(id: '1')
+      node.persisted = true
+
+      allow(node).to receive(:bug_bunny_client).and_raise(BugBunny::BadRequest, 'secret is in use by: radius_1')
+
+      expect(node.destroy).to be(false)
+      expect(node.errors[:base]).to include('secret is in use by: radius_1')
+    end
+
+    it 'retorna false sin errores cuando el servidor responde 5xx' do
+      node = SpecNode.new(id: '1')
+      node.persisted = true
+
+      allow(node).to receive(:bug_bunny_client).and_raise(BugBunny::InternalServerError, 'boom')
+
+      expect(node.destroy).to be(false)
+      expect(node.errors).to be_empty
+    end
   end
 
   describe '#inspect' do

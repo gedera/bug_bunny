@@ -491,7 +491,13 @@ module BugBunny
         self.persisted = false
       end
       true
-    rescue BugBunny::ServerError, BugBunny::ClientError
+    rescue BugBunny::UnprocessableEntity => e
+      load_remote_rabbit_errors(e.error_messages)
+      false
+    rescue BugBunny::ClientError => e
+      load_remote_rabbit_errors(e.message)
+      false
+    rescue BugBunny::ServerError
       false
     end
 
