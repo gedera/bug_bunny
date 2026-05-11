@@ -69,7 +69,7 @@ El `Producer` es usado internamente por el `Client`. Implementa tres patrones de
 - Publica y bloquea hasta `channel.wait_for_confirms` del broker.
 - Bunny 2.x **no soporta timeout** nativo en `wait_for_confirms` — BugBunny envuelve la llamada en un hilo auxiliar y usa `Concurrent::IVar#value(timeout)` como reloj. Si `confirm_timeout` expira → `BugBunny::RequestTimeout`.
 - NACK del broker no es fatal: se logea `producer.confirms_nacked` con `count` y `path`, y retorna 202 igual.
-- Si `mandatory: true` y el mensaje no es ruteable, el broker dispara `basic.return`. El handler está atachado **una sola vez en `Session#create_channel!`** (no por request) y delega a `Configuration#on_return` o al logger por default.
+- Si `mandatory: true` y el mensaje no es ruteable, el broker dispara `basic.return`. El handler se atacha vía `Bunny::Exchange#on_return` en `Session#exchange` la primera vez que se resuelve cada exchange (cacheado por nombre, una sola vez por canal) y delega a `Configuration#on_return` o al logger por default.
 - Errores del canal se envuelven en `BugBunny::CommunicationError`; errores `BugBunny::Error` pre-existentes se propagan sin envolver.
 
 ## Middleware Stack (Client-side, Onion Architecture)
@@ -185,13 +185,13 @@ Producer#confirmed
    └──> log_nacks_if_any    (si nacked_set no está vacío → log WARN)
 
 Asíncronamente, si el broker no pudo rutear:
-   broker ──basic.return──> Session handler ──> Configuration#on_return
-                                            └──> default: log session.broker_return WARN
+   broker ──basic.return──> Exchange#on_return ──> Session handler ──> Configuration#on_return
+                                                                   └──> default: log session.broker_return WARN
 ```
 
 ### `Configuration#on_return`
 
-El handler se registra **una sola vez** al crear el canal (en `Session#create_channel!` cuando `publisher_confirms: true`). Bunny soporta un único `on_return` por canal — registrarlo por request causaría races porque cada `channel.on_return(&block)` sobrescribe el anterior.
+El handler se registra **una sola vez por exchange** en `Session#exchange` (cuando `publisher_confirms: true`) usando `Bunny::Exchange#on_return`. Bunny dispatcha `basic.return` por exchange, no por canal, así que el handler vive en cada `Bunny::Exchange` resuelto vía cascada. `Session` cachea los exchanges ya configurados por nombre en `@configured_returns` para no re-registrar en cada publish; el set se limpia al recrear el canal.
 
 ```ruby
 BugBunny.configure do |c|

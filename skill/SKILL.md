@@ -17,7 +17,7 @@ Skill de conocimiento completo sobre BugBunny. Consultame para cualquier pregunt
 **Fire-and-Forget** — Patrón asíncrono donde el producer publica y continúa sin esperar respuesta. Retorna `{ 'status' => 202 }`.
 **Publisher Confirms** — Extensión de RabbitMQ que confirma al publisher que el broker recibió el mensaje. BugBunny lo expone como `confirmed: true` en `Client#publish`: el publish bloquea hasta `wait_for_confirms`. NACK no es fatal; se logea pero el método retorna 202.
 **Mandatory** — Flag de `basic.publish` que pide al broker retornar el mensaje al publisher si no es ruteable a ninguna cola. Se procesa via `basic.return` (no es respuesta del request).
-**basic.return** — Evento asincrónico del canal AMQP que entrega mensajes retornados. BugBunny lo enruta a un handler único por canal (`Configuration#on_return` o el default que logea).
+**basic.return** — Evento asincrónico que Bunny dispatcha por exchange (`Bunny::Exchange#on_return`). BugBunny registra un handler único por nombre de exchange al resolverlo en `Session#exchange` y lo delega a `Configuration#on_return` o al default que logea.
 **Resource** — ORM tipo ActiveRecord que mapea operaciones CRUD a llamadas AMQP.
 **Consumer** — Worker bloqueante que despacha mensajes a controladores mediante un Router.
 **Connection Pool** — Pool de conexiones (`connection_pool` gem) que comparte sessions entre threads. Cada slot cachea su `Session` y `Producer`.

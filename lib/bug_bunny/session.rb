@@ -35,6 +35,7 @@ module BugBunny
       @channel = nil
       @channel_mutex = Mutex.new
       @logger = BugBunny.configuration.logger
+      @configured_returns = {}
     end
 
     # Obtiene el canal actual o crea uno nuevo si es necesario.
@@ -80,7 +81,9 @@ module BugBunny
                     .merge(opts)
 
       # public_send permite llamar a :topic, :direct, etc. dinámicamente según el tipo
-      channel.public_send(type.to_s, name.to_s, merged_opts)
+      x = channel.public_send(type.to_s, name.to_s, merged_opts)
+      register_on_return!(x) if @publisher_confirms
+      x
     end
 
     # Factory method para declarar o recuperar una Cola aplicando la cascada de configuración.
@@ -108,6 +111,7 @@ module BugBunny
       @channel_mutex.synchronize do
         @channel&.close if @channel&.open?
         @channel = nil
+        @configured_returns.clear
       end
     end
 
@@ -119,29 +123,34 @@ module BugBunny
     # @raise [BugBunny::CommunicationError] Si falla la creación del canal.
     def create_channel!
       @channel = @connection.create_channel
+      @configured_returns.clear
 
-      if @publisher_confirms
-        @channel.confirm_select
-        register_on_return_handler!
-      end
+      @channel.confirm_select if @publisher_confirms
 
       @channel.prefetch(BugBunny.configuration.channel_prefetch) if BugBunny.configuration.channel_prefetch
     rescue StandardError => e
       raise BugBunny::CommunicationError, "Failed to create channel: #{e.message}"
     end
 
-    # Registra el handler `basic.return` del canal AMQP una única vez.
+    # Registra el handler `basic.return` sobre el `Bunny::Exchange` indicado.
     #
-    # Bunny soporta un solo `on_return` por canal — sobrescribirlo por request es propenso
-    # a races. Se setea acá al crear el canal y delega:
+    # Bunny dispatcha `basic.return` por exchange (no por canal): el callback se setea
+    # con `Exchange#on_return`. Como cada `Session#exchange` resuelve la misma instancia
+    # cacheada en el canal, registramos una sola vez por nombre.
+    #
     # - Si `BugBunny.configuration.on_return` está definido, lo invoca.
     # - Sino, logea el retorno como `session.broker_return` con nivel `:warn`.
     #
+    # @param exchange [Bunny::Exchange] Exchange recién resuelto vía cascada.
     # @return [void]
-    def register_on_return_handler!
-      @channel.on_return do |return_info, properties, body|
+    def register_on_return!(exchange)
+      key = exchange.name.to_s
+      return if key.empty? || @configured_returns[key]
+
+      exchange.on_return do |return_info, properties, body|
         handle_broker_return(return_info, properties, body)
       end
+      @configured_returns[key] = true
     end
 
     # Procesa un evento `basic.return` del broker. Nunca propaga excepciones del callback

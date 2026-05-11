@@ -89,20 +89,33 @@ RSpec.describe BugBunny::Session do
       BugBunny.configuration.on_return = nil
     end
 
-    it 'se registra cuando publisher_confirms está activo' do
-      session.channel # fuerza create_channel!
+    it 'se registra sobre el exchange cuando publisher_confirms está activo' do
+      exchange = session.exchange(name: 'evt_x', type: 'topic')
 
-      expect { channel.fire_return(return_info, properties, body) }.not_to raise_error
+      expect { exchange.fire_return(return_info, properties, body) }.not_to raise_error
+    end
+
+    it 'registra una sola vez por nombre de exchange' do
+      first  = session.exchange(name: 'evt_x', type: 'topic')
+      second = session.exchange(name: 'evt_x', type: 'topic')
+
+      expect(second).to be(first)
+      expect(session.instance_variable_get(:@configured_returns)).to include('evt_x' => true)
     end
 
     it 'NO se registra cuando publisher_confirms está desactivado' do
       fresh_channel = BunnyMocks::FakeChannel.new(true)
       fresh_conn = BunnyMocks::FakeConnection.new(true, fresh_channel)
       no_confirms = described_class.new(fresh_conn, publisher_confirms: false)
-      no_confirms.channel
+      exchange = no_confirms.exchange(name: 'evt_x', type: 'topic')
 
-      # Sin handler atachado, el ivar interno queda en nil.
-      expect(fresh_channel.instance_variable_get(:@on_return_handler)).to be_nil
+      expect(exchange.instance_variable_get(:@on_return_handler)).to be_nil
+    end
+
+    it 'NO se registra sobre el default exchange (name vacío)' do
+      default = session.exchange # name nil → default_exchange
+
+      expect(default.instance_variable_get(:@on_return_handler)).to be_nil
     end
 
     it 'invoca el callback de Configuration#on_return cuando está definido' do
@@ -111,15 +124,15 @@ RSpec.describe BugBunny::Session do
         received = { rk: ri.routing_key, props: props, body: b }
       }
 
-      session.channel
-      channel.fire_return(return_info, properties, body)
+      exchange = session.exchange(name: 'evt_x', type: 'topic')
+      exchange.fire_return(return_info, properties, body)
 
       expect(received).to include(rk: 'unbound.key', body: '{"a":1}')
     end
 
     it 'logea session.broker_return como :warn cuando no hay callback' do
-      session.channel
-      channel.fire_return(return_info, properties, body)
+      exchange = session.exchange(name: 'evt_x', type: 'topic')
+      exchange.fire_return(return_info, properties, body)
 
       log = @log_io.string
       expect(log).to include('event=session.broker_return')
@@ -131,9 +144,9 @@ RSpec.describe BugBunny::Session do
     it 'no propaga excepciones del callback de usuario' do
       BugBunny.configuration.on_return = ->(_, _, _) { raise 'boom' }
 
-      session.channel
+      exchange = session.exchange(name: 'evt_x', type: 'topic')
 
-      expect { channel.fire_return(return_info, properties, body) }.not_to raise_error
+      expect { exchange.fire_return(return_info, properties, body) }.not_to raise_error
       expect(@log_io.string).to include('event=session.on_return_failed')
     end
   end

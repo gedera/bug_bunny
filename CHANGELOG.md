@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.12.0] - 2026-05-11
+
+### Nuevas funcionalidades
+- **`:confirmed` delivery mode con Publisher Confirms (#36):** `Client#publish(..., confirmed: true)` activa Publisher Confirms síncronos — bloquea hasta que el broker confirme la recepción del mensaje. Soporta `mandatory: true` con callback `BugBunny.configuration.on_return` para mensajes no ruteables, `confirm_timeout` opcional (vía `Concurrent::IVar` ya que Bunny 2.24 no soporta timeout nativo en `wait_for_confirms`) y logging de NACKs. Útil para eventos críticos (auditoría, billing) sin el overhead de un RPC completo. — @Gabriel
+
+### Correcciones
+- **`on_return` registrado sobre Exchange, no Channel:** El handler `basic.return` se registra ahora vía `Bunny::Exchange#on_return` (la API real de Bunny 2.24) en lugar de `Bunny::Channel#on_return`, que no existe y rompía la creación del canal con `NoMethodError: undefined method 'on_return' for an instance of Bunny::Channel`. Cada exchange se configura una sola vez por nombre; el set se resetea al recrear el canal. — @Gabriel
+
 ## [4.11.1] - 2026-04-09
 
 ### Correcciones
