@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.13.0] - 2026-05-11
+
+### Nuevas funcionalidades
+- **NACK explícito como excepción en modo `:confirmed` (#37):** `Producer#confirmed` ahora levanta `BugBunny::PublishNacked` cuando el broker NACKea la publicación, en lugar de retornar 202 silenciosamente. La excepción expone `path` y `nacked_count` para que callers críticos (auditoría, billing, RADIUS accounting) puedan escalar a HTTP 5xx y permitir retries upstream. Configurable globalmente vía `BugBunny.configuration.nack_raise` (default `true`) y por request via `client.publish(..., nack_raise: false)`. El evento `producer.confirms_nacked` se sigue logueando para observabilidad. — @Gabriel
+
+### Cambios de comportamiento (semi-breaking)
+- **Default `nack_raise: true`:** Publicaciones con `confirmed: true` que reciben NACK del broker ahora levantan excepción por default. En 4.12.0, el NACK se logueaba pero retornaba 202 igualmente — comportamiento que ocultaba pérdida de mensajes desde la perspectiva del publisher. Para mantener el comportamiento previo: `BugBunny.configuration.nack_raise = false` o `nack_raise: false` per request.
+
 ## [4.12.0] - 2026-05-11
 
 ### Nuevas funcionalidades
