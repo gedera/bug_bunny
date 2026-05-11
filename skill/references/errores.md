@@ -8,6 +8,7 @@ StandardError
     ├── BugBunny::CommunicationError
     ├── BugBunny::ConfigurationError
     ├── BugBunny::SecurityError
+    ├── BugBunny::PublishNacked
     ├── BugBunny::ClientError (4xx)
     │   ├── BugBunny::BadRequest (400)
     │   ├── BugBunny::NotFound (404)
@@ -36,6 +37,12 @@ StandardError
 **Causa:** Un mensaje intenta ejecutar un controlador que no hereda de `BugBunny::Controller`.
 **Cuándo:** El consumer resuelve la clase pero falla la validación `is_a?(BugBunny::Controller)`.
 **Resolución:** Verificar que el controlador herede de `BugBunny::Controller` y que `config.controller_namespace` sea correcto.
+
+### BugBunny::PublishNacked
+**Causa:** El broker NACKea explícitamente una publicación en modo `:confirmed` (`Client#publish(..., confirmed: true)`). Indica que el mensaje no fue aceptado — disk full, replicación insuficiente, confirm policy interna, etc.
+**Cuándo:** `Producer#confirmed` detecta `wait_for_confirms == false`. Se levanta por default (`config.nack_raise = true`).
+**Atributos:** `path` (ruta del request) y `nacked_count` (cantidad de delivery tags NACKeados).
+**Resolución:** Para casos críticos (auditoría, billing, RADIUS accounting), dejar que la excepción bubble para que el caller upstream reintente (ej: HTTP 503 → retry). Para tolerar NACKs (eventos best-effort), `BugBunny.configuration.nack_raise = false` global o `nack_raise: false` per request — en ese caso solo se logea `producer.confirms_nacked`.
 
 ## Errores de Cliente (4xx)
 

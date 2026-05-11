@@ -19,6 +19,37 @@ module BugBunny
   # Protege contra vulnerabilidades de RCE validando la herencia de las clases enrutadas.
   class SecurityError < Error; end
 
+  # Error lanzado cuando el broker responde NACK a una publicación en modo `:confirmed`.
+  #
+  # Un NACK significa que el broker rechazó explícitamente el mensaje (ej: política de
+  # confirms interna, disk full, replicación insuficiente). El mensaje no fue aceptado
+  # y se considera no entregado — equivalente a un fallo de transporte desde la
+  # perspectiva del publisher.
+  #
+  # Se levanta por default desde {BugBunny::Producer#confirmed}. Para opt-out,
+  # configurar `BugBunny.configuration.nack_raise = false` o pasar
+  # `nack_raise: false` por request.
+  #
+  # @example
+  #   rescue BugBunny::PublishNacked => e
+  #     e.path         # => 'acct.start'
+  #     e.nacked_count # => 1
+  class PublishNacked < Error
+    # @return [String] La ruta del request cuyo publish fue NACKeado.
+    attr_reader :path
+
+    # @return [Integer] Cantidad de mensajes NACKeados según `Bunny::Channel#nacked_set`.
+    attr_reader :nacked_count
+
+    # @param path [String] Ruta lógica del request (ej: 'acct.start').
+    # @param nacked_count [Integer] Cantidad de NACKs reportados por el broker.
+    def initialize(path:, nacked_count:)
+      @path = path
+      @nacked_count = nacked_count
+      super("broker NACK on path=#{path} (nacked=#{nacked_count})")
+    end
+  end
+
   # ==========================================
   # Categoría: Errores del Cliente (4xx)
   # ==========================================

@@ -27,6 +27,8 @@ module BugBunny
   #   vía {BugBunny.configuration.on_return}.
   # @attr confirm_timeout [Float, nil] Segundos máximos a esperar el `wait_for_confirms`.
   #   `nil` espera indefinidamente.
+  # @attr nack_raise [Boolean, nil] Override per-request del flag global
+  #   `BugBunny.configuration.nack_raise`. `nil` (default) delega a la configuración global.
   class Request
     attr_accessor :body, :headers, :params, :path, :method, :exchange, :exchange_type, :routing_key, :timeout,
                   :delivery_mode, :queue_options
@@ -35,7 +37,7 @@ module BugBunny
     attr_accessor :exchange_options
 
     # Publisher Confirms (delivery_mode = :confirmed)
-    attr_accessor :mandatory, :confirm_timeout
+    attr_accessor :mandatory, :confirm_timeout, :nack_raise
 
     # Metadatos AMQP Estándar
     attr_accessor :app_id, :content_type, :content_encoding, :priority,
@@ -63,6 +65,7 @@ module BugBunny
       # Defaults para Publisher Confirms (modo :confirmed)
       @mandatory = false
       @confirm_timeout = nil
+      @nack_raise = nil
     end
 
     # Combina el path con los params como query string.

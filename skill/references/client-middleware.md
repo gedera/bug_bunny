@@ -46,6 +46,7 @@ end
 | `confirmed` | Boolean | `false` | En `Client#publish`, flipea `delivery_mode` a `:confirmed`. Bloquea hasta `wait_for_confirms`. |
 | `mandatory` | Boolean | `false` | Pide al broker retornar el mensaje si no es ruteable. Solo útil con `confirmed: true`. |
 | `confirm_timeout` | Float | `nil` | Segundos máximos a esperar el ACK. `nil` = espera indefinida. Excedido → `BugBunny::RequestTimeout`. |
+| `nack_raise` | Boolean | `nil` | Override per-request de `config.nack_raise`. `nil` = usa flag global. |
 
 ## Producer (bajo nivel)
 
@@ -68,7 +69,7 @@ El `Producer` es usado internamente por el `Client`. Implementa tres patrones de
 
 - Publica y bloquea hasta `channel.wait_for_confirms` del broker.
 - Bunny 2.x **no soporta timeout** nativo en `wait_for_confirms` — BugBunny envuelve la llamada en un hilo auxiliar y usa `Concurrent::IVar#value(timeout)` como reloj. Si `confirm_timeout` expira → `BugBunny::RequestTimeout`.
-- NACK del broker no es fatal: se logea `producer.confirms_nacked` con `count` y `path`, y retorna 202 igual.
+- Si `wait_for_confirms` devuelve `false` (broker NACKea), se logea `producer.confirms_nacked` con `count` y `path`. Por default (`config.nack_raise = true`) levanta `BugBunny::PublishNacked` con `path` y `nacked_count`. Para opt-out: `config.nack_raise = false` o pasar `nack_raise: false` per request — en ese caso solo logea y retorna 202.
 - Si `mandatory: true` y el mensaje no es ruteable, el broker dispara `basic.return`. El handler se atacha vía `Bunny::Exchange#on_return` en `Session#exchange` la primera vez que se resuelve cada exchange (cacheado por nombre, una sola vez por canal) y delega a `Configuration#on_return` o al logger por default.
 - Errores del canal se envuelven en `BugBunny::CommunicationError`; errores `BugBunny::Error` pre-existentes se propagan sin envolver.
 
@@ -164,6 +165,7 @@ req.timestamp             # Time.now.to_i
 req.content_type          # 'application/json'
 req.mandatory             # Boolean — solo modo :confirmed
 req.confirm_timeout       # Float|nil — solo modo :confirmed
+req.nack_raise            # Boolean|nil — override per-request de config.nack_raise (solo modo :confirmed)
 ```
 
 Cuando `mandatory == true`, `Request#amqp_options` inyecta `mandatory: true` en el hash que va a `basic_publish`.
@@ -182,7 +184,10 @@ Producer#confirmed
    │
    ├──> wait_for_confirms!  (espera ACK del broker, con timeout opcional)
    │
-   └──> log_nacks_if_any    (si nacked_set no está vacío → log WARN)
+   └──> handle_confirm_result
+            ├─ acked == true  → return { status: 202 }
+            └─ acked == false → log WARN producer.confirms_nacked
+                                  └─ raise BugBunny::PublishNacked  (si config.nack_raise || req.nack_raise)
 
 Asíncronamente, si el broker no pudo rutear:
    broker ──basic.return──> Exchange#on_return ──> Session handler ──> Configuration#on_return
@@ -221,7 +226,7 @@ Excepciones del callback se capturan y se logean como `session.on_return_failed`
 | Auditoría, billing, eventos críticos | `:confirmed` (con `mandatory: true` si es ruteable) |
 | Request-response síncrono | `:rpc` |
 
-`:confirmed` cuesta un round-trip al broker pero **no** al consumer remoto — más rápido que RPC, con garantía de entrega al broker. NACK del broker es raro (típicamente por confirm policies internas) y no implica pérdida del mensaje.
+`:confirmed` cuesta un round-trip al broker pero **no** al consumer remoto — más rápido que RPC, con garantía de entrega al broker. NACK del broker es raro (típicamente por confirm policies internas, disk full, replicación insuficiente) pero **sí** implica que el mensaje no fue aceptado. Por default BugBunny levanta `BugBunny::PublishNacked` para que el caller pueda escalar (ej: convertir a HTTP 503 y dejar que el sistema upstream reintente). Opt-out con `config.nack_raise = false` o `nack_raise: false` per request.
 
 ## Cascada de Configuración (3 niveles)
 

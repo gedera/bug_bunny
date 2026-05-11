@@ -52,14 +52,17 @@ module BugBunny
     # A diferencia de {#rpc} (que espera la respuesta de un Consumer remoto), aquí solo se
     # espera el ACK del propio broker — no hay round-trip al servicio destino.
     #
-    # @param request [BugBunny::Request] Request con `mandatory`, `confirm_timeout` y/o `on_return` opcionales.
+    # @param request [BugBunny::Request] Request con `mandatory`, `confirm_timeout`, `nack_raise`
+    #   y/o `on_return` opcionales.
     # @return [Hash] `{ 'status' => 202, 'body' => nil }` si el broker confirmó la recepción.
     # @raise [BugBunny::RequestTimeout] Si el broker no confirma dentro de `confirm_timeout` segundos.
+    # @raise [BugBunny::PublishNacked] Si el broker NACKea la publicación y `nack_raise` está activo
+    #   (default `true` — ver {BugBunny::Configuration#nack_raise}).
     # @raise [BugBunny::CommunicationError] Si el canal AMQP falla durante la publicación o confirm.
     def confirmed(request)
       publish_message(request)
-      wait_for_confirms!(request)
-      log_nacks_if_any(request)
+      acked = wait_for_confirms!(request)
+      handle_confirm_result(request, acked)
       { 'status' => 202, 'body' => nil }
     rescue BugBunny::Error
       raise
@@ -154,20 +157,44 @@ module BugBunny
             "Timeout (#{timeout}s) waiting for publisher confirms: #{request.path}"
     end
 
-    # Logea las nack-eadas del canal si las hay.
-    # NACK no es un error fatal: el broker rechazó rutear (ej. confirm policy interna),
-    # pero el mensaje no se perdió silenciosamente — queda en el set para auditoría.
+    # Procesa el resultado de `wait_for_confirms`.
+    #
+    # Si el broker NACKeó (`acked == false`), logea el evento `producer.confirms_nacked`
+    # y opcionalmente levanta {BugBunny::PublishNacked} según el flag `nack_raise`
+    # resuelto desde el request o la configuración global.
     #
     # @param request [BugBunny::Request]
+    # @param acked [Boolean] Resultado de `wait_for_confirms` (true = todos los confirms positivos).
+    # @raise [BugBunny::PublishNacked] Si hay NACK y `nack_raise?` es true.
     # @return [void]
-    def log_nacks_if_any(request)
+    def handle_confirm_result(request, acked)
+      return if acked
+
+      count = nacked_count
+      safe_log(:warn, 'producer.confirms_nacked', count: count, path: request.path)
+      return unless nack_raise?(request)
+
+      raise BugBunny::PublishNacked.new(path: request.path, nacked_count: count)
+    end
+
+    # Cuenta los delivery tags NACKeados reportados por el canal.
+    #
+    # @return [Integer]
+    def nacked_count
       ch = @session.channel
-      return unless ch.respond_to?(:nacked_set)
+      return 0 unless ch.respond_to?(:nacked_set)
 
-      nacked = ch.nacked_set
-      return if nacked.nil? || nacked.empty?
+      ch.nacked_set&.size || 0
+    end
 
-      safe_log(:warn, 'producer.confirms_nacked', count: nacked.size, path: request.path)
+    # Resuelve el flag `nack_raise` con prioridad request > configuración global.
+    #
+    # @param request [BugBunny::Request]
+    # @return [Boolean]
+    def nack_raise?(request)
+      return request.nack_raise unless request.nack_raise.nil?
+
+      BugBunny.configuration.nack_raise
     end
 
     # Registra la petición en el log calculando las opciones de infraestructura.

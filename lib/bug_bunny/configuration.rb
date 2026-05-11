@@ -153,6 +153,15 @@ module BugBunny
     #     }
     attr_accessor :on_return
 
+    # @return [Boolean] Si `true` (default), {BugBunny::Producer#confirmed} levanta
+    #   {BugBunny::PublishNacked} cuando el broker NACKea la publicación. Si `false`,
+    #   el NACK solo se logea como `producer.confirms_nacked` y la llamada retorna
+    #   `{ 'status' => 202 }` (modo legacy).
+    #
+    #   El valor puede sobreescribirse por request pasando `nack_raise:` en
+    #   `Client#publish`.
+    attr_accessor :nack_raise
+
     # @!endgroup
 
     # Inicializa la configuración con valores por defecto seguros.
@@ -194,9 +203,7 @@ module BugBunny
       @queue_options = {}
 
       @consumer_middlewares = ConsumerMiddleware::Stack.new
-      @rpc_reply_headers = nil
-      @on_rpc_reply = nil
-      @on_return = nil
+      init_callback_defaults
     end
 
     # Construye la URL de conexión AMQP basada en los atributos configurados.
@@ -222,6 +229,17 @@ module BugBunny
     end
 
     private
+
+    # Defaults para callbacks y flags relacionados con publish/RPC.
+    # Extraído de {#initialize} para mantener el ABC size dentro de los límites.
+    #
+    # @return [void]
+    def init_callback_defaults
+      @rpc_reply_headers = nil
+      @on_rpc_reply = nil
+      @on_return = nil
+      @nack_raise = true
+    end
 
     def validate_required!(attr, value, rules)
       return unless rules[:required]

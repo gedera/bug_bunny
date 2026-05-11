@@ -15,7 +15,7 @@ Skill de conocimiento completo sobre BugBunny. Consultame para cualquier pregunt
 **Session** — `BugBunny::Session` envuelve canales de Bunny con thread-safety y double-checked locking.
 **RPC** — Patrón síncrono que usa la pseudo-cola `amq.rabbitmq.reply-to` para respuestas sin crear queues temporales.
 **Fire-and-Forget** — Patrón asíncrono donde el producer publica y continúa sin esperar respuesta. Retorna `{ 'status' => 202 }`.
-**Publisher Confirms** — Extensión de RabbitMQ que confirma al publisher que el broker recibió el mensaje. BugBunny lo expone como `confirmed: true` en `Client#publish`: el publish bloquea hasta `wait_for_confirms`. NACK no es fatal; se logea pero el método retorna 202.
+**Publisher Confirms** — Extensión de RabbitMQ que confirma al publisher que el broker recibió el mensaje. BugBunny lo expone como `confirmed: true` en `Client#publish`: el publish bloquea hasta `wait_for_confirms`. NACK del broker (rechazo explícito) levanta `BugBunny::PublishNacked` por default; configurable via `config.nack_raise = false` o `nack_raise: false` per request para volver al modo log-only.
 **Mandatory** — Flag de `basic.publish` que pide al broker retornar el mensaje al publisher si no es ruteable a ninguna cola. Se procesa via `basic.return` (no es respuesta del request).
 **basic.return** — Evento asincrónico que Bunny dispatcha por exchange (`Bunny::Exchange#on_return`). BugBunny registra un handler único por nombre de exchange al resolverlo en `Session#exchange` y lo delega a `Configuration#on_return` o al default que logea.
 **Resource** — ORM tipo ActiveRecord que mapea operaciones CRUD a llamadas AMQP.
@@ -202,7 +202,8 @@ client.publish('events', method: :post, body: { type: 'order.placed' })
 client.publish('acct.start', exchange: 'acct_x', body: payload,
                confirmed: true, mandatory: true, confirm_timeout: 0.5)
 # → { 'status' => 202, 'body' => nil }   # broker ACK confirmado
-# Si broker NACK: logea `producer.confirms_nacked` y retorna 202 igual (NACK ≠ pérdida).
+# Si broker NACK: logea `producer.confirms_nacked` y raise BugBunny::PublishNacked
+#   (default — opt-out con config.nack_raise = false o nack_raise: false per request).
 # Si timeout: raise BugBunny::RequestTimeout.
 # Si mandatory + no ruteable: dispara `Configuration#on_return` (default: logea `session.broker_return`).
 ```

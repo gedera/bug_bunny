@@ -93,9 +93,12 @@ module BugBunny
     # @option args [Boolean] :mandatory Si `true`, el broker retorna el mensaje si no es ruteable.
     #   Para procesar retornos, configurar {BugBunny.configuration.on_return}.
     # @option args [Float] :confirm_timeout Segundos a esperar el confirm. `nil` espera indefinidamente.
+    # @option args [Boolean] :nack_raise Override per-request del flag
+    #   `BugBunny.configuration.nack_raise`. Si `nil` (default), se usa la configuración global.
     # @yield [req] Bloque para configurar el objeto Request.
     # @return [Hash] `{ 'status' => 202, 'body' => nil }`.
     # @raise [BugBunny::RequestTimeout] Si `confirmed: true` y el broker no confirma a tiempo.
+    # @raise [BugBunny::PublishNacked] Si `confirmed: true`, el broker NACKea, y `nack_raise` resuelto es true.
     def publish(url, **args)
       send(url, **args) do |req|
         req.delivery_mode = args[:confirmed] ? :confirmed : :publish
@@ -175,6 +178,7 @@ module BugBunny
     def apply_publisher_confirms_args(req, args)
       req.mandatory       = args[:mandatory]       if args.key?(:mandatory)
       req.confirm_timeout = args[:confirm_timeout] if args.key?(:confirm_timeout)
+      req.nack_raise      = args[:nack_raise]      if args.key?(:nack_raise)
     end
 
     # Recupera o crea la Session asociada al slot de conexión dado.

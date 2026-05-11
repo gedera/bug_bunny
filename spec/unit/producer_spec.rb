@@ -245,21 +245,59 @@ RSpec.describe BugBunny::Producer do
       )
     end
 
-    it 'logea producer.confirms_nacked cuando hay nacks' do
-      allow(mock_channel).to receive(:nacked_set).and_return(Set.new([1, 2]))
-
-      confirmed_producer.confirmed(build_request)
-
-      nack_event = logged_events.find { |e| e[:event] == 'producer.confirms_nacked' }
-      expect(nack_event).not_to be_nil
-      expect(nack_event[:kwargs]).to include(count: 2, path: 'acct.start')
-    end
-
-    it 'NO logea producer.confirms_nacked cuando nacked_set está vacío' do
+    it 'NO logea producer.confirms_nacked cuando wait_for_confirms devuelve true' do
       confirmed_producer.confirmed(build_request)
 
       nack_event = logged_events.find { |e| e[:event] == 'producer.confirms_nacked' }
       expect(nack_event).to be_nil
+    end
+
+    context 'cuando el broker NACKea (wait_for_confirms devuelve false)' do
+      before do
+        allow(mock_channel).to receive(:wait_for_confirms).and_return(false)
+        allow(mock_channel).to receive(:nacked_set).and_return(Set.new([1, 2]))
+      end
+
+      it 'levanta BugBunny::PublishNacked por default (config.nack_raise = true)' do
+        expect { confirmed_producer.confirmed(build_request) }.to raise_error(BugBunny::PublishNacked) do |err|
+          expect(err.path).to eq('acct.start')
+          expect(err.nacked_count).to eq(2)
+        end
+      end
+
+      it 'logea producer.confirms_nacked antes de levantar' do
+        expect { confirmed_producer.confirmed(build_request) }.to raise_error(BugBunny::PublishNacked)
+
+        nack_event = logged_events.find { |e| e[:event] == 'producer.confirms_nacked' }
+        expect(nack_event).not_to be_nil
+        expect(nack_event[:kwargs]).to include(count: 2, path: 'acct.start')
+      end
+
+      it 'no levanta si el request override `nack_raise = false`' do
+        req = build_request
+        req.nack_raise = false
+
+        result = confirmed_producer.confirmed(req)
+
+        expect(result).to eq('status' => 202, 'body' => nil)
+        expect(logged_events.find { |e| e[:event] == 'producer.confirms_nacked' }).not_to be_nil
+      end
+
+      it 'no levanta si la configuración global tiene `nack_raise = false`' do
+        allow(BugBunny.configuration).to receive(:nack_raise).and_return(false)
+
+        result = confirmed_producer.confirmed(build_request)
+
+        expect(result).to eq('status' => 202, 'body' => nil)
+      end
+
+      it 'el override per-request gana sobre la configuración global' do
+        allow(BugBunny.configuration).to receive(:nack_raise).and_return(false)
+        req = build_request
+        req.nack_raise = true
+
+        expect { confirmed_producer.confirmed(req) }.to raise_error(BugBunny::PublishNacked)
+      end
     end
 
     it 'levanta BugBunny::RequestTimeout si wait_for_confirms excede confirm_timeout' do

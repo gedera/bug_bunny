@@ -220,6 +220,9 @@ client.publish('acct.start',
 | `confirmed` | Boolean | `false` | Block until `wait_for_confirms` returns. |
 | `mandatory` | Boolean | `false` | Broker returns the message if it cannot be routed to any queue. Requires `confirmed: true` to be useful. |
 | `confirm_timeout` | Float | `nil` | Seconds to wait for the broker ACK. Raises `BugBunny::RequestTimeout` if exceeded. |
+| `nack_raise` | Boolean | `nil` | Per-request override of `config.nack_raise`. When `nil`, falls back to the global flag. |
+
+If the broker NACKs the publish (explicit rejection — disk full, internal confirm policy, etc.), the call raises `BugBunny::PublishNacked` by default. The exception exposes `path` and `nacked_count`. Critical publishers (audit, billing, RADIUS accounting) can let it bubble up to translate into HTTP 5xx so upstream systems retry. To restore the legacy "log-only" behaviour, set `BugBunny.configuration.nack_raise = false` globally or pass `nack_raise: false` per request.
 
 Unroutable returned messages are handled by a single global callback (see `config.on_return` below). The default handler logs them as `session.broker_return` at `warn` level — nothing is dropped silently.
 

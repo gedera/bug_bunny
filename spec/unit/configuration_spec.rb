@@ -162,6 +162,18 @@ RSpec.describe BugBunny::Configuration do
     end
   end
 
+  describe 'nack_raise flag' do
+    it 'tiene default true (raise PublishNacked en NACK)' do
+      expect(BugBunny::Configuration.new.nack_raise).to be(true)
+    end
+
+    it 'acepta false para opt-out (modo legacy)' do
+      configure_with(nack_raise: false)
+
+      expect(BugBunny.configuration.nack_raise).to be(false)
+    end
+  end
+
   describe '.validate! directamente' do
     it 'es invocable directamente sobre la instancia' do
       config = BugBunny::Configuration.new
