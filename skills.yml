@@ -2,43 +2,28 @@ mcps:
   - github
   - clickup
 skills:
-  skill-manager:
-    repo: sequre/ai_knowledge
-    scope: local
   yard:
     repo: sequre/ai_knowledge
-    scope: local
   quality-code:
     repo: sequre/ai_knowledge
-    scope: local
   gem-release:
     repo: sequre/ai_knowledge
-    scope: local
   skill-builder:
     repo: sequre/ai_knowledge
-    scope: local
-  ai-reports:
+  matrix-element:
     repo: sequre/ai_knowledge
-    scope: local
     environment:
-      space_id: "${AI_REPORTS_SPACE_ID}"
-      bug_reports_list_id: "${AI_REPORTS_BUG_REPORTS_LIST_ID}"
-      improvements_list_id: "${AI_REPORTS_IMPROVEMENTS_LIST_ID}"
-  agent-review:
+      homeserver: "https://matrix.cloud.wispro.co"
+      auth_token: "${MATRIX_AUTH_TOKEN}"
+      rooms:
+        agents: "!VCHwQXgmXdyhhhPhoz:matrix.cloud.wispro.co"
+  skill-feedback:
     repo: sequre/ai_knowledge
-    scope: local
-    environment:
-      space_id: "${AGENT_REVIEW_SAPCE_ID}"
-      list_id: "${AGENT_LIST_ID}"
+  agent-issue:
+    repo: sequre/ai_knowledge
   documentation-writer:
     repo: github/awesome-copilot
     path: skills/documentation-writer
-    scope: local
-  find-skills:
-    repo: vercel-labs/skills
-    path: skills/find-skills
-    scope: local
   rabbitmq-expert:
     repo: martinholovsky/claude-skills-generator
     path: skills/rabbitmq-expert
-    scope: local
