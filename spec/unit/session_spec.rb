@@ -69,6 +69,75 @@ RSpec.describe BugBunny::Session do
     end
   end
 
+  describe '#on_return handler' do
+    let(:return_info) do
+      Struct.new(:reply_code, :reply_text, :exchange, :routing_key)
+            .new(312, 'NO_ROUTE', 'evt_x', 'unbound.key')
+    end
+    let(:properties) { double('properties') }
+    let(:body) { '{"a":1}' }
+
+    before do
+      # Logger en memoria para inspeccionar el default
+      @log_io = StringIO.new
+      BugBunny.configuration.logger = Logger.new(@log_io)
+      BugBunny.configuration.on_return = nil
+    end
+
+    after do
+      BugBunny.configuration.logger = Logger.new($stdout).tap { |l| l.level = Logger::INFO }
+      BugBunny.configuration.on_return = nil
+    end
+
+    it 'se registra cuando publisher_confirms está activo' do
+      session.channel # fuerza create_channel!
+
+      expect { channel.fire_return(return_info, properties, body) }.not_to raise_error
+    end
+
+    it 'NO se registra cuando publisher_confirms está desactivado' do
+      fresh_channel = BunnyMocks::FakeChannel.new(true)
+      fresh_conn = BunnyMocks::FakeConnection.new(true, fresh_channel)
+      no_confirms = described_class.new(fresh_conn, publisher_confirms: false)
+      no_confirms.channel
+
+      # Sin handler atachado, el ivar interno queda en nil.
+      expect(fresh_channel.instance_variable_get(:@on_return_handler)).to be_nil
+    end
+
+    it 'invoca el callback de Configuration#on_return cuando está definido' do
+      received = nil
+      BugBunny.configuration.on_return = lambda { |ri, props, b|
+        received = { rk: ri.routing_key, props: props, body: b }
+      }
+
+      session.channel
+      channel.fire_return(return_info, properties, body)
+
+      expect(received).to include(rk: 'unbound.key', body: '{"a":1}')
+    end
+
+    it 'logea session.broker_return como :warn cuando no hay callback' do
+      session.channel
+      channel.fire_return(return_info, properties, body)
+
+      log = @log_io.string
+      expect(log).to include('event=session.broker_return')
+      expect(log).to include('reply_code=312')
+      expect(log).to include('routing_key=unbound.key')
+      expect(log).to include('body_size=7')
+    end
+
+    it 'no propaga excepciones del callback de usuario' do
+      BugBunny.configuration.on_return = ->(_, _, _) { raise 'boom' }
+
+      session.channel
+
+      expect { channel.fire_return(return_info, properties, body) }.not_to raise_error
+      expect(@log_io.string).to include('event=session.on_return_failed')
+    end
+  end
+
   describe '#close' do
     it 'cierra el canal y lo nilifica' do
       session.channel

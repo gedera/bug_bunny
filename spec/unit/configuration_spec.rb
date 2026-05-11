@@ -149,6 +149,19 @@ RSpec.describe BugBunny::Configuration do
     end
   end
 
+  describe 'on_return callback' do
+    it 'tiene default nil' do
+      expect(BugBunny::Configuration.new.on_return).to be_nil
+    end
+
+    it 'acepta un Proc' do
+      cb = ->(_, _, _) { :noop }
+      configure_with(on_return: cb)
+
+      expect(BugBunny.configuration.on_return).to be(cb)
+    end
+  end
+
   describe '.validate! directamente' do
     it 'es invocable directamente sobre la instancia' do
       config = BugBunny::Configuration.new

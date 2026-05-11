@@ -47,5 +47,34 @@ RSpec.describe BugBunny::Request do
 
       expect(request.amqp_options[:headers]['x-http-method']).to eq('POST')
     end
+
+    it 'omite :mandatory cuando no fue activado' do
+      expect(request.amqp_options).not_to have_key(:mandatory)
+    end
+
+    it 'incluye :mandatory => true cuando se activa' do
+      request.mandatory = true
+
+      expect(request.amqp_options[:mandatory]).to be(true)
+    end
+  end
+
+  describe 'Publisher Confirms attributes' do
+    it 'tiene mandatory=false y confirm_timeout=nil por defecto' do
+      req = described_class.new('foo')
+
+      expect(req.mandatory).to be(false)
+      expect(req.confirm_timeout).to be_nil
+    end
+
+    it 'permite asignar mandatory y confirm_timeout' do
+      req = described_class.new('foo')
+
+      req.mandatory = true
+      req.confirm_timeout = 0.5
+
+      expect(req.mandatory).to be(true)
+      expect(req.confirm_timeout).to eq(0.5)
+    end
   end
 end

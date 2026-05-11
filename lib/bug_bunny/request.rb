@@ -19,15 +19,23 @@ module BugBunny
   # @attr routing_key [String] La routing key específica. Si es nil, se usará {#path}.
   # @attr timeout [Integer] Tiempo máximo en segundos para timeout RPC.
   #
-  # @attr delivery_mode [Symbol] El modo de entrega (:rpc o :publish).
+  # @attr delivery_mode [Symbol] El modo de entrega (:rpc, :publish o :confirmed).
   # @attr exchange_options [Hash] Opciones específicas para la declaración del Exchange en esta petición.
   # @attr queue_options [Hash] Opciones específicas para la declaración de la Cola en esta petición.
+  # @attr mandatory [Boolean] Si `true`, el mensaje debe ser ruteable o el broker lo retorna.
+  #   Solo aplica en modo :confirmed. El handler de retornos se configura globalmente
+  #   vía {BugBunny.configuration.on_return}.
+  # @attr confirm_timeout [Float, nil] Segundos máximos a esperar el `wait_for_confirms`.
+  #   `nil` espera indefinidamente.
   class Request
     attr_accessor :body, :headers, :params, :path, :method, :exchange, :exchange_type, :routing_key, :timeout,
                   :delivery_mode, :queue_options
 
     # Configuración de Infraestructura Específica
     attr_accessor :exchange_options
+
+    # Publisher Confirms (delivery_mode = :confirmed)
+    attr_accessor :mandatory, :confirm_timeout
 
     # Metadatos AMQP Estándar
     attr_accessor :app_id, :content_type, :content_encoding, :priority,
@@ -51,6 +59,10 @@ module BugBunny
       # Inicialización de opciones de infraestructura para evitar errores de nil durante el merge.
       @exchange_options = {}
       @queue_options = {}
+
+      # Defaults para Publisher Confirms (modo :confirmed)
+      @mandatory = false
+      @confirm_timeout = nil
     end
 
     # Combina el path con los params como query string.
@@ -114,7 +126,8 @@ module BugBunny
         persistent: persistent,
         headers: final_headers,
         reply_to: reply_to,
-        correlation_id: correlation_id
+        correlation_id: correlation_id,
+        mandatory: (true if mandatory)
       }.compact
     end
   end

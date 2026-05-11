@@ -15,6 +15,9 @@ Skill de conocimiento completo sobre BugBunny. Consultame para cualquier pregunt
 **Session** — `BugBunny::Session` envuelve canales de Bunny con thread-safety y double-checked locking.
 **RPC** — Patrón síncrono que usa la pseudo-cola `amq.rabbitmq.reply-to` para respuestas sin crear queues temporales.
 **Fire-and-Forget** — Patrón asíncrono donde el producer publica y continúa sin esperar respuesta. Retorna `{ 'status' => 202 }`.
+**Publisher Confirms** — Extensión de RabbitMQ que confirma al publisher que el broker recibió el mensaje. BugBunny lo expone como `confirmed: true` en `Client#publish`: el publish bloquea hasta `wait_for_confirms`. NACK no es fatal; se logea pero el método retorna 202.
+**Mandatory** — Flag de `basic.publish` que pide al broker retornar el mensaje al publisher si no es ruteable a ninguna cola. Se procesa via `basic.return` (no es respuesta del request).
+**basic.return** — Evento asincrónico del canal AMQP que entrega mensajes retornados. BugBunny lo enruta a un handler único por canal (`Configuration#on_return` o el default que logea).
 **Resource** — ORM tipo ActiveRecord que mapea operaciones CRUD a llamadas AMQP.
 **Consumer** — Worker bloqueante que despacha mensajes a controladores mediante un Router.
 **Connection Pool** — Pool de conexiones (`connection_pool` gem) que comparte sessions entre threads. Cada slot cachea su `Session` y `Producer`.
@@ -59,7 +62,7 @@ Skill de conocimiento completo sobre BugBunny. Consultame para cualquier pregunt
 |---|---|
 | `BugBunny::Configuration` | Configuración global. Valida campos requeridos en `BugBunny.configure`. |
 | `BugBunny::Session` | Wrapper de canal Bunny. Declara exchanges y queues. Thread-safe con double-checked locking. |
-| `BugBunny::Producer` | Publica mensajes. Implementa RPC con `Concurrent::IVar` y direct reply-to. |
+| `BugBunny::Producer` | Publica mensajes. Implementa tres modos: `#fire` (async), `#confirmed` (sync con `wait_for_confirms`) y `#rpc` (direct reply-to + `Concurrent::IVar`). |
 | `BugBunny::Client` | API de alto nivel. Pool de conexiones y middleware stack (onion architecture). |
 | `BugBunny::Consumer` | Subscribe loop con health check. Rutea mensajes via `BugBunny.routes`. |
 | `BugBunny::ConsumerMiddleware::Stack` | Pipeline de middlewares antes de `process_message`. Thread-safe. |
@@ -126,6 +129,11 @@ BugBunny.configure do |config|
   config.rpc_reply_headers = -> { { 'X-Trace-Id' => Tracer.id } }
   config.on_rpc_reply = ->(h) { Tracer.hydrate(h['X-Trace-Id']) }
 
+  # Publisher Confirms — handler global para basic.return (mensajes mandatory no ruteados).
+  # Si es nil, BugBunny logea como `session.broker_return` con nivel :warn.
+  # Firma: ->(return_info, properties, body)
+  config.on_return = ->(ri, _props, body) { MyAlerts.unroutable(rk: ri.routing_key, body: body) }
+
   # Infraestructura (cascade level 2)
   config.exchange_options = { durable: true }
   config.queue_options = { auto_delete: false }
@@ -169,7 +177,13 @@ Genera rutas REST estándar (index, show, create, update, destroy) mapeadas a co
 
 ---
 
-## API: RPC vs Fire-and-Forget
+## API: Modos de Entrega
+
+| Modo | Espera | Uso | Método |
+|---|---|---|---|
+| `:rpc` | Reply del consumer remoto | Request-response síncrono | `client.request(...)` |
+| `:publish` | Nada | Logs, eventos best-effort | `client.publish(...)` |
+| `:confirmed` | ACK del broker (`wait_for_confirms`) | Auditoría, billing, eventos críticos | `client.publish(..., confirmed: true)` |
 
 **RPC síncrono** — Bloquea hasta respuesta. Usa `amq.rabbitmq.reply-to`. Timeout configurable.
 ```ruby
@@ -182,6 +196,18 @@ response = client.request('users/42', method: :get)
 client.publish('events', method: :post, body: { type: 'order.placed' })
 # → { 'status' => 202, 'body' => nil }
 ```
+
+**Confirmed (Publisher Confirms)** — Bloquea hasta el ACK del broker. Garantía de entrega al broker (no al consumer remoto).
+```ruby
+client.publish('acct.start', exchange: 'acct_x', body: payload,
+               confirmed: true, mandatory: true, confirm_timeout: 0.5)
+# → { 'status' => 202, 'body' => nil }   # broker ACK confirmado
+# Si broker NACK: logea `producer.confirms_nacked` y retorna 202 igual (NACK ≠ pérdida).
+# Si timeout: raise BugBunny::RequestTimeout.
+# Si mandatory + no ruteable: dispara `Configuration#on_return` (default: logea `session.broker_return`).
+```
+
+`Bunny::Channel#wait_for_confirms` no soporta timeout nativo en Bunny 2.x. BugBunny lo implementa lanzando la espera en un hilo auxiliar y usando `Concurrent::IVar#value(timeout)` como reloj.
 
 ---
 

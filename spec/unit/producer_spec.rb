@@ -184,4 +184,108 @@ RSpec.describe BugBunny::Producer do
       end
     end
   end
+
+  describe '#confirmed' do
+    let(:fake_exchange) { double('exchange') }
+
+    let(:mock_channel) do
+      ch = double('channel')
+      allow(ch).to receive(:publish)
+      allow(ch).to receive(:open?).and_return(true)
+      allow(ch).to receive(:wait_for_confirms).and_return(true)
+      allow(ch).to receive(:nacked_set).and_return(Set.new)
+      ch
+    end
+
+    let(:mock_session) do
+      s = instance_double(BugBunny::Session)
+      allow(s).to receive(:exchange).and_return(fake_exchange)
+      allow(s).to receive(:channel).and_return(mock_channel)
+      s
+    end
+
+    let(:confirmed_producer) { described_class.new(mock_session) }
+
+    before do
+      allow(confirmed_producer).to receive(:safe_log) do |level, event, **kwargs|
+        logged_events << { level: level, event: event, kwargs: kwargs }
+      end
+      allow(fake_exchange).to receive(:publish)
+    end
+
+    def build_request
+      req = BugBunny::Request.new('acct.start')
+      req.exchange = 'acct_x'
+      req.method = :post
+      req.body = { tenant: 42 }
+      req
+    end
+
+    it 'retorna { status: 202 } cuando el broker confirma' do
+      result = confirmed_producer.confirmed(build_request)
+
+      expect(result).to eq('status' => 202, 'body' => nil)
+    end
+
+    it 'invoca wait_for_confirms en el canal' do
+      confirmed_producer.confirmed(build_request)
+
+      expect(mock_channel).to have_received(:wait_for_confirms)
+    end
+
+    it 'publica con mandatory: true cuando el request lo activa' do
+      req = build_request
+      req.mandatory = true
+
+      confirmed_producer.confirmed(req)
+
+      expect(fake_exchange).to have_received(:publish).with(
+        anything,
+        hash_including(mandatory: true, routing_key: 'acct.start')
+      )
+    end
+
+    it 'logea producer.confirms_nacked cuando hay nacks' do
+      allow(mock_channel).to receive(:nacked_set).and_return(Set.new([1, 2]))
+
+      confirmed_producer.confirmed(build_request)
+
+      nack_event = logged_events.find { |e| e[:event] == 'producer.confirms_nacked' }
+      expect(nack_event).not_to be_nil
+      expect(nack_event[:kwargs]).to include(count: 2, path: 'acct.start')
+    end
+
+    it 'NO logea producer.confirms_nacked cuando nacked_set está vacío' do
+      confirmed_producer.confirmed(build_request)
+
+      nack_event = logged_events.find { |e| e[:event] == 'producer.confirms_nacked' }
+      expect(nack_event).to be_nil
+    end
+
+    it 'levanta BugBunny::RequestTimeout si wait_for_confirms excede confirm_timeout' do
+      allow(mock_channel).to receive(:wait_for_confirms) {
+        sleep 1
+        true
+      }
+
+      req = build_request
+      req.confirm_timeout = 0.05
+
+      expect { confirmed_producer.confirmed(req) }.to raise_error(BugBunny::RequestTimeout, /Timeout/)
+    end
+
+    it 'envuelve errores del canal como BugBunny::CommunicationError' do
+      allow(mock_channel).to receive(:wait_for_confirms).and_raise(StandardError, 'boom')
+
+      expect { confirmed_producer.confirmed(build_request) }
+        .to raise_error(BugBunny::CommunicationError, /boom/)
+    end
+
+    it 'propaga BugBunny::Error sin envolver' do
+      allow(fake_exchange).to receive(:publish).and_raise(BugBunny::CommunicationError, 'chan dead')
+
+      expect { confirmed_producer.confirmed(build_request) }
+        .to raise_error(BugBunny::CommunicationError, 'chan dead')
+    end
+  end
 end

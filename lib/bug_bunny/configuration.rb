@@ -135,6 +135,24 @@ module BugBunny
     #     config.on_rpc_reply = ->(headers) { ExisRay::Tracer.hydrate(headers['X-Amzn-Trace-Id']) }
     attr_accessor :on_rpc_reply
 
+    # @return [Proc, nil] Callback invocado cuando el broker retorna un mensaje publicado con
+    #   `mandatory: true` que no pudo ser ruteado a ninguna cola. Si es `nil`, BugBunny logea
+    #   el evento como `session.broker_return` con nivel `:warn` por default.
+    #
+    #   Firma: `->(return_info, properties, body) { ... }` donde:
+    #   - `return_info` es `Bunny::ReturnInfo` (reply_code, reply_text, exchange, routing_key)
+    #   - `properties` es `Bunny::MessageProperties`
+    #   - `body` es el payload crudo como `String`
+    #
+    #   El callback se ejecuta en el hilo del consumidor interno de Bunny — debe ser rápido
+    #   y no lanzar excepciones (BugBunny las captura, pero degradan visibilidad).
+    #
+    #   @example
+    #     config.on_return = ->(ri, _props, body) {
+    #       MyAlerts.publish_unroutable(rk: ri.routing_key, body: body)
+    #     }
+    attr_accessor :on_return
+
     # @!endgroup
 
     # Inicializa la configuración con valores por defecto seguros.
@@ -178,6 +196,7 @@ module BugBunny
       @consumer_middlewares = ConsumerMiddleware::Stack.new
       @rpc_reply_headers = nil
       @on_rpc_reply = nil
+      @on_return = nil
     end
 
     # Construye la URL de conexión AMQP basada en los atributos configurados.
