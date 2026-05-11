@@ -4,7 +4,7 @@
 
 RESTful messaging over RabbitMQ for Ruby microservices.
 
-BugBunny maps AMQP messages to controllers, routes, and models using the same patterns as Rails. Services communicate through RabbitMQ without HTTP coupling, with full support for synchronous RPC and fire-and-forget publishing.
+BugBunny maps AMQP messages to controllers, routes, and models using the same patterns as Rails. Services communicate through RabbitMQ without HTTP coupling, with full support for synchronous RPC, fire-and-forget publishing, and sync publisher confirms for delivery-critical events.
 
 ---
 
@@ -141,6 +141,13 @@ BugBunny.configure do |config|
 
   # Health check file for Kubernetes / Docker Swarm liveness probes
   config.health_check_file = '/tmp/bug_bunny_health'
+
+  # Callback invoked when the broker returns an unroutable mandatory message.
+  # When nil (default), BugBunny logs the return as `session.broker_return` at :warn.
+  # Signature: ->(return_info, properties, body) { ... }
+  config.on_return = ->(return_info, _props, body) {
+    MyAlerts.publish_unroutable(rk: return_info.routing_key, body: body)
+  }
 end
 ```
 
@@ -192,6 +199,29 @@ client.publish('events', body: { type: 'user.signed_in', user_id: 42 })
 # With params
 client.request('users', method: :get, params: { role: 'admin', page: 2 })
 ```
+
+### Publisher Confirms (delivery-critical events)
+
+For events where you need a delivery guarantee from the broker (auditing, billing, accounting) without the cost of a full RPC, use `publish` with `confirmed: true`. The call blocks until the broker acknowledges receipt:
+
+```ruby
+client.publish('acct.start',
+               exchange:        'acct_events',
+               exchange_type:   'topic',
+               body:            { tenant_id: 42, plan: 'pro' },
+               confirmed:       true,
+               mandatory:       true,    # broker returns the message if no queue is bound
+               confirm_timeout: 0.5)     # seconds; nil waits forever
+# => { 'status' => 202, 'body' => nil }  # broker confirmed
+```
+
+| Option | Type | Default | Purpose |
+|---|---|---|---|
+| `confirmed` | Boolean | `false` | Block until `wait_for_confirms` returns. |
+| `mandatory` | Boolean | `false` | Broker returns the message if it cannot be routed to any queue. Requires `confirmed: true` to be useful. |
+| `confirm_timeout` | Float | `nil` | Seconds to wait for the broker ACK. Raises `BugBunny::RequestTimeout` if exceeded. |
+
+Unroutable returned messages are handled by a single global callback (see `config.on_return` below). The default handler logs them as `session.broker_return` at `warn` level — nothing is dropped silently.
 
 ---
 

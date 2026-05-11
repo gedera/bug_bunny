@@ -27,7 +27,7 @@ RSpec.describe BugBunny::Client, 'session pooling' do
   def client_with_pool(pool)
     client = described_class.new(pool: pool)
     # Stub Producer#rpc para que no toque RabbitMQ real
-    allow_any_instance_of(BugBunny::Producer).to receive(:rpc) do |_prod, req|
+    allow_any_instance_of(BugBunny::Producer).to receive(:rpc) do |_prod, _req|
       { 'status' => 200, 'body' => '{"ok":true}' }
     end
     allow_any_instance_of(BugBunny::Producer).to receive(:fire) do |_prod, _req|
@@ -115,7 +115,7 @@ RSpec.describe BugBunny::Client, 'session pooling' do
 
   describe 'thread-safety' do
     it 'múltiples threads con la misma conexión no generan Sessions duplicadas' do
-      conn   = fake_conn
+      conn = fake_conn
       # Pool siempre devuelve la misma conexión — simula concurrencia en el mismo slot
       pool = Object.new
       mutex = Mutex.new
@@ -135,6 +135,83 @@ RSpec.describe BugBunny::Client, 'session pooling' do
       threads.each(&:join)
 
       expect(session_new_count.value).to eq(1)
+    end
+  end
+
+  describe 'Delivery mode routing' do
+    def fake_conn_local
+      channel = BunnyMocks::FakeChannel.new(true)
+      BunnyMocks::FakeConnection.new(true, channel)
+    end
+
+    it 'publish con confirmed: true enruta a Producer#confirmed' do
+      conn = fake_conn_local
+      client = described_class.new(pool: fake_pool(conn))
+
+      confirmed_called = false
+      allow_any_instance_of(BugBunny::Producer).to receive(:confirmed) do |_prod, _req|
+        confirmed_called = true
+        { 'status' => 202, 'body' => nil }
+      end
+
+      client.publish('acct.start',
+                     exchange: 'x', exchange_type: 'direct', body: { a: 1 },
+                     confirmed: true)
+
+      expect(confirmed_called).to be(true)
+    end
+
+    it 'propaga mandatory y confirm_timeout al Request' do
+      conn = fake_conn_local
+      client = described_class.new(pool: fake_pool(conn))
+
+      captured = nil
+      allow_any_instance_of(BugBunny::Producer).to receive(:confirmed) do |_prod, req|
+        captured = req
+        { 'status' => 202, 'body' => nil }
+      end
+
+      client.publish('acct.start',
+                     exchange: 'x', exchange_type: 'direct',
+                     confirmed: true, mandatory: true, confirm_timeout: 0.5)
+
+      expect(captured.delivery_mode).to eq(:confirmed)
+      expect(captured.mandatory).to be(true)
+      expect(captured.confirm_timeout).to eq(0.5)
+    end
+
+    it 'publish sin confirmed: true sigue invocando #fire (backward compat)' do
+      conn = fake_conn_local
+      client = described_class.new(pool: fake_pool(conn))
+
+      fire_called = false
+      allow_any_instance_of(BugBunny::Producer).to receive(:fire) do |_prod, _req|
+        fire_called = true
+        { 'status' => 202, 'body' => nil }
+      end
+
+      client.publish('evt', exchange: 'x', exchange_type: 'direct', body: {})
+
+      expect(fire_called).to be(true)
+    end
+
+    it 'send con bloque permite setear delivery_mode = :confirmed' do
+      conn = fake_conn_local
+      client = described_class.new(pool: fake_pool(conn))
+
+      confirmed_called = false
+      allow_any_instance_of(BugBunny::Producer).to receive(:confirmed) do |_prod, _req|
+        confirmed_called = true
+        { 'status' => 202, 'body' => nil }
+      end
+
+      client.send('evt.x', exchange: 'x', exchange_type: 'direct') do |req|
+        req.delivery_mode = :confirmed
+        req.mandatory = true
+        req.confirm_timeout = 0.2
+      end
+
+      expect(confirmed_called).to be(true)
     end
   end
 

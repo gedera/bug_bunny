@@ -7,7 +7,7 @@ API de alto nivel para publicar mensajes. Usa un pool de conexiones y una pila d
 ### Métodos Principales
 
 ```ruby
-# RPC síncrono — bloquea hasta respuesta
+# RPC síncrono — bloquea hasta respuesta del consumer
 response = client.request('users/123', method: :get, timeout: 30)
 response = client.request('users', method: :post, body: { name: 'John' })
 # → { 'status' => 200, 'body' => {...} }
@@ -16,8 +16,17 @@ response = client.request('users', method: :post, body: { name: 'John' })
 client.publish('events/user_created', method: :post, body: { user_id: 42 })
 # → { 'status' => 202, 'body' => nil }
 
-# General con bloque
-client.send(url) { |req| req.delivery_mode = :publish }
+# Publisher Confirms — bloquea hasta ACK del broker (no del consumer)
+client.publish('acct.start', exchange: 'acct_x', body: payload,
+               confirmed: true, mandatory: true, confirm_timeout: 0.5)
+# → { 'status' => 202, 'body' => nil }
+
+# General con bloque — máximo control
+client.send(url) do |req|
+  req.delivery_mode = :confirmed
+  req.mandatory = true
+  req.confirm_timeout = 1.0
+end
 ```
 
 ### Argumentos de Request
@@ -34,12 +43,15 @@ client.send(url) { |req| req.delivery_mode = :publish }
 | `routing_key` | String | path | Override de routing key |
 | `exchange_options` | Hash | {} | Cascade level 3 |
 | `queue_options` | Hash | {} | Cascade level 3 |
+| `confirmed` | Boolean | `false` | En `Client#publish`, flipea `delivery_mode` a `:confirmed`. Bloquea hasta `wait_for_confirms`. |
+| `mandatory` | Boolean | `false` | Pide al broker retornar el mensaje si no es ruteable. Solo útil con `confirmed: true`. |
+| `confirm_timeout` | Float | `nil` | Segundos máximos a esperar el ACK. `nil` = espera indefinida. Excedido → `BugBunny::RequestTimeout`. |
 
 ## Producer (bajo nivel)
 
-El `Producer` es usado internamente por el `Client`. Implementa los dos patrones de entrega.
+El `Producer` es usado internamente por el `Client`. Implementa tres patrones de entrega.
 
-### RPC
+### RPC (`Producer#rpc`)
 
 - Usa `amq.rabbitmq.reply-to` (direct reply-to pattern).
 - Tracking de `correlation_id` en `Concurrent::Map` (thread-safe).
@@ -47,10 +59,18 @@ El `Producer` es usado internamente por el `Client`. Implementa los dos patrones
 - Double-checked locking mutex para seguridad del listener.
 - Timeout lanza `BugBunny::RequestTimeout`.
 
-### Fire-and-Forget
+### Fire-and-Forget (`Producer#fire`)
 
 - Publica en el exchange y retorna `{ 'status' => 202 }` inmediatamente.
 - Sin confirmación de procesamiento.
+
+### Confirmed (`Producer#confirmed`)
+
+- Publica y bloquea hasta `channel.wait_for_confirms` del broker.
+- Bunny 2.x **no soporta timeout** nativo en `wait_for_confirms` — BugBunny envuelve la llamada en un hilo auxiliar y usa `Concurrent::IVar#value(timeout)` como reloj. Si `confirm_timeout` expira → `BugBunny::RequestTimeout`.
+- NACK del broker no es fatal: se logea `producer.confirms_nacked` con `count` y `path`, y retorna 202 igual.
+- Si `mandatory: true` y el mensaje no es ruteable, el broker dispara `basic.return`. El handler está atachado **una sola vez en `Session#create_channel!`** (no por request) y delega a `Configuration#on_return` o al logger por default.
+- Errores del canal se envuelven en `BugBunny::CommunicationError`; errores `BugBunny::Error` pre-existentes se propagan sin envolver.
 
 ## Middleware Stack (Client-side, Onion Architecture)
 
@@ -135,14 +155,73 @@ req.body                  # Hash, Array, String o nil
 req.headers               # Hash custom
 req.params                # Hash query string
 req.full_path             # path + query string
-req.delivery_mode         # :rpc o :publish
+req.delivery_mode         # :rpc, :publish o :confirmed
 req.exchange              # String destino
 req.exchange_type         # 'direct', 'topic', 'fanout'
 req.correlation_id        # UUID auto-generado
 req.reply_to              # 'amq.rabbitmq.reply-to' (auto para RPC)
 req.timestamp             # Time.now.to_i
 req.content_type          # 'application/json'
+req.mandatory             # Boolean — solo modo :confirmed
+req.confirm_timeout       # Float|nil — solo modo :confirmed
 ```
+
+Cuando `mandatory == true`, `Request#amqp_options` inyecta `mandatory: true` en el hash que va a `basic_publish`.
+
+## Publisher Confirms y `basic.return`
+
+### Flujo
+
+```
+client.publish('x', confirmed: true, mandatory: true)
+   │
+   ▼
+Producer#confirmed
+   │
+   ├──> publish_message     (exchange.publish con mandatory: true)
+   │
+   ├──> wait_for_confirms!  (espera ACK del broker, con timeout opcional)
+   │
+   └──> log_nacks_if_any    (si nacked_set no está vacío → log WARN)
+
+Asíncronamente, si el broker no pudo rutear:
+   broker ──basic.return──> Session handler ──> Configuration#on_return
+                                            └──> default: log session.broker_return WARN
+```
+
+### `Configuration#on_return`
+
+El handler se registra **una sola vez** al crear el canal (en `Session#create_channel!` cuando `publisher_confirms: true`). Bunny soporta un único `on_return` por canal — registrarlo por request causaría races porque cada `channel.on_return(&block)` sobrescribe el anterior.
+
+```ruby
+BugBunny.configure do |c|
+  c.on_return = ->(return_info, properties, body) {
+    # return_info: Bunny::ReturnInfo (reply_code, reply_text, exchange, routing_key)
+    # properties:  Bunny::MessageProperties
+    # body:        String (payload crudo)
+    MyAlerts.unroutable(rk: return_info.routing_key, body: body)
+  }
+end
+```
+
+Si `on_return` es `nil` (default), BugBunny logea:
+
+```
+component=bug_bunny event=session.broker_return reply_code=312
+   reply_text="NO_ROUTE" exchange=evt_x routing_key=acct.start body_size=64
+```
+
+Excepciones del callback se capturan y se logean como `session.on_return_failed` para no romper el hilo I/O de Bunny.
+
+### Cuándo usar `:confirmed`
+
+| Escenario | Modo recomendado |
+|---|---|
+| Logs, eventos best-effort | `:publish` |
+| Auditoría, billing, eventos críticos | `:confirmed` (con `mandatory: true` si es ruteable) |
+| Request-response síncrono | `:rpc` |
+
+`:confirmed` cuesta un round-trip al broker pero **no** al consumer remoto — más rápido que RPC, con garantía de entrega al broker. NACK del broker es raro (típicamente por confirm policies internas) y no implica pérdida del mensaje.
 
 ## Cascada de Configuración (3 niveles)
 

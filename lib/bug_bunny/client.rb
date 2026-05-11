@@ -14,6 +14,10 @@ module BugBunny
   #
   # @example Publicación Fire-and-Forget (POST)
   #   client.publish('logs', method: :post, body: { msg: 'Error' })
+  #
+  # @example Publicación con Publisher Confirms sincrónicos
+  #   client.publish('acct.start', exchange: 'acct_x', body: payload,
+  #                  confirmed: true, mandatory: true, confirm_timeout: 0.5)
   class Client
     # @return [ConnectionPool] El pool de conexiones subyacente a RabbitMQ.
     attr_reader :pool
@@ -21,8 +25,14 @@ module BugBunny
     # @return [BugBunny::Middleware::Stack] La pila de middlewares configurada.
     attr_reader :stack
 
-    # @return [Symbol] El modo de entrega por defecto para este cliente (:rpc o :publish).
+    # @return [Symbol] El modo de entrega por defecto para este cliente (:rpc, :publish o :confirmed).
     attr_accessor :delivery_mode
+
+    # Argumentos del cliente que se mapean 1:1 a setters del Request.
+    REQUEST_ATTRS = %i[
+      delivery_mode method body exchange exchange_type routing_key
+      timeout exchange_options queue_options params
+    ].freeze
 
     # Inicializa un nuevo cliente.
     #
@@ -71,15 +81,24 @@ module BugBunny
       end
     end
 
-    # Realiza una publicación Asíncrona (Fire-and-Forget).
+    # Realiza una publicación Fire-and-Forget. Por default es asíncrono (no espera confirmación).
+    #
+    # Pasando `confirmed: true` activa Publisher Confirms síncronos: el método bloquea hasta
+    # que el broker confirme la recepción del mensaje. Útil para eventos críticos (auditoría,
+    # billing) donde se requiere garantía de entrega sin el overhead de un RPC completo.
     #
     # @param url [String] La ruta del evento/recurso.
-    # @param args [Hash] Mismas opciones que {#request}, excepto `:timeout`.
+    # @param args [Hash] Mismas opciones que {#request}, excepto `:timeout`. Adicionales:
+    # @option args [Boolean] :confirmed Si `true`, espera `wait_for_confirms` del broker.
+    # @option args [Boolean] :mandatory Si `true`, el broker retorna el mensaje si no es ruteable.
+    #   Para procesar retornos, configurar {BugBunny.configuration.on_return}.
+    # @option args [Float] :confirm_timeout Segundos a esperar el confirm. `nil` espera indefinidamente.
     # @yield [req] Bloque para configurar el objeto Request.
-    # @return [void]
+    # @return [Hash] `{ 'status' => 202, 'body' => nil }`.
+    # @raise [BugBunny::RequestTimeout] Si `confirmed: true` y el broker no confirma a tiempo.
     def publish(url, **args)
       send(url, **args) do |req|
-        req.delivery_mode = :publish
+        req.delivery_mode = args[:confirmed] ? :confirmed : :publish
         yield req if block_given?
       end
     end
@@ -93,45 +112,69 @@ module BugBunny
     # @param args [Hash] Argumentos pasados a los métodos públicos.
     # @yield [req] Bloque para configuración adicional del Request.
     def run_in_pool(url, args)
-      # 1. Builder del Request
-      req = BugBunny::Request.new(url)
+      req = build_request(url, args)
 
-      # 2. Syntactic Sugar: Mapeo de argumentos a atributos del Request
-      req.delivery_mode    = delivery_mode # Default del cliente
-      req.delivery_mode    = args[:delivery_mode]    if args[:delivery_mode]
-      req.method           = args[:method]           if args[:method]
-      req.body             = args[:body]             if args[:body]
-      req.exchange         = args[:exchange]         if args[:exchange]
-      req.exchange_type    = args[:exchange_type]    if args[:exchange_type]
-      req.routing_key      = args[:routing_key]      if args[:routing_key]
-      req.timeout          = args[:timeout]          if args[:timeout]
-
-      # Inyección de opciones de infraestructura (Nivel 3 de la cascada)
-      req.exchange_options = args[:exchange_options] if args[:exchange_options]
-      req.queue_options    = args[:queue_options]    if args[:queue_options]
-
-      req.params = args[:params] if args[:params]
-      req.headers.merge!(args[:headers]) if args[:headers]
-
-      # 3. Configuración del usuario (bloque específico por request)
+      # Configuración del usuario (bloque específico por request)
       yield req if block_given?
 
-      # 4. Ejecución dentro del Pool
+      # Ejecución dentro del Pool.
       # Session y Producer se reutilizan por slot de conexión (ver #session_for / #producer_for).
       @pool.with do |conn|
         session  = session_for(conn)
         producer = producer_for(conn, session)
 
-        # Mapeo de delivery_mode al método del productor (:rpc o :fire)
-        method_name  = req.delivery_mode == :publish ? :fire : :rpc
-
         # Onion Architecture: La acción final es llamar al Producer real.
-        final_action = ->(env) { producer.send(method_name, env) }
+        final_action = ->(env) { producer.send(producer_method_for(req.delivery_mode), env) }
 
-        # Construimos y ejecutamos la cadena de middlewares
-        app = @stack.build(final_action)
-        app.call(req)
+        @stack.build(final_action).call(req)
       end
+    end
+
+    # Construye y completa un Request a partir de los argumentos del usuario.
+    #
+    # @param url [String] La ruta destino.
+    # @param args [Hash] Argumentos pasados a los métodos públicos.
+    # @return [BugBunny::Request] Request listo para entrar al stack de middlewares.
+    def build_request(url, args)
+      req = BugBunny::Request.new(url)
+      req.delivery_mode = delivery_mode # Default del cliente
+      apply_args(req, args)
+      apply_publisher_confirms_args(req, args)
+      req
+    end
+
+    # Mapea los argumentos generales (no específicos de Publisher Confirms) sobre el Request.
+    #
+    # @param req [BugBunny::Request]
+    # @param args [Hash]
+    # @return [void]
+    def apply_args(req, args)
+      REQUEST_ATTRS.each do |key|
+        req.public_send("#{key}=", args[key]) if args[key]
+      end
+      req.headers.merge!(args[:headers]) if args[:headers]
+    end
+
+    # Mapea un delivery_mode al nombre del método correspondiente en el Producer.
+    #
+    # @param mode [Symbol] :rpc, :publish o :confirmed.
+    # @return [Symbol] :rpc, :fire o :confirmed.
+    def producer_method_for(mode)
+      case mode
+      when :publish   then :fire
+      when :confirmed then :confirmed
+      else :rpc
+      end
+    end
+
+    # Aplica los argumentos específicos del modo :confirmed sobre el Request.
+    #
+    # @param req [BugBunny::Request]
+    # @param args [Hash] Argumentos originales pasados al cliente.
+    # @return [void]
+    def apply_publisher_confirms_args(req, args)
+      req.mandatory       = args[:mandatory]       if args.key?(:mandatory)
+      req.confirm_timeout = args[:confirm_timeout] if args.key?(:confirm_timeout)
     end
 
     # Recupera o crea la Session asociada al slot de conexión dado.

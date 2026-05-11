@@ -38,22 +38,33 @@ module BugBunny
     # @param request [BugBunny::Request] Objeto con la configuración del envío (body, exchange_options, etc).
     # @return [Hash] Un hash de éxito simbólico ({ 'status' => 202 }).
     def fire(request)
-      # Obtenemos el exchange pasando las opciones específicas del request para la fusión en cascada
-      x = @session.exchange(
-        name: request.exchange,
-        type: request.exchange_type,
-        opts: request.exchange_options
-      )
-
-      payload = serialize_message(request.body)
-      opts = request.amqp_options
-
-      log_request(request, payload)
-
-      x.publish(payload, opts.merge(routing_key: request.final_routing_key))
-
+      publish_message(request)
       # Devolvemos un hash para evitar NoMethodError en el cliente (que espera una respuesta tipo Hash)
       { 'status' => 202, 'body' => nil }
+    end
+
+    # Envía un mensaje con Publisher Confirms síncronos (Fire-and-Forget confirmado).
+    #
+    # Publica el mensaje y bloquea el hilo actual hasta que el broker confirme su recepción
+    # vía `wait_for_confirms`. Soporta `mandatory: true` con callback `on_return` para
+    # mensajes que no pudieron rutearse.
+    #
+    # A diferencia de {#rpc} (que espera la respuesta de un Consumer remoto), aquí solo se
+    # espera el ACK del propio broker — no hay round-trip al servicio destino.
+    #
+    # @param request [BugBunny::Request] Request con `mandatory`, `confirm_timeout` y/o `on_return` opcionales.
+    # @return [Hash] `{ 'status' => 202, 'body' => nil }` si el broker confirmó la recepción.
+    # @raise [BugBunny::RequestTimeout] Si el broker no confirma dentro de `confirm_timeout` segundos.
+    # @raise [BugBunny::CommunicationError] Si el canal AMQP falla durante la publicación o confirm.
+    def confirmed(request)
+      publish_message(request)
+      wait_for_confirms!(request)
+      log_nacks_if_any(request)
+      { 'status' => 202, 'body' => nil }
+    rescue BugBunny::Error
+      raise
+    rescue StandardError => e
+      raise BugBunny::CommunicationError, "Publisher confirms failed: #{e.message}"
     end
 
     # Envía un mensaje y bloquea el hilo actual esperando una respuesta (RPC).
@@ -101,6 +112,63 @@ module BugBunny
     end
 
     private
+
+    # Resuelve exchange, serializa payload, logea y publica el mensaje.
+    # Compartido por {#fire} y {#confirmed}.
+    #
+    # @param request [BugBunny::Request]
+    # @return [void]
+    def publish_message(request)
+      x = @session.exchange(
+        name: request.exchange,
+        type: request.exchange_type,
+        opts: request.exchange_options
+      )
+      payload = serialize_message(request.body)
+      log_request(request, payload)
+      x.publish(payload, request.amqp_options.merge(routing_key: request.final_routing_key))
+    end
+
+    # Espera la confirmación del broker con timeout opcional.
+    # Bunny 2.24 no soporta timeout nativo en `wait_for_confirms`, así que delegamos
+    # la espera a un hilo auxiliar y usamos `Concurrent::IVar#value(timeout)` como reloj.
+    #
+    # @param request [BugBunny::Request]
+    # @raise [BugBunny::RequestTimeout] Si el broker no confirma a tiempo.
+    # @return [Boolean] true si todas las confirmaciones fueron positivas.
+    def wait_for_confirms!(request)
+      timeout = request.confirm_timeout
+      return @session.channel.wait_for_confirms if timeout.nil?
+
+      ivar = Concurrent::IVar.new
+      Thread.new do
+        ivar.set(@session.channel.wait_for_confirms)
+      rescue StandardError => e
+        ivar.fail(e)
+      end
+
+      result = ivar.value(timeout)
+      return result if ivar.complete?
+
+      raise BugBunny::RequestTimeout,
+            "Timeout (#{timeout}s) waiting for publisher confirms: #{request.path}"
+    end
+
+    # Logea las nack-eadas del canal si las hay.
+    # NACK no es un error fatal: el broker rechazó rutear (ej. confirm policy interna),
+    # pero el mensaje no se perdió silenciosamente — queda en el set para auditoría.
+    #
+    # @param request [BugBunny::Request]
+    # @return [void]
+    def log_nacks_if_any(request)
+      ch = @session.channel
+      return unless ch.respond_to?(:nacked_set)
+
+      nacked = ch.nacked_set
+      return if nacked.nil? || nacked.empty?
+
+      safe_log(:warn, 'producer.confirms_nacked', count: nacked.size, path: request.path)
+    end
 
     # Registra la petición en el log calculando las opciones de infraestructura.
     #

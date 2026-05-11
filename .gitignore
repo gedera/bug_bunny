@@ -12,3 +12,5 @@
 .agents/
 # Variables de entorno
 .env
+# Skills sync state (contiene rutas absolutas locales)
+skills.lock

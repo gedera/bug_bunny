@@ -120,11 +120,51 @@ module BugBunny
     def create_channel!
       @channel = @connection.create_channel
 
-      @channel.confirm_select if @publisher_confirms
+      if @publisher_confirms
+        @channel.confirm_select
+        register_on_return_handler!
+      end
 
       @channel.prefetch(BugBunny.configuration.channel_prefetch) if BugBunny.configuration.channel_prefetch
     rescue StandardError => e
       raise BugBunny::CommunicationError, "Failed to create channel: #{e.message}"
+    end
+
+    # Registra el handler `basic.return` del canal AMQP una única vez.
+    #
+    # Bunny soporta un solo `on_return` por canal — sobrescribirlo por request es propenso
+    # a races. Se setea acá al crear el canal y delega:
+    # - Si `BugBunny.configuration.on_return` está definido, lo invoca.
+    # - Sino, logea el retorno como `session.broker_return` con nivel `:warn`.
+    #
+    # @return [void]
+    def register_on_return_handler!
+      @channel.on_return do |return_info, properties, body|
+        handle_broker_return(return_info, properties, body)
+      end
+    end
+
+    # Procesa un evento `basic.return` del broker. Nunca propaga excepciones del callback
+    # de usuario para no romper el hilo de I/O de Bunny.
+    #
+    # @param return_info [Bunny::ReturnInfo]
+    # @param properties [Bunny::MessageProperties]
+    # @param body [String]
+    # @return [void]
+    def handle_broker_return(return_info, properties, body)
+      user_cb = BugBunny.configuration.on_return
+      if user_cb
+        user_cb.call(return_info, properties, body)
+      else
+        safe_log(:warn, 'session.broker_return',
+                 reply_code: return_info.reply_code,
+                 reply_text: return_info.reply_text,
+                 exchange: return_info.exchange,
+                 routing_key: return_info.routing_key,
+                 body_size: body.respond_to?(:bytesize) ? body.bytesize : nil)
+      end
+    rescue StandardError => e
+      safe_log(:error, 'session.on_return_failed', **exception_metadata(e))
     end
 
     # Garantiza que la conexión TCP esté abierta.
