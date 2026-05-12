@@ -95,6 +95,31 @@ RSpec.describe BugBunny::Producer do
           messaging_destination_name: 'events_x'
         )
       end
+
+      it 'producer.published incluye duration_s y campos de routing' do
+        request = BugBunny::Request.new('users')
+        request.exchange = 'users_x'
+        request.method = :post
+        request.correlation_id = 'corr-1'
+
+        fake_exchange = double('exchange')
+        allow(session).to receive(:exchange).and_return(fake_exchange)
+        allow(fake_exchange).to receive(:publish)
+
+        producer.fire(request)
+
+        published_event = logged_events.find { |e| e[:event] == 'producer.published' }
+        expect(published_event).not_to be_nil
+        expect(published_event[:level]).to eq(:info)
+        expect(published_event[:kwargs]).to include(
+          method: 'POST',
+          path: 'users',
+          routing_key: 'users',
+          messaging_message_id: 'corr-1'
+        )
+        expect(published_event[:kwargs][:duration_s]).to be_a(Numeric)
+        expect(published_event[:kwargs][:duration_s]).to be >= 0
+      end
     end
 
     describe '#rpc — log events incluyen campos OTel' do
@@ -182,6 +207,28 @@ RSpec.describe BugBunny::Producer do
           messaging_message_id: 'corr-reply-test'
         )
       end
+
+      it 'producer.rpc_response_received incluye duration_s total' do
+        request = BugBunny::Request.new('users')
+        request.exchange = 'users_x'
+        request.method = :get
+
+        allow(rpc_producer).to receive(:ensure_reply_listener!)
+
+        ivar = Concurrent::IVar.new
+        allow(Concurrent::IVar).to receive(:new).and_return(ivar)
+
+        request.correlation_id = 'corr-dur'
+        rpc_producer.instance_variable_get(:@pending_requests)['corr-dur'] = ivar
+
+        Thread.new { ivar.set({ body: '{"ok":true}', headers: {} }) }.join(0.1)
+
+        rpc_producer.rpc(request)
+
+        response_event = logged_events.find { |e| e[:event] == 'producer.rpc_response_received' }
+        expect(response_event[:kwargs][:duration_s]).to be_a(Numeric)
+        expect(response_event[:kwargs][:duration_s]).to be >= 0
+      end
     end
   end
 
@@ -250,6 +297,18 @@ RSpec.describe BugBunny::Producer do
 
       nack_event = logged_events.find { |e| e[:event] == 'producer.confirms_nacked' }
       expect(nack_event).to be_nil
+    end
+
+    it 'logea producer.confirmed con publish_duration_s, confirm_duration_s y duration_s total' do
+      confirmed_producer.confirmed(build_request)
+
+      ev = logged_events.find { |e| e[:event] == 'producer.confirmed' }
+      expect(ev).not_to be_nil
+      expect(ev[:level]).to eq(:info)
+      expect(ev[:kwargs]).to include(method: 'POST', path: 'acct.start', routing_key: 'acct.start')
+      expect(ev[:kwargs][:publish_duration_s]).to be_a(Numeric)
+      expect(ev[:kwargs][:confirm_duration_s]).to be_a(Numeric)
+      expect(ev[:kwargs][:duration_s]).to be_a(Numeric)
     end
 
     context 'cuando el broker NACKea (wait_for_confirms devuelve false)' do

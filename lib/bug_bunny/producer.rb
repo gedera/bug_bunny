@@ -60,9 +60,16 @@ module BugBunny
     #   (default `true` — ver {BugBunny::Configuration#nack_raise}).
     # @raise [BugBunny::CommunicationError] Si el canal AMQP falla durante la publicación o confirm.
     def confirmed(request)
-      publish_message(request)
+      started_at = monotonic_now
+      publish_duration = publish_message(request)
+
+      confirm_started_at = monotonic_now
       acked = wait_for_confirms!(request)
+      confirm_duration = duration_s(confirm_started_at)
+
       handle_confirm_result(request, acked)
+      log_confirmed(request, publish_duration, confirm_duration, started_at)
+
       { 'status' => 202, 'body' => nil }
     rescue BugBunny::Error
       raise
@@ -90,6 +97,7 @@ module BugBunny
       future = Concurrent::IVar.new
       @pending_requests[cid] = future
 
+      started_at = monotonic_now
       begin
         fire(request)
 
@@ -101,11 +109,7 @@ module BugBunny
         raise BugBunny::RequestTimeout, "Timeout waiting for RPC: #{request.path} [#{request.method}]" if result.nil?
 
         BugBunny.configuration.on_rpc_reply&.call(result[:headers])
-
-        safe_log(:debug, 'producer.rpc_response_received',
-                 messaging_system: 'rabbitmq', messaging_operation: 'receive', messaging_message_id: cid,
-                 response_body: result[:body]&.truncate(500),
-                 response_headers: result[:headers]&.to_json&.truncate(300))
+        log_rpc_response_received(request, cid, result, started_at)
 
         parse_response(result[:body])
       ensure
@@ -119,8 +123,11 @@ module BugBunny
     # Resuelve exchange, serializa payload, logea y publica el mensaje.
     # Compartido por {#fire} y {#confirmed}.
     #
+    # Emite `producer.publish` antes y `producer.published` después con `duration_s`
+    # midiendo solo el `basic_publish` (TCP enqueue al broker, sin esperar ACK).
+    #
     # @param request [BugBunny::Request]
-    # @return [void]
+    # @return [Float] duración del publish en segundos.
     def publish_message(request)
       x = @session.exchange(
         name: request.exchange,
@@ -129,7 +136,43 @@ module BugBunny
       )
       payload = serialize_message(request.body)
       log_request(request, payload)
+
+      started_at = monotonic_now
       x.publish(payload, request.amqp_options.merge(routing_key: request.final_routing_key))
+      publish_duration = duration_s(started_at)
+
+      log_published(request, publish_duration)
+      publish_duration
+    end
+
+    # @api private
+    def log_published(request, publish_duration_s)
+      safe_log(:info, 'producer.published',
+               method: request.method.to_s.upcase, path: request.path,
+               routing_key: request.final_routing_key,
+               messaging_message_id: request.correlation_id,
+               duration_s: publish_duration_s)
+    end
+
+    # @api private
+    def log_rpc_response_received(request, cid, result, started_at)
+      safe_log(:info, 'producer.rpc_response_received',
+               method: request.method.to_s.upcase, path: request.path,
+               messaging_system: 'rabbitmq', messaging_operation: 'receive', messaging_message_id: cid,
+               duration_s: duration_s(started_at),
+               response_body: result[:body]&.truncate(500),
+               response_headers: result[:headers]&.to_json&.truncate(300))
+    end
+
+    # @api private
+    def log_confirmed(request, publish_duration_s, confirm_duration_s, started_at)
+      safe_log(:info, 'producer.confirmed',
+               method: request.method.to_s.upcase, path: request.path,
+               routing_key: request.final_routing_key,
+               messaging_message_id: request.correlation_id,
+               publish_duration_s: publish_duration_s,
+               confirm_duration_s: confirm_duration_s,
+               duration_s: duration_s(started_at))
     end
 
     # Espera la confirmación del broker con timeout opcional.

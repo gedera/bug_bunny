@@ -97,6 +97,37 @@ BugBunny implementa las [OpenTelemetry semantic conventions for messaging](https
 - **Consumer:** Extrae los campos de los logs estructurados sin mutar los headers originales. Los eventos `consumer.message_received` y `consumer.message_processed` incluyen estos campos automáticamente.
 - **RPC Reply:** El consumer inyecta los mismos campos en el reply para cerrar el ciclo de traza del lado del cliente.
 
+### Eventos de log y duraciones internas
+
+BugBunny mide y emite duraciones automáticamente. **No envolver llamadas a `client.publish` con `Process.clock_gettime` en código de aplicación** — duplica el trabajo. Las duraciones siguen las [OpenTelemetry metric semantic conventions](https://opentelemetry.io/docs/specs/semconv/general/metrics/) (`duration_s` como `Float` en segundos).
+
+| Evento | Nivel | Emitido por | Campos clave |
+|---|---|---|---|
+| `producer.publish` | INFO | `Producer#publish_message` (pre) | `method`, `path`, `messaging_*` |
+| `producer.publish_payload` | INFO | `Producer#publish_message` | `payload` (truncado), `body_size` |
+| `producer.publish_detail` | DEBUG | `Producer#publish_message` | `exchange_opts` final |
+| `producer.published` | INFO | `Producer#publish_message` (post) | `method`, `path`, `routing_key`, `messaging_message_id`, **`duration_s`** (publish solo) |
+| `producer.confirmed` | INFO | `Producer#confirmed` (post-ACK) | `method`, `path`, `routing_key`, **`publish_duration_s`**, **`confirm_duration_s`**, **`duration_s`** (total) |
+| `producer.confirms_nacked` | WARN | `Producer#confirmed` (NACK) | `count`, `path` |
+| `producer.rpc_waiting` | DEBUG | `Producer#rpc` | `messaging_message_id`, `timeout_s` |
+| `producer.rpc_response_received` | INFO | `Producer#rpc` (reply recibido) | `method`, `path`, **`duration_s`** (round-trip total), `response_body` |
+| `producer.rpc_response_orphaned` | WARN | reply listener | `correlation_id` |
+| `consumer.message_received` | INFO | `Consumer#process_message` | `method`, `path`, `messaging_*` |
+| `consumer.message_processed` | INFO | `Consumer#process_message` (post) | `response_status`, **`duration_s`**, `controller`, `action`, `messaging_*` |
+| `consumer.execution_error` | ERROR | `Consumer#process_message` (rescue) | **`duration_s`**, `error_class`, `error_message` |
+| `consumer.route_not_found` | WARN | `Consumer#process_message` | `method`, `path` |
+| `consumer.connection_error` | ERROR | `Consumer#subscribe` (retry loop) | `attempt_count`, `retry_in_s`, `error_*` |
+| `session.broker_return` | WARN | `Session` (mandatory unrouted) | `reply_code`, `reply_text`, `exchange`, `routing_key` |
+
+**Resumen de qué mide cada `duration_s`:**
+
+- `producer.published.duration_s` — solo el `basic_publish` (TCP enqueue al broker).
+- `producer.confirmed.publish_duration_s` — el publish.
+- `producer.confirmed.confirm_duration_s` — la espera del ACK del broker (`wait_for_confirms`).
+- `producer.confirmed.duration_s` — total (publish + ACK).
+- `producer.rpc_response_received.duration_s` — round-trip RPC completo (publish + procesamiento remoto + reply).
+- `consumer.message_processed.duration_s` — procesamiento server-side (router + controller + reply).
+
 ---
 
 ## API: Configuración Global

@@ -252,10 +252,26 @@ BugBunny implementa de forma nativa las [OpenTelemetry semantic conventions for 
 Todos los eventos internos se emiten como logs `key=value` compatibles con Datadog, CloudWatch, ELK y ExisRay.
 
 ```
+component=bug_bunny event=producer.publish method=POST path=acct/publish messaging_destination_name=acct_x messaging_routing_key=acct.start.42
+component=bug_bunny event=producer.published method=POST path=acct/publish routing_key=acct.start.42 messaging_message_id=corr-1 duration_s=0.000812
+component=bug_bunny event=producer.confirmed method=POST path=acct/publish routing_key=acct.start.42 publish_duration_s=0.000812 confirm_duration_s=0.012 duration_s=0.013
+component=bug_bunny event=producer.rpc_response_received method=GET path=users/42 duration_s=0.034 messaging_operation=receive
 component=bug_bunny event=consumer.message_processed status=200 duration_s=0.012 messaging_operation=process controller=NodesController action=show
 component=bug_bunny event=consumer.execution_error error_class=RuntimeError error_message="..." duration_s=0.003
 component=bug_bunny event=consumer.connection_error attempt_count=2 retry_in_s=10 error_message="..."
 ```
+
+### Duraciones medidas internamente
+
+BugBunny mide y emite duraciones automáticamente — **no es necesario envolver llamadas a `client.publish` con `Process.clock_gettime` en el código de aplicación**. Las unidades siguen las [OpenTelemetry metric semantic conventions](https://opentelemetry.io/docs/specs/semconv/general/metrics/) (`s`, segundos como `Float`).
+
+| Evento | Duración | Mide |
+|---|---|---|
+| `producer.published` | `duration_s` | Solo el `basic_publish` (TCP enqueue al broker). |
+| `producer.confirmed` | `publish_duration_s` + `confirm_duration_s` + `duration_s` (total) | Publish + espera de ACK del broker. |
+| `producer.rpc_response_received` | `duration_s` | Round-trip RPC completo (publish + procesamiento remoto + reply). |
+| `consumer.message_processed` | `duration_s` | Procesamiento del mensaje (router + controller + reply). |
+| `consumer.execution_error` | `duration_s` | Tiempo transcurrido hasta el error. |
 
 Las claves sensibles (`password`, `token`, `secret`, `api_key`, `authorization`, etc.) se filtran automáticamente a `[FILTERED]` en toda la salida de logs.
 

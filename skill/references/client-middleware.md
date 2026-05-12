@@ -59,11 +59,13 @@ El `Producer` es usado internamente por el `Client`. Implementa tres patrones de
 - Reply listener (`basic_consume`) auto-iniciado en el primer RPC.
 - Double-checked locking mutex para seguridad del listener.
 - Timeout lanza `BugBunny::RequestTimeout`.
+- **Emite `producer.rpc_response_received` (INFO) con `duration_s` = round-trip total** (publish + procesamiento remoto + reply). No medir en código de aplicación.
 
 ### Fire-and-Forget (`Producer#fire`)
 
 - Publica en el exchange y retorna `{ 'status' => 202 }` inmediatamente.
 - Sin confirmación de procesamiento.
+- **Emite `producer.published` (INFO) con `duration_s`** = solo el `basic_publish` (TCP enqueue al broker).
 
 ### Confirmed (`Producer#confirmed`)
 
@@ -72,6 +74,7 @@ El `Producer` es usado internamente por el `Client`. Implementa tres patrones de
 - Si `wait_for_confirms` devuelve `false` (broker NACKea), se logea `producer.confirms_nacked` con `count` y `path`. Por default (`config.nack_raise = true`) levanta `BugBunny::PublishNacked` con `path` y `nacked_count`. Para opt-out: `config.nack_raise = false` o pasar `nack_raise: false` per request — en ese caso solo logea y retorna 202.
 - Si `mandatory: true` y el mensaje no es ruteable, el broker dispara `basic.return`. El handler se atacha vía `Bunny::Exchange#on_return` en `Session#exchange` la primera vez que se resuelve cada exchange (cacheado por nombre, una sola vez por canal) y delega a `Configuration#on_return` o al logger por default.
 - Errores del canal se envuelven en `BugBunny::CommunicationError`; errores `BugBunny::Error` pre-existentes se propagan sin envolver.
+- **Emite `producer.confirmed` (INFO) con tres duraciones desglosadas**: `publish_duration_s` (TCP enqueue), `confirm_duration_s` (`wait_for_confirms`), `duration_s` (total). Útil para distinguir latencia de red vs latencia de confirm policy del broker.
 
 ## Middleware Stack (Client-side, Onion Architecture)
 
