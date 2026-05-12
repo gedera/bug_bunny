@@ -1,5 +1,19 @@
 # Changelog
 
+## [4.14.0] - 2026-05-12
+
+### Nuevas funcionalidades
+- **Duraciones medidas internamente en el Producer:** BugBunny ahora emite `duration_s` automáticamente en los eventos del publisher siguiendo las [OpenTelemetry metric semantic conventions](https://opentelemetry.io/docs/specs/semconv/general/metrics/) (`Float` en segundos). El código de aplicación ya no necesita envolver `client.publish` con `Process.clock_gettime`. — @Gabriel
+  - `producer.published` (INFO): `duration_s` del `basic_publish` (TCP enqueue al broker, sin esperar ACK).
+  - `producer.confirmed` (INFO): tres duraciones desglosadas — `publish_duration_s`, `confirm_duration_s` (espera de `wait_for_confirms`) y `duration_s` total. Útil para distinguir latencia de red vs latencia del confirm policy del broker.
+  - `producer.rpc_response_received`: ahora incluye `duration_s` con el round-trip RPC completo (publish + procesamiento remoto + reply).
+
+### Cambios de comportamiento
+- **`producer.rpc_response_received` promovido de DEBUG a INFO.** No es breaking de API pero aumenta el volumen de logs en clientes RPC. Si el cambio impacta tu pipeline de observabilidad, filtralo por nivel.
+
+### Documentación
+- README + `skill/SKILL.md` + `skill/references/client-middleware.md` actualizados con el catálogo completo de eventos de log emitidos por la gema y la tabla de qué mide cada `duration_s`. Mensaje explícito en ambas audiencias (humana + agente) advirtiendo no duplicar la medición en código de aplicación.
+
 ## [4.13.0] - 2026-05-11
 
 ### Nuevas funcionalidades
