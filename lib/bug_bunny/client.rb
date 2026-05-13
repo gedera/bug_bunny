@@ -95,11 +95,19 @@ module BugBunny
     # @option args [Float] :confirm_timeout Segundos a esperar el confirm. `nil` espera indefinidamente.
     # @option args [Boolean] :nack_raise Override per-request del flag
     #   `BugBunny.configuration.nack_raise`. Si `nil` (default), se usa la configuración global.
+    # @option args [Boolean] :return_raise Override per-request del flag
+    #   `BugBunny.configuration.return_raise`. Si `nil` (default), se usa la configuración global.
+    #   Requiere `mandatory: true` y `confirmed: true` para tener efecto — sino se emite un
+    #   warning y el flag se ignora.
     # @yield [req] Bloque para configurar el objeto Request.
     # @return [Hash] `{ 'status' => 202, 'body' => nil }`.
     # @raise [BugBunny::RequestTimeout] Si `confirmed: true` y el broker no confirma a tiempo.
     # @raise [BugBunny::PublishNacked] Si `confirmed: true`, el broker NACKea, y `nack_raise` resuelto es true.
+    # @raise [BugBunny::PublishUnroutable] Si `confirmed: true`, `mandatory: true`, el broker retorna el
+    #   mensaje como no-ruteable, y `return_raise` resuelto es true.
     def publish(url, **args)
+      warn_return_raise_misuse(args)
+
       send(url, **args) do |req|
         req.delivery_mode = args[:confirmed] ? :confirmed : :publish
         yield req if block_given?
@@ -179,6 +187,24 @@ module BugBunny
       req.mandatory       = args[:mandatory]       if args.key?(:mandatory)
       req.confirm_timeout = args[:confirm_timeout] if args.key?(:confirm_timeout)
       req.nack_raise      = args[:nack_raise]      if args.key?(:nack_raise)
+      req.return_raise    = args[:return_raise]    if args.key?(:return_raise)
+    end
+
+    # Emite un warning si el caller pasa `return_raise: true` sin `confirmed: true` o sin
+    # `mandatory: true`. El flag requiere ambos para tener efecto: sin confirmed no hay
+    # synchronization point sobre el cual levantar, y sin mandatory el broker nunca retorna.
+    #
+    # @param args [Hash]
+    # @return [void]
+    def warn_return_raise_misuse(args)
+      return unless args[:return_raise] == true
+      return if args[:confirmed] && args[:mandatory]
+
+      BugBunny.configuration.logger&.warn do
+        'component=bug_bunny event=client.return_raise_ignored ' \
+          'reason=requires_confirmed_and_mandatory ' \
+          "confirmed=#{!!args[:confirmed]} mandatory=#{!!args[:mandatory]}"
+      end
     end
 
     # Recupera o crea la Session asociada al slot de conexión dado.

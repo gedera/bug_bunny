@@ -1,5 +1,20 @@
 # Changelog
 
+## [4.15.0] - 2026-05-13
+
+### Nuevas funcionalidades
+- **`return_raise` flag para mandatory + basic.return (#38):** `Producer#confirmed` ahora levanta `BugBunny::PublishUnroutable` cuando el broker retorna un mensaje publicado con `mandatory: true` que no pudo rutearse a ninguna cola. Espejo simétrico de `nack_raise`/`PublishNacked`. La excepción expone `path`, `exchange`, `routing_key`, `reply_code`, `reply_text` y `correlation_id`. Internamente la gema implementa el bridge cross-thread (reader thread → publish thread) que antes cada caller tenía que replicar manualmente con `Concurrent::Map` + lambda. Configurable globalmente vía `BugBunny.configuration.return_raise` (default `true`) y por request via `client.publish(..., return_raise: false)`. El callback global `on_return` se sigue invocando antes del raise. — @Gabriel
+
+### Cambios de comportamiento (semi-breaking)
+- **Default `return_raise: true`:** Publicaciones con `confirmed: true, mandatory: true` que reciben `basic.return` del broker ahora levantan excepción por default. En 4.14.0 el return solo se logueaba (o invocaba el callback `on_return`) y la llamada retornaba 202 silenciosamente — ocultando pérdida de mensajes. Para mantener el comportamiento previo: `BugBunny.configuration.return_raise = false` o `return_raise: false` per request. El flag es **inerte cuando `mandatory: false`** — sin mandatory el broker nunca emite return.
+
+### Detalles internos
+- `Producer#confirmed` auto-asigna `correlation_id` (UUID) cuando falta y `mandatory + return_raise` están activos — la correlación bridge↔return depende del cid.
+- Nuevo bound de espera `Producer::RETURN_RACE_WINDOW_S = 0.05` tras un ack positivo: tolera el race scheduling entre reader thread (donde Bunny invoca `on_return`) y publish thread (donde se devuelve `wait_for_confirms`). AMQP garantiza orden wire (return precede a ack), pero defendemos contra GVL.
+- `Session` ahora mantiene un registry interno `@pending_returns` (`Concurrent::Map` de cid → `{event, info}`). `handle_broker_return` setea el event *antes* de invocar el user_cb global — una excepción del callback no impide el raise en el caller.
+- Nuevo evento de log `producer.publish_unroutable` (WARN) con `path`, `exchange`, `routing_key`, `reply_code`, `reply_text`, `messaging_message_id`. Se emite antes de levantar `PublishUnroutable`.
+- Nuevo evento de log `client.return_raise_ignored` (WARN) cuando se pasa `return_raise: true` sin `confirmed: true` o sin `mandatory: true` — el flag se ignora.
+
 ## [4.14.0] - 2026-05-12
 
 ### Nuevas funcionalidades

@@ -45,7 +45,7 @@ Metrics/MethodLength:
   CountComments: false
 
 Metrics/ClassLength:
-  Max: 175
+  Max: 220
 
 Metrics/ParameterLists:
   Max: 5

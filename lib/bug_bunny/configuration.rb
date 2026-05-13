@@ -162,6 +162,19 @@ module BugBunny
     #   `Client#publish`.
     attr_accessor :nack_raise
 
+    # @return [Boolean] Si `true` (default), {BugBunny::Producer#confirmed} levanta
+    #   {BugBunny::PublishUnroutable} cuando el broker retorna un mensaje publicado
+    #   con `mandatory: true` que no pudo rutearse. Si `false`, el return solo se
+    #   procesa via {#on_return} callback (modo legacy) y la llamada retorna
+    #   `{ 'status' => 202 }`.
+    #
+    #   El flag es inerte cuando `mandatory: false` (sin mandatory, el broker nunca
+    #   retorna). El callback {#on_return} se sigue invocando antes del raise.
+    #
+    #   El valor puede sobreescribirse por request pasando `return_raise:` en
+    #   `Client#publish`.
+    attr_accessor :return_raise
+
     # @!endgroup
 
     # Inicializa la configuración con valores por defecto seguros.
@@ -239,6 +252,7 @@ module BugBunny
       @on_rpc_reply = nil
       @on_return = nil
       @nack_raise = true
+      @return_raise = true
     end
 
     def validate_required!(attr, value, rules)

@@ -76,5 +76,21 @@ RSpec.describe BugBunny::Request do
       expect(req.mandatory).to be(true)
       expect(req.confirm_timeout).to eq(0.5)
     end
+
+    it 'tiene return_raise=nil por defecto (delega a config global)' do
+      req = described_class.new('foo')
+
+      expect(req.return_raise).to be_nil
+    end
+
+    it 'permite asignar return_raise' do
+      req = described_class.new('foo')
+
+      req.return_raise = false
+      expect(req.return_raise).to be(false)
+
+      req.return_raise = true
+      expect(req.return_raise).to be(true)
+    end
   end
 end
