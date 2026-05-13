@@ -245,6 +245,21 @@ client.publish('acct.start', exchange: 'acct_x', body: payload,
 # → { 'status' => 202, 'body' => nil }   # broker ACK confirmado
 ```
 
+**Receta canónica de publisher productivo (auditoría / billing / accounting):**
+```ruby
+client.publish('acct.start',
+               exchange:         'ingest.radius',
+               exchange_type:    :topic,
+               exchange_options: { durable: true },    # matchear declaración del consumer
+               body:             payload,
+               confirmed:        true,                 # broker ACK síncrono
+               mandatory:        true,                 # raise PublishUnroutable si no hay binding
+               persistent:       true,                 # delivery_mode: 2 — sobrevive restart
+               correlation_id:   SecureRandom.uuid,    # tracing explícito
+               app_id:           'radius_manager')
+```
+A partir de 4.17, `persistent`, `correlation_id`, `priority`, `app_id`, `content_type`, `content_encoding` y `expiration` están en `Client::REQUEST_ATTRS` y se aceptan como kwargs. El block API sigue funcionando para overrides puntuales o para atributos no expuestos (`timestamp`, `type`).
+
 **Dos señales del broker, dos excepciones simétricas:**
 
 | Señal | Default | Excepción | Campos |
@@ -310,6 +325,29 @@ No guardar el resultado de `Order.with(...)` en una variable para múltiples lla
 
 ### Registrar middleware durante call()
 No registrar consumer middlewares durante la ejecución de `call()`. El stack toma un snapshot al inicio; los registros concurrentes no afectan la ejecución actual.
+
+### Pasar `path:` como kwarg a `Client#publish` / `#request`
+El primer argumento es **posicional** (`url`). No hay kwarg `:path`. Splatear un hash que tenga `path:` falla con `ArgumentError: wrong number of arguments`. Construir args sin path y pasar la URL aparte:
+```ruby
+args = { exchange: 'x', body: payload }
+client.publish('event.name', **args)   # ✅
+client.publish(**args.merge(path: 'event.name'))  # ❌
+```
+
+### Asumir que `confirmed: true` implica persistencia
+`confirmed: true` solo activa Publisher Confirms (broker ACK síncrono). **NO** setea `delivery_mode: 2`. El default de `Request#persistent` es `false` — el mensaje vive en RAM del broker y se pierde si reinicia. Para eventos críticos sobre queue durable hay que pasar `persistent: true` (a partir de 4.17) o setearlo via block. Tabla de decisión:
+
+| Necesitás | Pasar |
+|---|---|
+| Broker confirma recepción | `confirmed: true` |
+| Mensaje sobrevive restart | `persistent: true` (requiere queue `durable: true`) |
+| Raise si no rutea | `mandatory: true` (+ `return_raise: true` default) |
+
+### Olvidar `exchange_options: { durable: true }` en publishers a exchange compartido
+`DEFAULT_EXCHANGE_OPTIONS = { durable: false, auto_delete: false }`. Si un consumer previamente declaró el exchange como durable (caso normal en producción), un publisher que use el default va a recibir `Bunny::PreconditionFailed - inequivalent arg 'durable'` al re-declarar. Solución: pasar `exchange_options: { durable: true }` en el publisher, o setear global `BugBunny.configure { |c| c.exchange_options = { durable: true } }`.
+
+### Confiar en `instance_double(BugBunny::Client)` para detectar errores de signature
+Limitación de RSpec: `instance_double` valida que el método exista pero **no** valida arity estricta cuando el caller hace `**args` splat. Tests con mocks pasan, integration con broker real rompe. Mitigación: para cada publisher nuevo, sumar un smoke spec `:integration` que declare queue exclusiva con binding, publique, haga `queue.pop`, y verifique `correlation_id`, `delivery_mode`, `headers`, `routing_key`.
 
 ---
 

@@ -287,6 +287,108 @@ RSpec.describe BugBunny::Client, 'session pooling' do
     end
   end
 
+  describe 'AMQP metadata kwargs (REQUEST_ATTRS extension)' do
+    let(:fake_exchange) { double('exchange', publish: nil) }
+
+    def stub_producer_capture
+      captured = nil
+      allow_any_instance_of(BugBunny::Producer).to receive(:fire) do |_prod, req|
+        captured = req
+        { 'status' => 202, 'body' => nil }
+      end
+      allow_any_instance_of(BugBunny::Producer).to receive(:confirmed) do |_prod, req|
+        captured = req
+        { 'status' => 202, 'body' => nil }
+      end
+      [-> { captured }]
+    end
+
+    it 'persistent: true se propaga al Request via kwarg' do
+      client = described_class.new(pool: fake_pool(fake_conn))
+      get_req, = stub_producer_capture
+
+      client.publish('evt', exchange: 'x', exchange_type: 'direct', persistent: true)
+
+      expect(get_req.call.persistent).to be(true)
+    end
+
+    it 'persistent: false explícito se honra (no se filtra como falsy)' do
+      client = described_class.new(pool: fake_pool(fake_conn))
+      get_req, = stub_producer_capture
+
+      client.publish('evt', exchange: 'x', exchange_type: 'direct', persistent: false)
+
+      expect(get_req.call.persistent).to be(false)
+    end
+
+    it 'correlation_id: se propaga al Request via kwarg' do
+      client = described_class.new(pool: fake_pool(fake_conn))
+      get_req, = stub_producer_capture
+
+      client.publish('evt', exchange: 'x', exchange_type: 'direct', correlation_id: 'cid-123')
+
+      expect(get_req.call.correlation_id).to eq('cid-123')
+    end
+
+    it 'priority: se propaga al Request via kwarg' do
+      client = described_class.new(pool: fake_pool(fake_conn))
+      get_req, = stub_producer_capture
+
+      client.publish('evt', exchange: 'x', exchange_type: 'direct', priority: 9)
+
+      expect(get_req.call.priority).to eq(9)
+    end
+
+    it 'app_id, content_type, content_encoding, expiration se propagan via kwargs' do
+      client = described_class.new(pool: fake_pool(fake_conn))
+      get_req, = stub_producer_capture
+
+      client.publish('evt',
+                     exchange: 'x', exchange_type: 'direct',
+                     app_id: 'radius_manager',
+                     content_type: 'application/x-protobuf',
+                     content_encoding: 'gzip',
+                     expiration: '60000')
+
+      req = get_req.call
+      expect(req.app_id).to eq('radius_manager')
+      expect(req.content_type).to eq('application/x-protobuf')
+      expect(req.content_encoding).to eq('gzip')
+      expect(req.expiration).to eq('60000')
+    end
+
+    it 'block API sigue funcionando para atributos no expuestos como kwarg (ej: timestamp, type)' do
+      client = described_class.new(pool: fake_pool(fake_conn))
+      get_req, = stub_producer_capture
+
+      ts = Time.now.to_i - 100
+      client.publish('evt', exchange: 'x', exchange_type: 'direct') do |req|
+        req.timestamp = ts
+        req.type = 'custom.type'
+      end
+
+      req = get_req.call
+      expect(req.timestamp).to eq(ts)
+      expect(req.type).to eq('custom.type')
+    end
+
+    it 'kwargs y block API coexisten — block corre después y puede sobrescribir' do
+      client = described_class.new(pool: fake_pool(fake_conn))
+      get_req, = stub_producer_capture
+
+      client.publish('evt',
+                     exchange: 'x', exchange_type: 'direct',
+                     persistent: false, priority: 1) do |req|
+        req.persistent = true
+        req.priority = 9
+      end
+
+      req = get_req.call
+      expect(req.persistent).to be(true)
+      expect(req.priority).to eq(9)
+    end
+  end
+
   describe 'Session no se cierra entre requests' do
     it 'no invoca close en la Session al terminar el request' do
       conn   = fake_conn
