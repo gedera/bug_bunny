@@ -15,7 +15,9 @@ Skill de conocimiento completo sobre BugBunny. Consultame para cualquier pregunt
 **Session** — `BugBunny::Session` envuelve canales de Bunny con thread-safety y double-checked locking.
 **RPC** — Patrón síncrono que usa la pseudo-cola `amq.rabbitmq.reply-to` para respuestas sin crear queues temporales.
 **Fire-and-Forget** — Patrón asíncrono donde el producer publica y continúa sin esperar respuesta. Retorna `{ 'status' => 202 }`.
-**Publisher Confirms** — Extensión de RabbitMQ que confirma al publisher que el broker recibió el mensaje. BugBunny lo expone como `confirmed: true` en `Client#publish`: el publish bloquea hasta `wait_for_confirms`. NACK del broker (rechazo explícito) levanta `BugBunny::PublishNacked` por default; configurable via `config.nack_raise = false` o `nack_raise: false` per request para volver al modo log-only.
+**Publisher Confirms** — Extensión de RabbitMQ que confirma al publisher que el broker recibió el mensaje. BugBunny lo expone como `confirmed: true` en `Client#publish`: el publish bloquea hasta `wait_for_confirms`. Dos señales asíncronas del broker, ambas convertidas en excepciones raise-eables en el publish thread:
+- **NACK** (rechazo explícito) → `BugBunny::PublishNacked` (configurable via `config.nack_raise = false`).
+- **basic.return** (mandatory unroutable) → `BugBunny::PublishUnroutable` (configurable via `config.return_raise = false`).
 **Mandatory** — Flag de `basic.publish` que pide al broker retornar el mensaje al publisher si no es ruteable a ninguna cola. Se procesa via `basic.return` (no es respuesta del request).
 **basic.return** — Evento asincrónico que Bunny dispatcha por exchange (`Bunny::Exchange#on_return`). BugBunny registra un handler único por nombre de exchange al resolverlo en `Session#exchange` y lo delega a `Configuration#on_return` o al default que logea.
 **Resource** — ORM tipo ActiveRecord que mapea operaciones CRUD a llamadas AMQP.
@@ -109,6 +111,8 @@ BugBunny mide y emite duraciones automáticamente. **No envolver llamadas a `cli
 | `producer.published` | INFO | `Producer#publish_message` (post) | `method`, `path`, `routing_key`, `messaging_message_id`, **`duration_s`** (publish solo) |
 | `producer.confirmed` | INFO | `Producer#confirmed` (post-ACK) | `method`, `path`, `routing_key`, **`publish_duration_s`**, **`confirm_duration_s`**, **`duration_s`** (total) |
 | `producer.confirms_nacked` | WARN | `Producer#confirmed` (NACK) | `count`, `path` |
+| `producer.publish_unroutable` | WARN | `Producer#confirmed` (basic.return) | `path`, `exchange`, `routing_key`, `reply_code`, `reply_text`, `messaging_message_id` |
+| `client.return_raise_ignored` | WARN | `Client#publish` | `delivery_mode`, `mandatory` (cuando `return_raise:true` se pasa sin prereqs) |
 | `producer.rpc_waiting` | DEBUG | `Producer#rpc` | `messaging_message_id`, `timeout_s` |
 | `producer.rpc_response_received` | INFO | `Producer#rpc` (reply recibido) | `method`, `path`, **`duration_s`** (round-trip total), `response_body` |
 | `producer.rpc_response_orphaned` | WARN | reply listener | `correlation_id` |
@@ -160,8 +164,14 @@ BugBunny.configure do |config|
   config.rpc_reply_headers = -> { { 'X-Trace-Id' => Tracer.id } }
   config.on_rpc_reply = ->(h) { Tracer.hydrate(h['X-Trace-Id']) }
 
-  # Publisher Confirms — handler global para basic.return (mensajes mandatory no ruteados).
-  # Si es nil, BugBunny logea como `session.broker_return` con nivel :warn.
+  # Publisher Confirms — fail-loud por default (ambos true).
+  # Setear false para volver al comportamiento legacy "log y retorna 202".
+  config.nack_raise   = true   # NACK → raise BugBunny::PublishNacked
+  config.return_raise = true   # basic.return (mandatory) → raise BugBunny::PublishUnroutable
+
+  # Callback global para basic.return. Corre ANTES del raise PublishUnroutable
+  # cuando return_raise es true. Si on_return es nil, BugBunny logea
+  # `session.broker_return` con nivel :warn.
   # Firma: ->(return_info, properties, body)
   config.on_return = ->(ri, _props, body) { MyAlerts.unroutable(rk: ri.routing_key, body: body) }
 
@@ -233,11 +243,32 @@ client.publish('events', method: :post, body: { type: 'order.placed' })
 client.publish('acct.start', exchange: 'acct_x', body: payload,
                confirmed: true, mandatory: true, confirm_timeout: 0.5)
 # → { 'status' => 202, 'body' => nil }   # broker ACK confirmado
-# Si broker NACK: logea `producer.confirms_nacked` y raise BugBunny::PublishNacked
-#   (default — opt-out con config.nack_raise = false o nack_raise: false per request).
-# Si timeout: raise BugBunny::RequestTimeout.
-# Si mandatory + no ruteable: dispara `Configuration#on_return` (default: logea `session.broker_return`).
 ```
+
+**Dos señales del broker, dos excepciones simétricas:**
+
+| Señal | Default | Excepción | Campos |
+|---|---|---|---|
+| `basic.nack` | raise | `BugBunny::PublishNacked` | `path`, `nacked_count` |
+| `basic.return` (mandatory unrouted) | raise | `BugBunny::PublishUnroutable` | `path`, `exchange`, `routing_key`, `reply_code`, `reply_text`, `correlation_id` |
+
+```ruby
+# Comportamiento default (4.13+ para nack_raise, 4.15+ para return_raise):
+#   broker NACK → PublishNacked
+#   mandatory + unroutable → on_return callback (si está) → PublishUnroutable
+#   timeout en wait_for_confirms → RequestTimeout
+#
+# Opt-out (modo "log + 202 silencioso"):
+config.nack_raise   = false  # o per-request: nack_raise: false
+config.return_raise = false  # o per-request: return_raise: false
+
+# Override per-request gana sobre config global:
+client.publish('foo', confirmed: true, mandatory: true, return_raise: false, body: {})
+```
+
+**Bridge cross-thread interno (basic.return):** `basic.return` viaja en el reader thread de Bunny (asíncrono). Para hacer `PublishUnroutable` raise-able en el publish thread, BugBunny mantiene un `Session#@pending_returns = Concurrent::Map` correlacionado por `correlation_id`. `Producer#confirmed` auto-asigna `correlation_id` (UUID v4) si falta, registra un `Concurrent::Event` antes del publish, y tras `wait_for_confirms` true espera `RETURN_RACE_WINDOW_S` (50ms) para tolerar GVL scheduling — AMQP garantiza orden wire `return → ack`. El `on_return` user callback se invoca igual antes del raise (orden: signal event → user_cb → raise), así una excepción en el callback no impide el raise.
+
+**Inert cases:** `return_raise: true` sin `mandatory: true` o sin `confirmed: true` emite `client.return_raise_ignored` (WARN) y se ignora — el flag requiere ambos prereqs.
 
 `Bunny::Channel#wait_for_confirms` no soporta timeout nativo en Bunny 2.x. BugBunny lo implementa lanzando la espera en un hilo auxiliar y usando `Concurrent::IVar#value(timeout)` como reloj.
 

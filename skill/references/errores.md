@@ -9,6 +9,7 @@ StandardError
     ├── BugBunny::ConfigurationError
     ├── BugBunny::SecurityError
     ├── BugBunny::PublishNacked
+    ├── BugBunny::PublishUnroutable
     ├── BugBunny::ClientError (4xx)
     │   ├── BugBunny::BadRequest (400)
     │   ├── BugBunny::NotFound (404)
@@ -43,6 +44,12 @@ StandardError
 **Cuándo:** `Producer#confirmed` detecta `wait_for_confirms == false`. Se levanta por default (`config.nack_raise = true`).
 **Atributos:** `path` (ruta del request) y `nacked_count` (cantidad de delivery tags NACKeados).
 **Resolución:** Para casos críticos (auditoría, billing, RADIUS accounting), dejar que la excepción bubble para que el caller upstream reintente (ej: HTTP 503 → retry). Para tolerar NACKs (eventos best-effort), `BugBunny.configuration.nack_raise = false` global o `nack_raise: false` per request — en ese caso solo se logea `producer.confirms_nacked`.
+
+### BugBunny::PublishUnroutable
+**Causa:** El broker retornó un mensaje publicado con `mandatory: true` que no pudo rutearse a ninguna cola en modo `:confirmed` (queue inexistente, sin bindings que matcheen la routing key, etc.). Espejo simétrico de `PublishNacked` pero para la señal `basic.return` en lugar de `basic.nack`.
+**Cuándo:** `Producer#confirmed` con `mandatory: true` detecta un `basic.return` correlacionado por `correlation_id` antes/durante el ACK. Se levanta por default (`config.return_raise = true`, introducido en 4.15).
+**Atributos:** `path`, `exchange`, `routing_key`, `reply_code` (típicamente 312 = NO_ROUTE), `reply_text` y `correlation_id`.
+**Resolución:** Mismo patrón que `PublishNacked` — bubble en publishers críticos para traducir a HTTP 5xx + retry upstream. El `config.on_return` callback se sigue invocando antes del raise (alerting/metrics intactos). Para opt-out: `config.return_raise = false` global o `return_raise: false` per request. Inert cuando `mandatory: false` (sin mandatory el broker nunca emite `basic.return`).
 
 ## Errores de Cliente (4xx)
 
