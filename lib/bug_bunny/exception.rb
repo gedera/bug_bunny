@@ -50,6 +50,67 @@ module BugBunny
     end
   end
 
+  # Error lanzado cuando el broker retorna un mensaje publicado con `mandatory: true`
+  # que no pudo rutearse a ninguna cola en modo `:confirmed`.
+  #
+  # Un return implica que el publish llegó al broker pero ninguna binding aceptó la
+  # routing key — el mensaje se considera no entregado desde la perspectiva del
+  # publisher. Espejo simétrico de {PublishNacked} pero para la señal `basic.return`
+  # en lugar de `basic.nack`.
+  #
+  # Se levanta por default desde {BugBunny::Producer#confirmed} cuando el request
+  # tiene `mandatory: true`. Para opt-out, configurar
+  # `BugBunny.configuration.return_raise = false` o pasar `return_raise: false`
+  # por request. El callback `BugBunny.configuration.on_return` se sigue invocando
+  # antes del raise (orden: registro interno → user_cb → raise en el caller).
+  #
+  # @example
+  #   rescue BugBunny::PublishUnroutable => e
+  #     e.path           # => 'acct.start'
+  #     e.exchange       # => 'acct_x'
+  #     e.routing_key    # => 'acct.unbound'
+  #     e.reply_code     # => 312
+  #     e.reply_text     # => 'NO_ROUTE'
+  #     e.correlation_id # => 'corr-uuid-...'
+  class PublishUnroutable < Error
+    # @return [String] Ruta lógica del request cuyo publish fue retornado.
+    attr_reader :path
+
+    # @return [String] Nombre del exchange destino.
+    attr_reader :exchange
+
+    # @return [String] Routing key utilizada en el publish.
+    attr_reader :routing_key
+
+    # @return [Integer, nil] Código AMQP de la razón (ej: 312 = NO_ROUTE).
+    attr_reader :reply_code
+
+    # @return [String, nil] Texto humano-legible que describe la razón.
+    attr_reader :reply_text
+
+    # @return [String, nil] Correlation ID del request retornado.
+    attr_reader :correlation_id
+
+    # @param path [String] Ruta lógica del request (ej: 'acct.start').
+    # @param exchange [String] Nombre del exchange destino.
+    # @param routing_key [String] Routing key del publish.
+    # @param reply_code [Integer, nil] Código AMQP del return.
+    # @param reply_text [String, nil] Texto del return.
+    # @param correlation_id [String, nil] Correlation ID del mensaje retornado.
+    # rubocop:disable Metrics/ParameterLists
+    def initialize(path:, exchange:, routing_key:, reply_code: nil, reply_text: nil, correlation_id: nil)
+      @path = path
+      @exchange = exchange
+      @routing_key = routing_key
+      @reply_code = reply_code
+      @reply_text = reply_text
+      @correlation_id = correlation_id
+      super("broker returned unroutable message on path=#{path} exchange=#{exchange} " \
+            "routing_key=#{routing_key} reply_code=#{reply_code} reply_text=#{reply_text}")
+    end
+    # rubocop:enable Metrics/ParameterLists
+  end
+
   # ==========================================
   # Categoría: Errores del Cliente (4xx)
   # ==========================================

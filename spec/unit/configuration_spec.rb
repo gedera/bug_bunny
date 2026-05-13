@@ -174,6 +174,18 @@ RSpec.describe BugBunny::Configuration do
     end
   end
 
+  describe 'return_raise flag' do
+    it 'tiene default true (raise PublishUnroutable en basic.return)' do
+      expect(BugBunny::Configuration.new.return_raise).to be(true)
+    end
+
+    it 'acepta false para opt-out (modo legacy)' do
+      configure_with(return_raise: false)
+
+      expect(BugBunny.configuration.return_raise).to be(false)
+    end
+  end
+
   describe '.validate! directamente' do
     it 'es invocable directamente sobre la instancia' do
       config = BugBunny::Configuration.new

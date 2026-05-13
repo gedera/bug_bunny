@@ -151,6 +151,78 @@ RSpec.describe BugBunny::Session do
     end
   end
 
+  describe '#register_return_listener / #unregister_return_listener' do
+    let(:properties_for) do
+      ->(cid) { double('properties', correlation_id: cid) }
+    end
+
+    let(:return_info) do
+      Struct.new(:reply_code, :reply_text, :exchange, :routing_key)
+            .new(312, 'NO_ROUTE', 'evt_x', 'rk')
+    end
+
+    before do
+      BugBunny.configuration.on_return = nil
+    end
+
+    after do
+      BugBunny.configuration.on_return = nil
+    end
+
+    it 'devuelve un Concurrent::Event y un slot que se setean al disparar el return' do
+      event, slot = session.register_return_listener('corr-1')
+
+      expect(event).to be_a(Concurrent::Event)
+      expect(slot[:info]).to be_nil
+
+      session.send(:handle_broker_return, return_info, properties_for.call('corr-1'), 'payload')
+
+      expect(event.set?).to be(true)
+      expect(slot[:info]).to eq(return_info)
+    end
+
+    it 'no toca otros listeners cuando llega un return de otro correlation_id' do
+      event_a, slot_a = session.register_return_listener('corr-A')
+      event_b, slot_b = session.register_return_listener('corr-B')
+
+      session.send(:handle_broker_return, return_info, properties_for.call('corr-A'), 'p')
+
+      expect(event_a.set?).to be(true)
+      expect(slot_a[:info]).to eq(return_info)
+      expect(event_b.set?).to be(false)
+      expect(slot_b[:info]).to be_nil
+    end
+
+    it 'ignora returns sin correlation_id en properties' do
+      event, slot = session.register_return_listener('corr-1')
+      props = double('properties', correlation_id: nil)
+
+      expect { session.send(:handle_broker_return, return_info, props, 'p') }.not_to raise_error
+      expect(event.set?).to be(false)
+      expect(slot[:info]).to be_nil
+    end
+
+    it '#unregister_return_listener limpia el slot del registry' do
+      session.register_return_listener('corr-1')
+      session.unregister_return_listener('corr-1')
+
+      registry = session.instance_variable_get(:@pending_returns)
+      expect(registry['corr-1']).to be_nil
+    end
+
+    it 'setea el event ANTES de invocar el callback global on_return (resiliencia a user_cb que explota)' do
+      BugBunny.configuration.on_return = ->(_, _, _) { raise 'boom in user callback' }
+
+      event, slot = session.register_return_listener('corr-1')
+
+      expect { session.send(:handle_broker_return, return_info, properties_for.call('corr-1'), 'p') }
+        .not_to raise_error
+
+      expect(event.set?).to be(true)
+      expect(slot[:info]).to eq(return_info)
+    end
+  end
+
   describe '#close' do
     it 'cierra el canal y lo nilifica' do
       session.channel

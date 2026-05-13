@@ -15,6 +15,13 @@ module BugBunny
   class Producer
     include BugBunny::Observability
 
+    # Bound de espera (segundos) que el publish thread aplica tras un ack positivo para
+    # tolerar el scheduling race entre reader thread (donde Bunny invoca `on_return`) y
+    # publish thread (donde se devuelve `wait_for_confirms`). AMQP garantiza que el
+    # `basic.return` precede al `basic.ack` en la wire, así que en la práctica el event
+    # ya está seteado al llegar acá; este wait es defensa contra GVL.
+    RETURN_RACE_WINDOW_S = 0.05
+
     # Inicializa el productor.
     #
     # Prepara las estructuras de concurrencia necesarias para manejar múltiples
@@ -58,8 +65,13 @@ module BugBunny
     # @raise [BugBunny::RequestTimeout] Si el broker no confirma dentro de `confirm_timeout` segundos.
     # @raise [BugBunny::PublishNacked] Si el broker NACKea la publicación y `nack_raise` está activo
     #   (default `true` — ver {BugBunny::Configuration#nack_raise}).
+    # @raise [BugBunny::PublishUnroutable] Si `mandatory: true` y el broker retorna el mensaje como
+    #   no-ruteable, con `return_raise` activo (default `true` — ver
+    #   {BugBunny::Configuration#return_raise}).
     # @raise [BugBunny::CommunicationError] Si el canal AMQP falla durante la publicación o confirm.
     def confirmed(request)
+      return_listener = nil
+      return_listener = setup_return_listener(request)
       started_at = monotonic_now
       publish_duration = publish_message(request)
 
@@ -68,6 +80,7 @@ module BugBunny
       confirm_duration = duration_s(confirm_started_at)
 
       handle_confirm_result(request, acked)
+      handle_return_result(request, return_listener)
       log_confirmed(request, publish_duration, confirm_duration, started_at)
 
       { 'status' => 202, 'body' => nil }
@@ -75,6 +88,8 @@ module BugBunny
       raise
     rescue StandardError => e
       raise BugBunny::CommunicationError, "Publisher confirms failed: #{e.message}"
+    ensure
+      teardown_return_listener(request, return_listener)
     end
 
     # Envía un mensaje y bloquea el hilo actual esperando una respuesta (RPC).
@@ -238,6 +253,95 @@ module BugBunny
       return request.nack_raise unless request.nack_raise.nil?
 
       BugBunny.configuration.nack_raise
+    end
+
+    # Resuelve el flag `return_raise` con prioridad request > configuración global.
+    # El flag solo tiene efecto cuando `mandatory: true` — sin mandatory el broker
+    # nunca emite `basic.return`.
+    #
+    # @param request [BugBunny::Request]
+    # @return [Boolean]
+    def return_raise?(request)
+      return false unless request.mandatory
+
+      return request.return_raise unless request.return_raise.nil?
+
+      BugBunny.configuration.return_raise
+    end
+
+    # Registra un listener de `basic.return` en la Session asociada al `correlation_id`
+    # del request. Si return_raise? es false (mandatory off o flag desactivado), retorna
+    # `nil` y el resto del flow ignora la lógica de unroutable.
+    #
+    # Auto-asigna `correlation_id` si falta — sin cid no hay clave de correlación.
+    #
+    # @param request [BugBunny::Request]
+    # @return [Hash, nil] Hash con `:cid` y `:slot` (el slot expone `:event` y `:info`),
+    #   o `nil` si no aplica.
+    def setup_return_listener(request)
+      return nil unless return_raise?(request)
+
+      request.correlation_id ||= SecureRandom.uuid
+      cid = request.correlation_id.to_s
+      _event, slot = @session.register_return_listener(cid)
+      { cid: cid, slot: slot }
+    end
+
+    # Tras un ack positivo, espera brevemente al event del listener para tolerar el
+    # scheduling race entre reader thread (donde corre `on_return`) y publish thread.
+    # En AMQP el `basic.return` precede al `basic.ack`, así que normalmente el event
+    # ya está seteado al llegar acá; el bounded wait defiende contra GVL/scheduling.
+    #
+    # @param request [BugBunny::Request]
+    # @param return_listener [Hash, nil] Resultado de {#setup_return_listener}.
+    # @return [void]
+    # @raise [BugBunny::PublishUnroutable] Si el listener recibió un return.
+    def handle_return_result(request, return_listener)
+      return unless return_listener
+
+      slot = return_listener[:slot]
+      slot[:event].wait(RETURN_RACE_WINDOW_S)
+      info = slot[:info]
+      return if info.nil?
+
+      raise_unroutable!(request, return_listener[:cid], info)
+    end
+
+    # Logea y levanta {BugBunny::PublishUnroutable} con los datos del return.
+    #
+    # @param request [BugBunny::Request]
+    # @param cid [String]
+    # @param info [Bunny::ReturnInfo, #exchange, #routing_key, #reply_code, #reply_text]
+    # @raise [BugBunny::PublishUnroutable]
+    def raise_unroutable!(request, cid, info)
+      safe_log(:warn, 'producer.publish_unroutable',
+               path: request.path,
+               exchange: info.exchange,
+               routing_key: info.routing_key,
+               reply_code: info.reply_code,
+               reply_text: info.reply_text,
+               messaging_message_id: cid)
+
+      raise BugBunny::PublishUnroutable.new(
+        path: request.path,
+        exchange: info.exchange,
+        routing_key: info.routing_key,
+        reply_code: info.reply_code,
+        reply_text: info.reply_text,
+        correlation_id: cid
+      )
+    end
+
+    # Cleanup del listener en la Session. Siempre se llama desde el `ensure` de
+    # {#confirmed}, sea cual sea el outcome (ack, nack, timeout, return).
+    #
+    # @param request [BugBunny::Request]
+    # @param return_listener [Hash, nil]
+    # @return [void]
+    def teardown_return_listener(_request, return_listener)
+      return unless return_listener
+
+      @session.unregister_return_listener(return_listener[:cid])
     end
 
     # Registra la petición en el log calculando las opciones de infraestructura.

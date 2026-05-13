@@ -248,6 +248,12 @@ RSpec.describe BugBunny::Producer do
       s = instance_double(BugBunny::Session)
       allow(s).to receive(:exchange).and_return(fake_exchange)
       allow(s).to receive(:channel).and_return(mock_channel)
+      # Return registry stubs: tests que activan `mandatory: true` con `return_raise`
+      # default invocan estos hooks. Devolvemos un event/slot vacío (no return).
+      allow(s).to receive(:register_return_listener) do |_cid|
+        [Concurrent::Event.new, { event: Concurrent::Event.new, info: nil }]
+      end
+      allow(s).to receive(:unregister_return_listener)
       s
     end
 
@@ -383,6 +389,207 @@ RSpec.describe BugBunny::Producer do
 
       expect { confirmed_producer.confirmed(build_request) }
         .to raise_error(BugBunny::CommunicationError, 'chan dead')
+    end
+
+    describe 'return_raise (basic.return + mandatory)' do
+      # Dispara el `basic.return` desde el reader-thread simulado. El stub de
+      # wait_for_confirms invoca este lambda *antes* de retornar true, simulando
+      # el orden AMQP wire: return precede al ack.
+      def stub_return_during_wait(producer, return_info)
+        allow(mock_channel).to receive(:wait_for_confirms) do
+          props = double('properties', correlation_id: producer_pending_cid(producer))
+          producer.instance_variable_get(:@session)
+                  .send(:handle_broker_return, return_info, props, 'payload')
+          true
+        end
+      end
+
+      def producer_pending_cid(producer)
+        session = producer.instance_variable_get(:@session)
+        registry = session.instance_variable_get(:@pending_returns)
+        cids = []
+        registry.each_pair { |cid, _slot| cids << cid }
+        cids.first
+      end
+
+      let(:return_info) do
+        Struct.new(:reply_code, :reply_text, :exchange, :routing_key)
+              .new(312, 'NO_ROUTE', 'acct_x', 'acct.unbound')
+      end
+
+      let(:real_session) do
+        s = BugBunny::Session.new(BunnyMocks::FakeConnection.new(true, mock_channel))
+        allow(s).to receive(:channel).and_return(mock_channel)
+        allow(s).to receive(:exchange).and_return(fake_exchange)
+        s
+      end
+
+      let(:return_producer) do
+        p = described_class.new(real_session)
+        allow(p).to receive(:safe_log) do |level, event, **kwargs|
+          logged_events << { level: level, event: event, kwargs: kwargs }
+        end
+        p
+      end
+
+      before do
+        BugBunny.configuration.on_return = nil
+      end
+
+      after do
+        BugBunny.configuration.on_return = nil
+      end
+
+      def build_mandatory_request
+        req = BugBunny::Request.new('acct.start')
+        req.exchange = 'acct_x'
+        req.method = :post
+        req.body = { tenant: 42 }
+        req.mandatory = true
+        req
+      end
+
+      it 'levanta PublishUnroutable cuando llega basic.return + ack y mandatory:true (default)' do
+        stub_return_during_wait(return_producer, return_info)
+
+        req = build_mandatory_request
+
+        expect { return_producer.confirmed(req) }.to raise_error(BugBunny::PublishUnroutable) do |err|
+          expect(err.path).to eq('acct.start')
+          expect(err.exchange).to eq('acct_x')
+          expect(err.routing_key).to eq('acct.unbound')
+          expect(err.reply_code).to eq(312)
+          expect(err.reply_text).to eq('NO_ROUTE')
+          expect(err.correlation_id).to eq(req.correlation_id)
+        end
+      end
+
+      it 'logea producer.publish_unroutable antes de levantar' do
+        stub_return_during_wait(return_producer, return_info)
+
+        expect { return_producer.confirmed(build_mandatory_request) }
+          .to raise_error(BugBunny::PublishUnroutable)
+
+        ev = logged_events.find { |e| e[:event] == 'producer.publish_unroutable' }
+        expect(ev).not_to be_nil
+        expect(ev[:level]).to eq(:warn)
+        expect(ev[:kwargs]).to include(
+          path: 'acct.start',
+          exchange: 'acct_x',
+          routing_key: 'acct.unbound',
+          reply_code: 312
+        )
+      end
+
+      it 'auto-asigna correlation_id cuando falta y return_raise está activo' do
+        stub_return_during_wait(return_producer, return_info)
+        req = build_mandatory_request
+        expect(req.correlation_id).to be_nil
+
+        expect { return_producer.confirmed(req) }.to raise_error(BugBunny::PublishUnroutable)
+        expect(req.correlation_id).to be_a(String)
+        expect(req.correlation_id).not_to be_empty
+      end
+
+      it 'limpia el listener del registry tras un return (no leak)' do
+        stub_return_during_wait(return_producer, return_info)
+        req = build_mandatory_request
+
+        expect { return_producer.confirmed(req) }.to raise_error(BugBunny::PublishUnroutable)
+
+        registry = real_session.instance_variable_get(:@pending_returns)
+        expect(registry.size).to eq(0)
+      end
+
+      it 'limpia el listener del registry tras un ack normal sin return' do
+        # mock_channel.wait_for_confirms default ya devuelve true sin disparar return
+        req = build_mandatory_request
+        result = return_producer.confirmed(req)
+
+        expect(result).to eq('status' => 202, 'body' => nil)
+        registry = real_session.instance_variable_get(:@pending_returns)
+        expect(registry.size).to eq(0)
+      end
+
+      it 'limpia el listener del registry tras timeout en wait_for_confirms' do
+        allow(mock_channel).to receive(:wait_for_confirms) {
+          sleep 1
+          true
+        }
+
+        req = build_mandatory_request
+        req.confirm_timeout = 0.05
+
+        expect { return_producer.confirmed(req) }.to raise_error(BugBunny::RequestTimeout)
+        registry = real_session.instance_variable_get(:@pending_returns)
+        expect(registry.size).to eq(0)
+      end
+
+      it 'no levanta cuando el request override `return_raise: false`' do
+        # No stub de return — el listener no se registra siquiera.
+        req = build_mandatory_request
+        req.return_raise = false
+
+        result = return_producer.confirmed(req)
+        expect(result).to eq('status' => 202, 'body' => nil)
+        # Sin listener registrado (flag off) → no hubo set up
+        registry = real_session.instance_variable_get(:@pending_returns)
+        expect(registry.size).to eq(0)
+      end
+
+      it 'no levanta cuando la config global tiene return_raise=false (aunque mandatory esté on)' do
+        allow(BugBunny.configuration).to receive(:return_raise).and_return(false)
+
+        req = build_mandatory_request
+        result = return_producer.confirmed(req)
+
+        expect(result).to eq('status' => 202, 'body' => nil)
+      end
+
+      it 'override per-request gana sobre la config global' do
+        allow(BugBunny.configuration).to receive(:return_raise).and_return(false)
+        stub_return_during_wait(return_producer, return_info)
+
+        req = build_mandatory_request
+        req.return_raise = true
+
+        expect { return_producer.confirmed(req) }.to raise_error(BugBunny::PublishUnroutable)
+      end
+
+      it 'flag inerte cuando mandatory:false aunque return_raise=true' do
+        req = BugBunny::Request.new('acct.start')
+        req.exchange = 'acct_x'
+        req.method = :post
+        req.body = { tenant: 42 }
+        req.mandatory = false
+        req.return_raise = true
+
+        result = return_producer.confirmed(req)
+        expect(result).to eq('status' => 202, 'body' => nil)
+        registry = real_session.instance_variable_get(:@pending_returns)
+        expect(registry.size).to eq(0)
+      end
+
+      it 'invoca el callback global on_return antes de levantar PublishUnroutable' do
+        captured = nil
+        BugBunny.configuration.on_return = lambda { |ri, _props, _body|
+          captured = { rk: ri.routing_key }
+        }
+
+        stub_return_during_wait(return_producer, return_info)
+
+        expect { return_producer.confirmed(build_mandatory_request) }
+          .to raise_error(BugBunny::PublishUnroutable)
+        expect(captured).to eq(rk: 'acct.unbound')
+      end
+
+      it 'levanta PublishUnroutable aunque el user_cb on_return explote' do
+        BugBunny.configuration.on_return = ->(_, _, _) { raise 'boom in user cb' }
+        stub_return_during_wait(return_producer, return_info)
+
+        expect { return_producer.confirmed(build_mandatory_request) }
+          .to raise_error(BugBunny::PublishUnroutable)
+      end
     end
   end
 end

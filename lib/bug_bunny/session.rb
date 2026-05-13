@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'concurrent'
+
 module BugBunny
   # Clase interna que encapsula una unidad de trabajo sobre una conexión RabbitMQ.
   #
@@ -36,6 +38,35 @@ module BugBunny
       @channel_mutex = Mutex.new
       @logger = BugBunny.configuration.logger
       @configured_returns = {}
+      @pending_returns = Concurrent::Map.new
+    end
+
+    # Registra interés en una eventual señal `basic.return` correlacionada con `cid`.
+    #
+    # Devuelve un par `(event, slot)`. El caller espera el `event` tras `wait_for_confirms`;
+    # si el broker retorna el mensaje, {#handle_broker_return} setea el event y deposita
+    # la `return_info` en `slot[:info]` antes de invocar el callback global del usuario.
+    #
+    # El caller es responsable de invocar {#unregister_return_listener} en un `ensure`
+    # para evitar fugas en el registry interno.
+    #
+    # @param cid [String] Correlation ID del request en curso.
+    # @return [Array(Concurrent::Event, Hash)] Tupla `[event, slot]`. `slot[:info]` será
+    #   poblado con la `Bunny::ReturnInfo` si el broker retorna el mensaje.
+    # @api private
+    def register_return_listener(cid)
+      slot = { event: Concurrent::Event.new, info: nil }
+      @pending_returns[cid.to_s] = slot
+      [slot[:event], slot]
+    end
+
+    # Elimina el listener registrado por {#register_return_listener}.
+    #
+    # @param cid [String]
+    # @return [void]
+    # @api private
+    def unregister_return_listener(cid)
+      @pending_returns.delete(cid.to_s)
     end
 
     # Obtiene el canal actual o crea uno nuevo si es necesario.
@@ -112,6 +143,7 @@ module BugBunny
         @channel&.close if @channel&.open?
         @channel = nil
         @configured_returns.clear
+        release_pending_returns!
       end
     end
 
@@ -130,6 +162,19 @@ module BugBunny
       @channel.prefetch(BugBunny.configuration.channel_prefetch) if BugBunny.configuration.channel_prefetch
     rescue StandardError => e
       raise BugBunny::CommunicationError, "Failed to create channel: #{e.message}"
+    end
+
+    # Libera todos los listeners pendientes seteando sus events. Permite que los publish
+    # threads bloqueados en `event.wait` despierten cuando la sesión se cierra (shutdown),
+    # en lugar de esperar a `confirm_timeout`. Solo se invoca desde {#close} — el cleanup
+    # per-publish corre via `ensure` en {Producer#confirmed} → {#unregister_return_listener}.
+    #
+    # @return [void]
+    def release_pending_returns!
+      @pending_returns.each_pair do |_cid, slot|
+        slot[:event].set
+      end
+      @pending_returns.clear
     end
 
     # Registra el handler `basic.return` sobre el `Bunny::Exchange` indicado.
@@ -156,11 +201,50 @@ module BugBunny
     # Procesa un evento `basic.return` del broker. Nunca propaga excepciones del callback
     # de usuario para no romper el hilo de I/O de Bunny.
     #
+    # Orden de operaciones:
+    # 1. Si hay un listener registrado con el `correlation_id` del mensaje retornado,
+    #    se deposita la `return_info` en su slot y se setea el event. Esto se hace
+    #    *antes* del callback de usuario para que una excepción del user_cb no impida
+    #    que el publish thread despierte y raisee `PublishUnroutable`.
+    # 2. Se invoca el callback global `configuration.on_return` (o se logea si no hay).
+    #
     # @param return_info [Bunny::ReturnInfo]
     # @param properties [Bunny::MessageProperties]
     # @param body [String]
     # @return [void]
     def handle_broker_return(return_info, properties, body)
+      signal_return_listener(properties, return_info)
+      dispatch_return_callback(return_info, properties, body)
+    rescue StandardError => e
+      safe_log(:error, 'session.on_return_failed', **exception_metadata(e))
+    end
+
+    # Deposita la info del return en el slot asociado al `correlation_id` del mensaje
+    # retornado y setea el event para despertar al publish thread.
+    #
+    # @param properties [Bunny::MessageProperties]
+    # @param return_info [Bunny::ReturnInfo]
+    # @return [void]
+    def signal_return_listener(properties, return_info)
+      cid = properties.respond_to?(:correlation_id) ? properties.correlation_id : nil
+      return if cid.nil?
+
+      slot = @pending_returns[cid.to_s]
+      return unless slot
+
+      slot[:info] = return_info
+      slot[:event].set
+    end
+
+    # Invoca el callback global `on_return` o logea el evento si no hay callback.
+    # Las excepciones del user_cb se capturan en el rescue de {#handle_broker_return}
+    # — el event interno ya fue seteado antes de llegar acá.
+    #
+    # @param return_info [Bunny::ReturnInfo]
+    # @param properties [Bunny::MessageProperties]
+    # @param body [String]
+    # @return [void]
+    def dispatch_return_callback(return_info, properties, body)
       user_cb = BugBunny.configuration.on_return
       if user_cb
         user_cb.call(return_info, properties, body)
@@ -172,8 +256,6 @@ module BugBunny
                  routing_key: return_info.routing_key,
                  body_size: body.respond_to?(:bytesize) ? body.bytesize : nil)
       end
-    rescue StandardError => e
-      safe_log(:error, 'session.on_return_failed', **exception_metadata(e))
     end
 
     # Garantiza que la conexión TCP esté abierta.

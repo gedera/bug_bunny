@@ -95,10 +95,16 @@ module BugBunny
     # @option args [Float] :confirm_timeout Segundos a esperar el confirm. `nil` espera indefinidamente.
     # @option args [Boolean] :nack_raise Override per-request del flag
     #   `BugBunny.configuration.nack_raise`. Si `nil` (default), se usa la configuración global.
+    # @option args [Boolean] :return_raise Override per-request del flag
+    #   `BugBunny.configuration.return_raise`. Si `nil` (default), se usa la configuración global.
+    #   Requiere `mandatory: true` y `confirmed: true` para tener efecto — sino se emite un
+    #   warning y el flag se ignora.
     # @yield [req] Bloque para configurar el objeto Request.
     # @return [Hash] `{ 'status' => 202, 'body' => nil }`.
     # @raise [BugBunny::RequestTimeout] Si `confirmed: true` y el broker no confirma a tiempo.
     # @raise [BugBunny::PublishNacked] Si `confirmed: true`, el broker NACKea, y `nack_raise` resuelto es true.
+    # @raise [BugBunny::PublishUnroutable] Si `confirmed: true`, `mandatory: true`, el broker retorna el
+    #   mensaje como no-ruteable, y `return_raise` resuelto es true.
     def publish(url, **args)
       send(url, **args) do |req|
         req.delivery_mode = args[:confirmed] ? :confirmed : :publish
@@ -119,6 +125,10 @@ module BugBunny
 
       # Configuración del usuario (bloque específico por request)
       yield req if block_given?
+
+      # Check post-block: el block API puede setear delivery_mode/mandatory después
+      # de los keyword args. Evaluamos el warning sobre el estado final del Request.
+      warn_return_raise_misuse(req)
 
       # Ejecución dentro del Pool.
       # Session y Producer se reutilizan por slot de conexión (ver #session_for / #producer_for).
@@ -179,6 +189,33 @@ module BugBunny
       req.mandatory       = args[:mandatory]       if args.key?(:mandatory)
       req.confirm_timeout = args[:confirm_timeout] if args.key?(:confirm_timeout)
       req.nack_raise      = args[:nack_raise]      if args.key?(:nack_raise)
+      req.return_raise    = args[:return_raise]    if args.key?(:return_raise)
+    end
+
+    # Emite un warning si el Request final tiene `return_raise: true` pero le falta
+    # `delivery_mode == :confirmed` o `mandatory: true`. El flag requiere ambos para
+    # tener efecto: sin confirmed no hay synchronization point sobre el cual levantar,
+    # y sin mandatory el broker nunca retorna.
+    #
+    # Se evalúa sobre el Request post-block (no sobre args) para no producir falsos
+    # positivos cuando el caller usa el block API para setear `req.delivery_mode` o
+    # `req.mandatory` después de los keyword args.
+    #
+    # Solo warnea cuando `request.return_raise` fue explícitamente `true` por request —
+    # ignora el default global (que también puede ser `true`) para no inundar logs en
+    # publishes regulares sin mandatory.
+    #
+    # @param request [BugBunny::Request]
+    # @return [void]
+    def warn_return_raise_misuse(request)
+      return unless request.return_raise == true
+      return if request.delivery_mode == :confirmed && request.mandatory
+
+      BugBunny.configuration.logger&.warn do
+        'component=bug_bunny event=client.return_raise_ignored ' \
+          'reason=requires_confirmed_and_mandatory ' \
+          "delivery_mode=#{request.delivery_mode} mandatory=#{!!request.mandatory}"
+      end
     end
 
     # Recupera o crea la Session asociada al slot de conexión dado.
