@@ -47,6 +47,18 @@ end
 | `mandatory` | Boolean | `false` | Pide al broker retornar el mensaje si no es ruteable. Solo útil con `confirmed: true`. |
 | `confirm_timeout` | Float | `nil` | Segundos máximos a esperar el ACK. `nil` = espera indefinida. Excedido → `BugBunny::RequestTimeout`. |
 | `nack_raise` | Boolean | `nil` | Override per-request de `config.nack_raise`. `nil` = usa flag global. |
+| `return_raise` | Boolean | `nil` | Override per-request de `config.return_raise`. Requiere `confirmed: true` y `mandatory: true`. |
+| `persistent` | Boolean | `false` | `delivery_mode: 2` AMQP. Mensaje sobrevive restart del broker. Requiere queue durable. |
+| `correlation_id` | String | nil | ID de correlación AMQP. Auto-asignado UUID en RPC y en `confirmed + mandatory + return_raise`. |
+| `priority` | Integer | nil | Prioridad 0-255. Requiere queue con `x-max-priority`. |
+| `app_id` | String | nil | Identificador del publisher (AMQP `app-id`). |
+| `content_type` | String | `'application/json'` | MIME type del payload. |
+| `content_encoding` | String | nil | Encoding del payload (`'gzip'`, `'deflate'`, etc.). |
+| `expiration` | String | nil | TTL del mensaje en ms (formato AMQP). |
+
+**Gotcha:** el primer argumento de `Client#publish` / `#request` es **posicional** (`url`). No existe el kwarg `:path`. Splatear un hash con `path:` falla con `ArgumentError` o se ignora silencioso.
+
+**Atributos no expuestos como kwarg** (solo via block API): `timestamp` (default `Time.now.to_i`), `type` (default `full_path`), `reply_to` (RPC interno).
 
 ## Producer (bajo nivel)
 

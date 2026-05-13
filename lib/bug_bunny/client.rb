@@ -29,9 +29,17 @@ module BugBunny
     attr_accessor :delivery_mode
 
     # Argumentos del cliente que se mapean 1:1 a setters del Request.
+    #
+    # Incluye opciones de enrutamiento (`delivery_mode`, `method`, `body`, `exchange`,
+    # `exchange_type`, `routing_key`, `timeout`, `params`), de infraestructura
+    # (`exchange_options`, `queue_options`) y de metadata AMQP estándar
+    # (`persistent`, `correlation_id`, `priority`, `app_id`, `content_type`,
+    # `content_encoding`, `expiration`). Lo que no esté acá debe setearse via
+    # block API (`do |req| ... end`).
     REQUEST_ATTRS = %i[
       delivery_mode method body exchange exchange_type routing_key
       timeout exchange_options queue_options params
+      persistent correlation_id priority app_id content_type content_encoding expiration
     ].freeze
 
     # Inicializa un nuevo cliente.
@@ -64,7 +72,8 @@ module BugBunny
     #
     # Envía un mensaje y bloquea la ejecución del hilo actual hasta recibir respuesta.
     #
-    # @param url [String] La ruta del recurso (ej: 'users/1').
+    # @param url [String] La ruta del recurso (ej: 'users/1'). **Argumento posicional** —
+    #   no existe el kwarg `:path`. Splatear un hash con `path:` falla silencioso.
     # @param args [Hash] Opciones de configuración.
     # @option args [Symbol] :method El verbo HTTP (:get, :post, :put, :delete). Default: :get.
     # @option args [Object] :body El cuerpo del mensaje.
@@ -72,7 +81,18 @@ module BugBunny
     # @option args [Integer] :timeout Tiempo máximo de espera.
     # @option args [Hash] :exchange_options Opciones específicas para la declaración del Exchange.
     # @option args [Hash] :queue_options Opciones específicas para la declaración de la Cola.
-    # @yield [req] Bloque para configurar el objeto Request directamente.
+    # @option args [Boolean] :persistent Si `true`, `delivery_mode: 2` (mensaje persiste en disco
+    #   del broker). Default `false`. Útil para mensajes críticos sobre queues durables.
+    # @option args [String] :correlation_id ID de correlación AMQP. Útil para tracing custom.
+    #   Si no se setea, `Producer#rpc` y `Producer#confirmed` (con return_raise) auto-asignan UUID.
+    # @option args [Integer] :priority Prioridad del mensaje (0-255). Requiere queue declarada con
+    #   `x-max-priority` para que el broker la respete.
+    # @option args [String] :app_id Identificador del publisher.
+    # @option args [String] :content_type MIME type. Default `'application/json'`.
+    # @option args [String] :content_encoding Encoding del payload (ej: 'gzip').
+    # @option args [String] :expiration TTL del mensaje en ms (formato AMQP).
+    # @yield [req] Bloque para configurar el objeto Request directamente. Necesario para
+    #   atributos no mapeados como kwarg (ej: `req.timestamp = ...`).
     # @return [Hash] La respuesta del servidor.
     def request(url, **args)
       send(url, **args) do |req|
@@ -87,7 +107,8 @@ module BugBunny
     # que el broker confirme la recepción del mensaje. Útil para eventos críticos (auditoría,
     # billing) donde se requiere garantía de entrega sin el overhead de un RPC completo.
     #
-    # @param url [String] La ruta del evento/recurso.
+    # @param url [String] La ruta del evento/recurso. **Argumento posicional** — no
+    #   existe el kwarg `:path`. Splatear un hash con `path:` falla silencioso.
     # @param args [Hash] Mismas opciones que {#request}, excepto `:timeout`. Adicionales:
     # @option args [Boolean] :confirmed Si `true`, espera `wait_for_confirms` del broker.
     # @option args [Boolean] :mandatory Si `true`, el broker retorna el mensaje si no es ruteable.
@@ -158,12 +179,16 @@ module BugBunny
 
     # Mapea los argumentos generales (no específicos de Publisher Confirms) sobre el Request.
     #
+    # Usa `args.key?` en lugar de truthy check para que `persistent: false`,
+    # `priority: 0` u otros valores falsy explícitos del caller sean honrados
+    # (no se filtran como si no hubieran sido pasados).
+    #
     # @param req [BugBunny::Request]
     # @param args [Hash]
     # @return [void]
     def apply_args(req, args)
       REQUEST_ATTRS.each do |key|
-        req.public_send("#{key}=", args[key]) if args[key]
+        req.public_send("#{key}=", args[key]) if args.key?(key)
       end
       req.headers.merge!(args[:headers]) if args[:headers]
     end

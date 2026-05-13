@@ -1,5 +1,43 @@
 # Changelog
 
+## [4.17.0] - 2026-05-13
+
+### Nuevas funcionalidades
+- **`Client::REQUEST_ATTRS` extendido con metadata AMQP estándar (#45):** Los siguientes atributos del Request ahora pueden pasarse como kwargs directos en `client.publish` / `client.request` sin necesidad del block API:
+  - `persistent` (Boolean) — `delivery_mode: 2` AMQP. Critical: por default es `false`; `confirmed: true` **NO** lo implica.
+  - `correlation_id` (String) — Tracing explícito (sobreescribe el auto-asignado por RPC y `return_raise`).
+  - `priority` (Integer 0-255).
+  - `app_id` (String).
+  - `content_type` (String, default `'application/json'`).
+  - `content_encoding` (String).
+  - `expiration` (String, TTL en ms).
+
+  ```ruby
+  # Antes (4.16): requería block API
+  client.publish('evt', exchange: 'x', confirmed: true) do |req|
+    req.persistent = true
+    req.correlation_id = 'cid-123'
+  end
+
+  # Ahora (4.17): kwargs directos
+  client.publish('evt', exchange: 'x', confirmed: true,
+                 persistent: true, correlation_id: 'cid-123')
+  ```
+
+  El block API sigue funcionando para overrides puntuales o para atributos no expuestos (`timestamp`, `type`, `reply_to`).
+
+### Correcciones
+- **`apply_args` usa `args.key?` en lugar de truthy check:** Permite pasar valores falsy explícitos (ej. `persistent: false`, `priority: 0`) que antes se filtraban silenciosamente como si no se hubieran pasado.
+
+### Documentación (motivado por #45 — adopción real en sequre/box_radius_manager#18)
+- README + SKILL.md cubren cuatro gotchas detectados solo en integration tests:
+  1. `url` es positional, no kwarg `:path`. Splatear un hash con `path:` rompe.
+  2. `confirmed: true` no implica `persistent: true` — son flags ortogonales.
+  3. Default `exchange_options` es `{ durable: false }` — publishers a exchange compartido deben pasar `exchange_options: { durable: true }` explícito.
+  4. `instance_double` no detecta arity mismatch con splat de kwargs — recomendación de smoke test integration para cada publisher nuevo.
+- Nueva sección "Production publisher recipe" en README y receta canónica en SKILL.md con la combinación recomendada para auditoría/billing/accounting.
+- `skill/references/client-middleware.md` con tabla completa de kwargs de Request actualizada.
+
 ## [4.16.0] - 2026-05-13
 
 ### Cambios de comportamiento (semi-breaking)

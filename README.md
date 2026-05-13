@@ -210,6 +210,73 @@ client.publish('events', body: { type: 'user.signed_in', user_id: 42 })
 client.request('users', method: :get, params: { role: 'admin', page: 2 })
 ```
 
+### Gotchas
+
+**URL is positional, not a kwarg.** The first argument of `client.request` / `client.publish` is positional. There is **no** `path:` kwarg, splatting a hash with `path:` will fail silently or raise `ArgumentError`:
+
+```ruby
+args = { exchange: 'ingest.x', body: payload }
+client.publish(**args)              # ❌ ArgumentError: wrong number of arguments
+client.publish('event.name', **args) # ✅
+```
+
+**Block runs after kwargs.** Keyword args are applied first; the block (if given) can override them. Use kwargs for the common case and block for atypical setup:
+
+```ruby
+client.publish('evt', exchange: 'x', persistent: true) do |req|
+  req.timestamp = some_past_time   # only via block — not in REQUEST_ATTRS
+end
+```
+
+### Production publisher recipe
+
+Defaults aimed at sane microservices — declare durable exchanges, persistent messages, confirmed delivery with mandatory routing, explicit correlation id:
+
+```ruby
+client.publish('acct.start',
+               exchange:         'ingest.radius',
+               exchange_type:    :topic,
+               exchange_options: { durable: true },   # match consumer-declared exchange
+               body:             payload,
+               confirmed:        true,
+               mandatory:        true,                # raise PublishUnroutable if no binding
+               persistent:       true,                # delivery_mode: 2 — survives broker restart
+               correlation_id:   SecureRandom.uuid,
+               app_id:           'radius_manager')
+```
+
+| AMQP property | Kwarg | Reason it matters for critical publishers |
+|---|---|---|
+| `delivery_mode` | `persistent: true` | Without it, the message lives only in broker RAM (lost on restart). Default `false`. |
+| `confirmation` | `confirmed: true` | Block until the broker acks. Without it, `client.publish` returns 202 before the broker sees the message. |
+| `mandatory` | `mandatory: true` | Catches misrouted publishes. Combined with `return_raise` (default `true`), raises `PublishUnroutable` instead of silently dropping. |
+| `exchange durable` | `exchange_options: { durable: true }` | Match the exchange definition that consumers declare. Mismatch raises `Bunny::PreconditionFailed`. |
+| `correlation_id` | `correlation_id:` | Tracing. Auto-generated when missing for RPC and for `confirmed + mandatory + return_raise`, but explicit is preferred. |
+
+### Testing publishers
+
+Mocks of `Client` (via `instance_double`) **do not catch arity mismatches** when the caller does splat (`**args`). Signature errors like passing `path:` as kwarg or unknown keys won't surface in unit tests with mocks. **Add a smoke integration test** for new publishers — declare an exclusive queue, bind to the exchange, publish, `queue.pop`, assert `correlation_id`, `headers`, `routing_key`, `delivery_mode`:
+
+```ruby
+RSpec.describe 'MyPublisher', :integration do
+  it 'publishes with correct AMQP metadata' do
+    conn = BugBunny.create_connection
+    ch   = conn.create_channel
+    x    = ch.topic('ingest.radius', durable: true)
+    q    = ch.queue('', exclusive: true).bind(x, routing_key: 'acct.#')
+
+    MyPublisher.call(payload)
+
+    _delivery, props, body = q.pop(manual_ack: false)
+    expect(props.correlation_id).not_to be_nil
+    expect(props.delivery_mode).to eq(2)         # persistent
+    expect(JSON.parse(body)).to include(...)
+  ensure
+    conn&.close
+  end
+end
+```
+
 ### Publisher Confirms (delivery-critical events)
 
 For events where you need a delivery guarantee from the broker (auditing, billing, accounting) without the cost of a full RPC, use `publish` with `confirmed: true`. The call blocks until the broker acknowledges receipt:
