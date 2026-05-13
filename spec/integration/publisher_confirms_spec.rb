@@ -177,4 +177,129 @@ RSpec.describe 'Publisher Confirms — return_raise', :integration do
       expect(result).to eq('status' => 202, 'body' => nil)
     end
   end
+
+  describe 'concurrencia multi-thread sobre el mismo client' do
+    # Verifica que la correlación por correlation_id aísla los outcomes:
+    # N threads publican simultáneamente sobre el mismo exchange unbound, cada uno
+    # debe recibir SU propio PublishUnroutable (no el de otro thread).
+    it 'cada caller recibe su propio raise sin contaminación cross-thread' do
+      threads = 8
+      results = Concurrent::Array.new
+
+      pool = Array.new(threads) do |i|
+        Thread.new do
+          rk = "thread.#{i}.unbound"
+          client.publish(rk,
+                         exchange: unbound_exchange,
+                         exchange_type: 'topic',
+                         confirmed: true,
+                         mandatory: true,
+                         body: { tid: i })
+          results << { tid: i, raised: false }
+        rescue BugBunny::PublishUnroutable => e
+          results << { tid: i, raised: true, rk: e.routing_key, cid: e.correlation_id }
+        end
+      end
+
+      pool.each(&:join)
+
+      expect(results.size).to eq(threads)
+      expect(results.all? { |r| r[:raised] }).to be(true), 'todos deberían haber raised'
+      expect(results.map { |r| r[:rk] }.sort).to eq((0...threads).map { |i| "thread.#{i}.unbound" }.sort)
+      # Todos los correlation_ids deben ser distintos (no hubo cross-thread leakage)
+      cids = results.map { |r| r[:cid] }
+      expect(cids.uniq.size).to eq(threads)
+    end
+  end
+
+  describe 'aislamiento entre exchanges sobre el mismo channel' do
+    # Publish A sobre exchange unbound (debe raisear) y publish B sobre exchange routable
+    # (debe pasar). Validamos que el return de A no contamina B.
+    it 'return en exchange A no afecta publish concurrente a exchange B' do
+      bound_ex = unique('bound_b_x')
+      bound_q = unique('bound_b_q')
+
+      # Setup: exchange routable con queue exclusive bindeada
+      conn = BugBunny.create_connection
+      ch = conn.create_channel
+      x = ch.topic(bound_ex, BugBunny.configuration.exchange_options)
+      q = ch.queue('', exclusive: true, auto_delete: true)
+      q.bind(x, routing_key: '#')
+
+      results = Concurrent::Array.new
+
+      t_a = Thread.new do
+        client.publish('a.unbound',
+                       exchange: unbound_exchange,
+                       exchange_type: 'topic',
+                       confirmed: true,
+                       mandatory: true,
+                       body: { side: 'A' })
+        results << { side: 'A', raised: false }
+      rescue BugBunny::PublishUnroutable
+        results << { side: 'A', raised: true }
+      end
+
+      t_b = Thread.new do
+        client.publish('b.routable',
+                       exchange: bound_ex,
+                       exchange_type: 'topic',
+                       confirmed: true,
+                       mandatory: true,
+                       body: { side: 'B' })
+        results << { side: 'B', raised: false }
+      rescue BugBunny::PublishUnroutable
+        results << { side: 'B', raised: true }
+      end
+
+      [t_a, t_b].each(&:join)
+
+      a = results.find { |r| r[:side] == 'A' }
+      b = results.find { |r| r[:side] == 'B' }
+      expect(a[:raised]).to be(true),  'A (unbound) debería haber raised'
+      expect(b[:raised]).to be(false), 'B (routable) NO debería haber raised'
+    ensure
+      ch&.close
+      conn&.close
+    end
+  end
+
+  describe 'no hay leak en el registry tras publishes seriales' do
+    # 30 publishes seriales (mix routable + unroutable). Tras todos, el registry
+    # @pending_returns debe estar en 0. Detecta entries colgadas por cleanup mal hecho.
+    it 'registry vuelve a 0 tras una serie de publishes' do
+      30.times do |i|
+        target = i.even? ? unbound_exchange : nil
+        if target
+          begin
+            client.publish("serial.#{i}",
+                           exchange: target,
+                           exchange_type: 'topic',
+                           confirmed: true,
+                           mandatory: true,
+                           body: { i: i })
+          rescue BugBunny::PublishUnroutable
+            # esperado en routes no-ruteables
+          end
+        else
+          # publish sin mandatory para no triggerear return — no-op para el registry
+          client.publish("serial.#{i}",
+                         exchange: unbound_exchange,
+                         exchange_type: 'topic',
+                         confirmed: true,
+                         mandatory: false,
+                         body: { i: i })
+        end
+      end
+
+      # Inspeccionar cada Session del pool — el registry debe estar vacío en todas.
+      total_pending = 0
+      TEST_POOL.with do |conn|
+        session = conn.instance_variable_get(:@_bug_bunny_session)
+        registry = session.instance_variable_get(:@pending_returns)
+        total_pending += registry.size
+      end
+      expect(total_pending).to eq(0)
+    end
+  end
 end
