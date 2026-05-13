@@ -17,7 +17,6 @@ RSpec.describe 'Publisher Confirms — return_raise', :integration do
   let(:unbound_exchange) { unique('unroutable_x') }
   # Exchange con cola bindeada: publish con mandatory:true llega bien.
   let(:routable_exchange) { unique('routable_x') }
-  let(:routable_queue)    { unique('routable_q') }
 
   # Declara el exchange sin bindings para asegurar que `basic.return` se dispare.
   # Usa una conexión fresca para no contaminar el pool.

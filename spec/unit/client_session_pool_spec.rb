@@ -215,6 +215,78 @@ RSpec.describe BugBunny::Client, 'session pooling' do
     end
   end
 
+  describe 'warn_return_raise_misuse' do
+    let(:log_io) { StringIO.new }
+
+    before do
+      @prev_logger = BugBunny.configuration.logger
+      BugBunny.configuration.logger = Logger.new(log_io).tap { |l| l.level = Logger::WARN }
+    end
+
+    after do
+      BugBunny.configuration.logger = @prev_logger
+    end
+
+    def stub_producer_to_noop
+      allow_any_instance_of(BugBunny::Producer).to receive(:confirmed) { { 'status' => 202, 'body' => nil } }
+      allow_any_instance_of(BugBunny::Producer).to receive(:fire) { { 'status' => 202, 'body' => nil } }
+    end
+
+    it 'logea warning cuando return_raise:true se pasa sin confirmed' do
+      stub_producer_to_noop
+      client = described_class.new(pool: fake_pool(fake_conn))
+
+      client.publish('foo', exchange: 'x', exchange_type: 'direct',
+                            return_raise: true, mandatory: true)
+
+      expect(log_io.string).to include('event=client.return_raise_ignored')
+      expect(log_io.string).to include('delivery_mode=publish')
+    end
+
+    it 'logea warning cuando return_raise:true se pasa sin mandatory' do
+      stub_producer_to_noop
+      client = described_class.new(pool: fake_pool(fake_conn))
+
+      client.publish('foo', exchange: 'x', exchange_type: 'direct',
+                            return_raise: true, confirmed: true)
+
+      expect(log_io.string).to include('event=client.return_raise_ignored')
+      expect(log_io.string).to include('mandatory=false')
+    end
+
+    it 'NO logea warning cuando confirmed+mandatory se setean via block API' do
+      stub_producer_to_noop
+      client = described_class.new(pool: fake_pool(fake_conn))
+
+      client.publish('foo', exchange: 'x', exchange_type: 'direct', return_raise: true) do |req|
+        req.delivery_mode = :confirmed
+        req.mandatory = true
+      end
+
+      expect(log_io.string).not_to include('client.return_raise_ignored')
+    end
+
+    it 'NO logea warning cuando return_raise no fue seteado per-request (deja el default global)' do
+      stub_producer_to_noop
+      client = described_class.new(pool: fake_pool(fake_conn))
+
+      # Default global es true, pero el caller no fue explícito → no warneamos
+      client.publish('foo', exchange: 'x', exchange_type: 'direct')
+
+      expect(log_io.string).not_to include('client.return_raise_ignored')
+    end
+
+    it 'NO logea warning cuando confirmed+mandatory+return_raise:true coexisten' do
+      stub_producer_to_noop
+      client = described_class.new(pool: fake_pool(fake_conn))
+
+      client.publish('foo', exchange: 'x', exchange_type: 'direct',
+                            confirmed: true, mandatory: true, return_raise: true)
+
+      expect(log_io.string).not_to include('client.return_raise_ignored')
+    end
+  end
+
   describe 'Session no se cierra entre requests' do
     it 'no invoca close en la Session al terminar el request' do
       conn   = fake_conn
