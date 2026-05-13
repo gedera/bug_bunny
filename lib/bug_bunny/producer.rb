@@ -276,14 +276,15 @@ module BugBunny
     # Auto-asigna `correlation_id` si falta — sin cid no hay clave de correlación.
     #
     # @param request [BugBunny::Request]
-    # @return [Hash, nil] Hash con `:cid`, `:event` y `:slot`, o `nil` si no aplica.
+    # @return [Hash, nil] Hash con `:cid` y `:slot` (el slot expone `:event` y `:info`),
+    #   o `nil` si no aplica.
     def setup_return_listener(request)
       return nil unless return_raise?(request)
 
       request.correlation_id ||= SecureRandom.uuid
       cid = request.correlation_id.to_s
-      event, slot = @session.register_return_listener(cid)
-      { cid: cid, event: event, slot: slot }
+      _event, slot = @session.register_return_listener(cid)
+      { cid: cid, slot: slot }
     end
 
     # Tras un ack positivo, espera brevemente al event del listener para tolerar el
@@ -298,8 +299,9 @@ module BugBunny
     def handle_return_result(request, return_listener)
       return unless return_listener
 
-      return_listener[:event].wait(RETURN_RACE_WINDOW_S)
-      info = return_listener[:slot][:info]
+      slot = return_listener[:slot]
+      slot[:event].wait(RETURN_RACE_WINDOW_S)
+      info = slot[:info]
       return if info.nil?
 
       raise_unroutable!(request, return_listener[:cid], info)
