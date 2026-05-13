@@ -23,8 +23,11 @@ BugBunny.configure do |config|
   config.password = ENV.fetch('RABBITMQ_PASS', 'guest')
   config.vhost    = '/'
   config.logger   = Logger.new($stdout).tap { |l| l.level = Logger::WARN }
+  # exchange_options: explícito para que los specs declaren exchanges efímeros.
+  # queue_options: NO override — confiamos en `DEFAULT_QUEUE_OPTIONS` (durable shared,
+  # válido en RMQ 3.x y 4.x). Specs que necesitan colas efímeras usan
+  # `TEST_WORKER_QUEUE_OPTS` desde `spec/support/integration_helper.rb`.
   config.exchange_options = { durable: false, auto_delete: true }
-  config.queue_options    = { exclusive: false, durable: false, auto_delete: true }
 end
 
 TEST_POOL ||= ConnectionPool.new(size: 5, timeout: 5) { BugBunny.create_connection }
