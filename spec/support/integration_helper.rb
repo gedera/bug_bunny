@@ -2,6 +2,12 @@
 
 require 'timeout'
 
+# Queue options usados por los workers de integración. \`exclusive: true\` evita
+# la deprecación de \`transient_nonexcl_queues\` en RabbitMQ 4.x — la queue queda
+# ligada a la conexión del worker y desaparece automáticamente al cerrarla.
+# Sobreescribe la cascada de \`BugBunny.configuration.queue_options\`.
+TEST_WORKER_QUEUE_OPTS = { exclusive: true, durable: false, auto_delete: true }.freeze unless defined?(TEST_WORKER_QUEUE_OPTS)
+
 # Helpers compartidos para specs de integración con RabbitMQ real.
 # Incluido automáticamente en todos los specs marcados con :integration.
 RSpec.shared_context 'integration helpers' do
@@ -31,6 +37,7 @@ RSpec.shared_context 'integration helpers' do
         exchange_name: exchange,
         exchange_type: exchange_type,
         routing_key:   routing_key,
+        queue_opts:    TEST_WORKER_QUEUE_OPTS,
         block:         true
       )
     rescue StandardError => e
@@ -57,7 +64,7 @@ RSpec.shared_context 'integration helpers' do
     worker_thread = Thread.new do
       ch = conn.create_channel
       x  = ch.public_send(exchange_type, exchange, BugBunny.configuration.exchange_options)
-      q  = ch.queue(queue, BugBunny.configuration.queue_options)
+      q  = ch.queue(queue, TEST_WORKER_QUEUE_OPTS)
       q.bind(x, routing_key: routing_key)
       q.subscribe(block: true) do |delivery, props, body|
         messages << { body: body, routing_key: delivery.routing_key, headers: props.headers }
