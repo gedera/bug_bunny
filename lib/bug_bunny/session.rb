@@ -156,7 +156,6 @@ module BugBunny
     def create_channel!
       @channel = @connection.create_channel
       @configured_returns.clear
-      release_pending_returns!
 
       @channel.confirm_select if @publisher_confirms
 
@@ -166,8 +165,9 @@ module BugBunny
     end
 
     # Libera todos los listeners pendientes seteando sus events. Permite que los publish
-    # threads bloqueados en `event.wait` despierten cuando el canal rota o se cierra,
-    # en lugar de esperar a `confirm_timeout`.
+    # threads bloqueados en `event.wait` despierten cuando la sesión se cierra (shutdown),
+    # en lugar de esperar a `confirm_timeout`. Solo se invoca desde {#close} — el cleanup
+    # per-publish corre via `ensure` en {Producer#confirmed} → {#unregister_return_listener}.
     #
     # @return [void]
     def release_pending_returns!
