@@ -18,7 +18,20 @@ module BugBunny
     DEFAULT_EXCHANGE_OPTIONS = { durable: false, auto_delete: false }.freeze
 
     # Opciones predeterminadas de la gema para Colas.
-    DEFAULT_QUEUE_OPTIONS = { exclusive: false, durable: false, auto_delete: true }.freeze
+    #
+    # `durable: true, exclusive: false, auto_delete: false` es el patrón "queue compartida
+    # duradera" — sobrevive restart del broker, múltiples consumers (worker pool) pueden
+    # consumir, no se elimina cuando el último consumer se desconecta.
+    #
+    # Histórico: hasta 4.15.x el default era `{ exclusive: false, durable: false,
+    # auto_delete: true }` (combo `transient_nonexcl_queues` deprecada en RabbitMQ 4.x).
+    # Ver issue #42 para detalles de la migración. Para restaurar el comportamiento
+    # anterior, configurar explícitamente:
+    #
+    #   BugBunny.configure do |c|
+    #     c.queue_options = { exclusive: false, durable: false, auto_delete: true }
+    #   end
+    DEFAULT_QUEUE_OPTIONS = { exclusive: false, durable: true, auto_delete: false }.freeze
 
     # @!endgroup
 

@@ -129,7 +129,11 @@ BugBunny.configure do |config|
   config.read_timeout        = 10
   config.write_timeout       = 10
 
-  # AMQP defaults applied to all exchanges and queues
+  # AMQP defaults applied to all exchanges and queues.
+  # Gem defaults (since 4.16):
+  #   DEFAULT_EXCHANGE_OPTIONS = { durable: false, auto_delete: false }
+  #   DEFAULT_QUEUE_OPTIONS    = { exclusive: false, durable: true, auto_delete: false }
+  # Override only if your service needs different infrastructure semantics.
   config.exchange_options = { durable: true }
   config.queue_options    = { durable: true }
 

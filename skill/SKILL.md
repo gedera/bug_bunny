@@ -257,6 +257,10 @@ Cada slot del pool cachea su `Session` y `Producer` durante su vida útil. Esto 
 ### ¿Cómo funciona la cascada de configuración?
 3 niveles: Gem defaults → Global config (`BugBunny.configure`) → Per-request (args en `client.request` o `Resource.with`). Se mergean con `merge`.
 
+**Defaults de la gema desde 4.16:**
+- `DEFAULT_EXCHANGE_OPTIONS = { durable: false, auto_delete: false }`
+- `DEFAULT_QUEUE_OPTIONS = { exclusive: false, durable: true, auto_delete: false }` — queue compartida duradera, válida en RabbitMQ 3.x y 4.x. Previo a 4.16 era `{ durable: false, auto_delete: true }` (deprecated `transient_nonexcl_queues` en RMQ 4.x). Para legacy: override explícito en `config.queue_options`.
+
 ### ¿Cómo funciona fork safety?
 `BugBunny::Railtie` registra hooks en `ActiveSupport::ForkTracker` (Rails 7.1+), `Puma.events.on_worker_boot` y `Spring.after_fork` para llamar `BugBunny.disconnect` y evitar sockets TCP heredados.
 
