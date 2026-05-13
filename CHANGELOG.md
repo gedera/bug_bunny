@@ -1,5 +1,23 @@
 # Changelog
 
+## [4.16.0] - 2026-05-13
+
+### Cambios de comportamiento (semi-breaking)
+- **`DEFAULT_QUEUE_OPTIONS` cambió a `{ exclusive: false, durable: true, auto_delete: false }`** (#42). En versiones previas el default era `{ exclusive: false, durable: false, auto_delete: true }` — la combinación `transient_nonexcl_queues` que **RabbitMQ 4.x deprecó por default**: el broker rechaza la declaración matando la conexión. El nuevo default es el patrón "queue compartida duradera": sobrevive restart del broker, múltiples consumers pueden compartirla, no se elimina cuando se desconecta el último consumer. Esto matchea cómo la mayoría de servicios Wispro ya configuran sus queues explícitamente.
+
+  **Para restaurar el comportamiento anterior** (servicios sobre RabbitMQ 3.x con queues legacy efímeras pre-existentes):
+
+  ```ruby
+  BugBunny.configure do |c|
+    c.queue_options = { exclusive: false, durable: false, auto_delete: true }
+  end
+  ```
+
+  **Síntoma si se necesita override y no se aplicó:** `Bunny::PreconditionFailed - inequivalent arg 'durable' for queue 'foo'`. Indica que la queue existe en el broker con `durable: false` pero el nuevo default intenta declararla con `durable: true`. Aplicar el override de arriba o borrar manualmente la queue legacy en el broker.
+
+### Documentación
+- README + SKILL.md actualizados con sección "queue_options recomendadas" cubriendo patrones worker-pool (default nuevo) y single-instance (`exclusive: true`).
+
 ## [4.15.0] - 2026-05-13
 
 ### Nuevas funcionalidades
