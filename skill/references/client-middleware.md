@@ -72,7 +72,7 @@ El `Producer` es usado internamente por el `Client`. Implementa tres patrones de
 - Publica y bloquea hasta `channel.wait_for_confirms` del broker.
 - Bunny 2.x **no soporta timeout** nativo en `wait_for_confirms` — BugBunny envuelve la llamada en un hilo auxiliar y usa `Concurrent::IVar#value(timeout)` como reloj. Si `confirm_timeout` expira → `BugBunny::RequestTimeout`.
 - Si `wait_for_confirms` devuelve `false` (broker NACKea), se logea `producer.confirms_nacked` con `count` y `path`. Por default (`config.nack_raise = true`) levanta `BugBunny::PublishNacked` con `path` y `nacked_count`. Para opt-out: `config.nack_raise = false` o pasar `nack_raise: false` per request — en ese caso solo logea y retorna 202.
-- Si `mandatory: true` y el mensaje no es ruteable, el broker dispara `basic.return`. El handler se atacha vía `Bunny::Exchange#on_return` en `Session#exchange` la primera vez que se resuelve cada exchange (cacheado por nombre, una sola vez por canal) y delega a `Configuration#on_return` o al logger por default.
+- Si `mandatory: true` y el mensaje no es ruteable, el broker dispara `basic.return`. El handler se atacha vía `Bunny::Exchange#on_return` en `Session#exchange` la primera vez que se resuelve cada exchange (cacheado por nombre, una sola vez por canal) y delega a `Configuration#on_return` o al logger por default. **Por default (`config.return_raise = true`)** además levanta `BugBunny::PublishUnroutable` en el publish thread con `path`, `exchange`, `routing_key`, `reply_code`, `reply_text`, `correlation_id`. Para opt-out: `config.return_raise = false` o pasar `return_raise: false` per request — solo logea/invoca callback y retorna 202.
 - Errores del canal se envuelven en `BugBunny::CommunicationError`; errores `BugBunny::Error` pre-existentes se propagan sin envolver.
 - **Emite `producer.confirmed` (INFO) con tres duraciones desglosadas**: `publish_duration_s` (TCP enqueue), `confirm_duration_s` (`wait_for_confirms`), `duration_s` (total). Útil para distinguir latencia de red vs latencia de confirm policy del broker.
 
@@ -183,18 +183,35 @@ client.publish('x', confirmed: true, mandatory: true)
    ▼
 Producer#confirmed
    │
-   ├──> publish_message     (exchange.publish con mandatory: true)
+   ├──> setup_return_listener  (si return_raise? → Session#register_return_listener(cid))
+   │                            │
+   │                            └─ @session.@pending_returns[cid] = { event:, info: nil }
    │
-   ├──> wait_for_confirms!  (espera ACK del broker, con timeout opcional)
+   ├──> publish_message         (exchange.publish con mandatory: true, correlation_id auto-asignado)
    │
-   └──> handle_confirm_result
-            ├─ acked == true  → return { status: 202 }
-            └─ acked == false → log WARN producer.confirms_nacked
-                                  └─ raise BugBunny::PublishNacked  (si config.nack_raise || req.nack_raise)
+   ├──> wait_for_confirms!      (espera ACK del broker, con timeout opcional)
+   │
+   ├──> handle_confirm_result
+   │        ├─ acked == true  → continúa
+   │        └─ acked == false → log WARN producer.confirms_nacked
+   │                              └─ raise BugBunny::PublishNacked  (si config.nack_raise || req.nack_raise)
+   │
+   ├──> handle_return_result    (si listener registrado)
+   │        ├─ slot.event.wait(RETURN_RACE_WINDOW_S = 0.05)
+   │        ├─ slot.info == nil → return (ack normal sin return)
+   │        └─ slot.info != nil → log WARN producer.publish_unroutable
+   │                                └─ raise BugBunny::PublishUnroutable
+   │
+   └──> ensure: teardown_return_listener (Session#unregister_return_listener(cid))
 
-Asíncronamente, si el broker no pudo rutear:
-   broker ──basic.return──> Exchange#on_return ──> Session handler ──> Configuration#on_return
-                                                                   └──> default: log session.broker_return WARN
+Asíncronamente en el reader thread, si el broker no pudo rutear:
+   broker ──basic.return──> Exchange#on_return ──> Session#handle_broker_return
+                                                       │
+                                                       ├─ signal_return_listener   (busca cid en @pending_returns,
+                                                       │                            setea slot.info + slot.event)
+                                                       │
+                                                       └─ dispatch_return_callback (invoca Configuration#on_return
+                                                                                    o logea session.broker_return)
 ```
 
 ### `Configuration#on_return`
@@ -229,14 +246,43 @@ Excepciones del callback se capturan y se logean como `session.on_return_failed`
 | Auditoría, billing, eventos críticos | `:confirmed` (con `mandatory: true` si es ruteable) |
 | Request-response síncrono | `:rpc` |
 
-`:confirmed` cuesta un round-trip al broker pero **no** al consumer remoto — más rápido que RPC, con garantía de entrega al broker. NACK del broker es raro (típicamente por confirm policies internas, disk full, replicación insuficiente) pero **sí** implica que el mensaje no fue aceptado. Por default BugBunny levanta `BugBunny::PublishNacked` para que el caller pueda escalar (ej: convertir a HTTP 503 y dejar que el sistema upstream reintente). Opt-out con `config.nack_raise = false` o `nack_raise: false` per request.
+`:confirmed` cuesta un round-trip al broker pero **no** al consumer remoto — más rápido que RPC, con garantía de entrega al broker. Dos modos de falla broker-side, ambos raise-eables por default:
+
+- **NACK** (raro: confirm policies internas, disk full, replicación insuficiente) → `BugBunny::PublishNacked` (`path`, `nacked_count`). Opt-out: `config.nack_raise = false`.
+- **basic.return + mandatory** (queue inexistente, sin bindings, routing key sin match) → `BugBunny::PublishUnroutable` (`path`, `exchange`, `routing_key`, `reply_code`, `reply_text`, `correlation_id`). Opt-out: `config.return_raise = false`.
+
+El `on_return` user callback se invoca igual antes del raise (orden: signal interno → user_cb → raise en caller), así que alerting/metrics siguen funcionando.
+
+### Bridge cross-thread (`basic.return` → publish thread)
+
+`basic.return` llega en el reader thread de Bunny mientras el publish thread está dentro de `wait_for_confirms`. Para que `PublishUnroutable` sea raise-eable sincrónicamente desde la perspectiva del caller, `Session` mantiene un registry indexado por `correlation_id`:
+
+```ruby
+# Session (api privada)
+@pending_returns = Concurrent::Map.new
+# slot = { event: Concurrent::Event.new, info: nil }
+```
+
+`Producer#confirmed`:
+1. Si `return_raise?` resuelto es true, auto-asigna `request.correlation_id` si falta (UUID v4 vía `SecureRandom`).
+2. Registra slot vía `Session#register_return_listener(cid)`.
+3. Publica con `correlation_id` propagado a las message properties (el broker lo echo back en `basic.return.properties`).
+4. Tras `wait_for_confirms` true, `event.wait(RETURN_RACE_WINDOW_S = 0.05)` para tolerar GVL scheduling. AMQP wire garantiza `return → ack`, así que normalmente el event ya está seteado.
+5. Si `slot[:info]` no es nil, logea `producer.publish_unroutable` y raise.
+6. `ensure` block siempre llama `Session#unregister_return_listener(cid)` para cleanup.
+
+`Session#handle_broker_return` (reader thread):
+1. `signal_return_listener` busca cid por `properties.correlation_id`, setea `slot[:info]` y `slot[:event]`. **Esto corre ANTES del user_cb** — una excepción en el callback no impide el raise.
+2. `dispatch_return_callback` invoca `Configuration#on_return` o logea `session.broker_return`.
+
+Si `return_raise: true` se pasa sin `confirmed: true` o sin `mandatory: true`, el flag es inerte y se emite `client.return_raise_ignored` WARN. El bridge no aplica en `:publish` puro porque no hay synchronization point (`wait_for_confirms`) sobre el cual raise-ear en el caller.
 
 ## Cascada de Configuración (3 niveles)
 
 ```ruby
-# Level 1: Gem defaults
-{ durable: false, auto_delete: false }   # exchanges
-{ exclusive: false, durable: false, auto_delete: true }  # queues
+# Level 1: Gem defaults (BugBunny::Session)
+{ durable: false, auto_delete: false }                       # DEFAULT_EXCHANGE_OPTIONS
+{ exclusive: false, durable: true, auto_delete: false }      # DEFAULT_QUEUE_OPTIONS (cambio en 4.16)
 
 # Level 2: Global config
 BugBunny.configure { |c| c.exchange_options = { durable: true } }
@@ -246,3 +292,5 @@ client.request('users', exchange_options: { durable: true })
 
 # Merge final: Level1.merge(Level2).merge(Level3)
 ```
+
+**Nota 4.16+:** `DEFAULT_QUEUE_OPTIONS` previamente era `{ exclusive: false, durable: false, auto_delete: true }` (combo `transient_nonexcl_queues` deprecada en RabbitMQ 4.x). El nuevo default es queue compartida duradera. Para restaurar el comportamiento previo: `c.queue_options = { exclusive: false, durable: false, auto_delete: true }`.

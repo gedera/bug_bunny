@@ -146,7 +146,13 @@ BugBunny.configure do |config|
   # Health check file for Kubernetes / Docker Swarm liveness probes
   config.health_check_file = '/tmp/bug_bunny_health'
 
+  # Publisher Confirms — fail-loud defaults (both flags default to true).
+  # Set to false to restore legacy log-only behavior.
+  config.nack_raise   = true   # broker NACK → raise BugBunny::PublishNacked
+  config.return_raise = true   # broker basic.return (mandatory) → raise BugBunny::PublishUnroutable
+
   # Callback invoked when the broker returns an unroutable mandatory message.
+  # Runs BEFORE PublishUnroutable is raised (if return_raise is true).
   # When nil (default), BugBunny logs the return as `session.broker_return` at :warn.
   # Signature: ->(return_info, properties, body) { ... }
   config.on_return = ->(return_info, _props, body) {
@@ -224,11 +230,26 @@ client.publish('acct.start',
 | `confirmed` | Boolean | `false` | Block until `wait_for_confirms` returns. |
 | `mandatory` | Boolean | `false` | Broker returns the message if it cannot be routed to any queue. Requires `confirmed: true` to be useful. |
 | `confirm_timeout` | Float | `nil` | Seconds to wait for the broker ACK. Raises `BugBunny::RequestTimeout` if exceeded. |
-| `nack_raise` | Boolean | `nil` | Per-request override of `config.nack_raise`. When `nil`, falls back to the global flag. |
+| `nack_raise` | Boolean | `nil` | Per-request override of `config.nack_raise`. When `nil`, falls back to the global flag (default `true`). |
+| `return_raise` | Boolean | `nil` | Per-request override of `config.return_raise`. When `nil`, falls back to the global flag (default `true`). Requires `confirmed: true` and `mandatory: true` to take effect. |
 
-If the broker NACKs the publish (explicit rejection — disk full, internal confirm policy, etc.), the call raises `BugBunny::PublishNacked` by default. The exception exposes `path` and `nacked_count`. Critical publishers (audit, billing, RADIUS accounting) can let it bubble up to translate into HTTP 5xx so upstream systems retry. To restore the legacy "log-only" behaviour, set `BugBunny.configuration.nack_raise = false` globally or pass `nack_raise: false` per request.
+**Two broker signals, two exceptions:**
 
-Unroutable returned messages are handled by a single global callback (see `config.on_return` below). The default handler logs them as `session.broker_return` at `warn` level — nothing is dropped silently.
+| Broker signal | Default behavior | Exception class | Fields |
+|---|---|---|---|
+| `basic.nack` (explicit rejection) | Raises | `BugBunny::PublishNacked` | `path`, `nacked_count` |
+| `basic.return` (unroutable + `mandatory: true`) | Raises | `BugBunny::PublishUnroutable` | `path`, `exchange`, `routing_key`, `reply_code`, `reply_text`, `correlation_id` |
+
+Both exceptions translate naturally into HTTP 5xx in critical publishers (audit, billing, RADIUS accounting) so upstream systems retry. The `config.on_return` callback (if defined) still runs before `PublishUnroutable` is raised — useful for alerting/metrics. To restore the legacy "log-only" behaviour:
+
+```ruby
+BugBunny.configure do |c|
+  c.nack_raise   = false  # or pass `nack_raise: false` per request
+  c.return_raise = false  # or pass `return_raise: false` per request
+end
+```
+
+When `mandatory: false` (the default), `return_raise` is inert — the broker never emits `basic.return` without mandatory.
 
 ---
 
@@ -289,9 +310,15 @@ BugBunny maps RabbitMQ responses to a semantic exception hierarchy, similar to h
 
 ```
 BugBunny::Error
+├── CommunicationError                  (network / channel failure)
+├── ConfigurationError                  (invalid config attribute)
+├── SecurityError                       (unauthorized controller resolution)
+├── PublishNacked                       (broker basic.nack on :confirmed publish)
+├── PublishUnroutable                   (broker basic.return on mandatory + :confirmed)
 ├── ClientError (4xx)
 │   ├── BadRequest (400)
 │   ├── NotFound (404)
+│   │   └── RoutingError                (consumer-side: no route for verb + path)
 │   ├── NotAcceptable (406)
 │   ├── RequestTimeout (408)
 │   ├── Conflict (409)
