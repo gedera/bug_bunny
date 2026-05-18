@@ -90,7 +90,7 @@ sequenceDiagram
     P->>P: handle_return_result → event.wait(RETURN_RACE_WINDOW_S=0.05s)
     P->>P: slot[:info] presente → raise_unroutable!
     P-->>CL: PublishUnroutable (o éxito si slot vacío)
-    Note over RT,S: on_return user callback corre antes del raise; su excepción se loggea, no propaga
+    Note over RT,S: on_return corre antes del raise · su excepción se loggea (no propaga)
 ```
 Contexto: `producer.rb:72-93,200-216,281-345`; `session.rb:70-74,204-250`. Branches: ack→ok · nack→`PublishNacked` (`producer.rb:235`) · return→`PublishUnroutable` (`producer.rb:325`) · timeout→`RequestTimeout` (`producer.rb:214-215`).
 
