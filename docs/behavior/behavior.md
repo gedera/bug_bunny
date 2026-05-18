@@ -1,10 +1,10 @@
 # Comportamiento — bug_bunny
 
-> meta: artefacto `comportamiento` · RFC-007 (cadencia incremental default / completo on-demand) · generado dev-enrich 1.3.0 (backfill on-demand) · anclado a `a5cdb10` · cobertura: completa (6 flujos) — backfill solicitado explícitamente
+> meta: artefacto `comportamiento` · RFC-007 (cadencia incremental default / completo on-demand) · generado dev-enrich 1.3.0 (backfill on-demand) · anclado a `a5cdb10` · cobertura: completa (6 flujos) · verificado por humano 2026-05-18
 
 ## 1. Resumen
 
-Flujos de ejecución de la gema. Generado en **modo completo on-demand** (RFC-007 §2 / dev-enrich 1.3.0): backfill solicitado explícitamente, no incremental. Invariante de honestidad (RFC-001 §3.3): anclado a código real (`file:line`), lógica dispersa marcada como tal, cobertura declarada, **verificación humana pendiente** (el LLM extrajo las secuencias; el humano confirma contra el código).
+Flujos de ejecución de la gema. Generado en **modo completo on-demand** (RFC-007 §2 / dev-enrich 1.3.0): backfill solicitado explícitamente, no incremental. Invariante de honestidad (RFC-001 §3.3): anclado a código real (`file:line`), lógica dispersa marcada como tal, cobertura declarada, **verificado por humano 2026-05-18** contra el código (el LLM extrajo las secuencias; humano confirmó).
 
 ## Cobertura (OBLIGATORIO)
 
@@ -163,7 +163,7 @@ Contexto: `middleware/stack.rb:31-47` (build L43-47, `reverse.inject`), `base.rb
 
 | Inferencia | confidence | a verificar (humano) |
 |---|---|---|
-| Secuencias y `file:line` extraídos por el LLM del código a `a5cdb10`; re-verificados en una 2ª pasada LLM contra el código (corregidas 3 discrepancias: flujo middleware invertido, timeout RPC `producer.rb:124`, timeout confirmed `producer.rb:214-215`) | inferred | confirmación **humana** final pendiente (invariante RFC-001 §3.3) |
+| Secuencias y `file:line` extraídos por el LLM del código a `a5cdb10`; 2ª pasada LLM corrigió 3 discrepancias (flujo middleware invertido, timeout RPC `producer.rb:124`, timeout confirmed `producer.rb:214-215`) | confirmed | **verificado por humano 2026-05-18** (invariante RFC-001 §3.3 satisfecho) |
 | Orden wire `basic.return → basic.ack` garantizado por AMQP; `RETURN_RACE_WINDOW_S` cubre GVL | declared (código) / inferred (garantía AMQP) | confirmar lectura de `producer.rb:299-308` + spec AMQP |
 | Health check acoplado flojo al loop vía cierre de session | inferred | confirmar `consumer.rb:340-361` vs `106-124` |
 
@@ -173,4 +173,4 @@ Contexto: `middleware/stack.rb:31-47` (build L43-47, `reverse.inject`), `base.rb
 - **Lógica dispersa marcada (no fingida):** health check (thread aparte vía `Concurrent::TimerTask`, acople flojo con el loop sólo vía cierre de session). RFC-007: marcada, no diagramada como flujo limpio falso. (El orden onion del middleware NO es lógica dispersa: es mecanismo limpio y documentado en `stack.rb:37-39`.)
 - **Fuera de alcance:** estructura (operaciones/interfaz/topología) → dev-structure F2 (no implementado). Significado de términos → `glossary.md`. Datos → n/a (sin DB).
 - **Frescura:** PR que renombre/mueva un método citado → reviewer actualiza el diagrama y `file:line` en el mismo PR (RFC-001 §3.3).
-- **Verificación humana pendiente:** obligatoria antes de considerar este artefacto confiable.
+- **Verificación humana:** completada 2026-05-18 (invariante RFC-001 §3.3 satisfecho). Re-verificar en cada PR que toque un flujo citado (frescura).
