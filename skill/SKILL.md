@@ -27,13 +27,19 @@ El detalle vive en `docs/<capa>/` (modelo `dev-*`); esta skill **indexa y resume
 | Operaciones / Interfaz / Topología | — | F2 no implementado — ver nota |
 
 > **Coexistencia transitoria con destino pendiente (RFC-008 §2 — interim de
-> migración):** el contrato/arquitectura (jerarquía de excepciones, API de
-> config, modos de entrega, diagrama de arquitectura) **permanece embebido**
-> abajo en esta skill porque su capa destino (operaciones/interfaz/topología)
-> está declarada pero **no implementada** (dev-structure F1, F2 del plan). Por
-> RFC-008 §2: no se fabrica la capa, no se borra el contrato sin destino; migra
-> cuando F2 entregue, mismo PR. Estado transitorio declarado. Origen del gap
-> (resuelto, normado): [sequre/ai_knowledge#95](https://github.com/sequre/ai_knowledge/issues/95).
+> migración):** mientras la capa de detalle destino (operaciones/interfaz/
+> topología) esté declarada pero **no implementada** (dev-structure F1, F2 del
+> plan), permanecen embebidos bajo el interim normado:
+> - **En esta skill (abajo):** el contrato (jerarquía de excepciones, API de
+>   config, modos de entrega) **y** el diagrama de arquitectura (flujo RPC).
+> - **En `README.md`:** el contrato (sin el diagrama de arquitectura).
+> - **Guías how-to** (`references/*.md`, pre-estándar): destino futuro
+>   `docs/howto/`.
+>
+> Por RFC-008 §2: no se fabrica la capa, no se borra contrato sin destino, no
+> se duplica; migra cuando F2 entregue, mismo PR. Estado transitorio declarado,
+> no excepción permanente. Origen del gap (resuelto, normado):
+> [sequre/ai_knowledge#95](https://github.com/sequre/ai_knowledge/issues/95).
 
 > **Glosario:** migrado a [docs/glossary/glossary.md](../docs/glossary/glossary.md)
 > (RFC-008 §2 — el compuesto referencia, no copia). Términos AMQP base
