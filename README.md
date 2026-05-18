@@ -58,8 +58,8 @@ module BugBunny
 end
 
 # Worker entrypoint (dedicated thread or process)
-consumer = BugBunny::Consumer.new
-consumer.subscribe(
+BugBunny::Consumer.subscribe(
+  connection:    BugBunny.create_connection,
   queue_name:    'inventory_queue',
   exchange_name: 'inventory',
   routing_key:   'nodes'
@@ -124,7 +124,7 @@ BugBunny.configure do |config|
   config.network_recovery_interval = 5     # seconds, base for exponential backoff
 
   # Timeouts
-  config.rpc_timeout         = 30   # seconds, for synchronous RPC calls
+  config.rpc_timeout         = 10   # seconds (default 10), for synchronous RPC calls
   config.connection_timeout  = 10
   config.read_timeout        = 10
   config.write_timeout       = 10
@@ -339,9 +339,9 @@ BugBunny.consumer_middlewares.use TracingMiddleware
 
 ## Observability
 
-BugBunny implementa de forma nativa las [OpenTelemetry semantic conventions for messaging](https://opentelemetry.io/docs/specs/otel/trace/semantic-conventions/messaging/), inyectando automáticamente campos como `messaging_system`, `messaging_operation`, `messaging_destination_name` y `messaging_message_id` tanto en los headers AMQP como en los log events estructurados.
+BugBunny natively implements the [OpenTelemetry semantic conventions for messaging](https://opentelemetry.io/docs/specs/otel/trace/semantic-conventions/messaging/), automatically injecting fields like `messaging_system`, `messaging_operation`, `messaging_destination_name` and `messaging_message_id` into both the AMQP headers and the structured log events.
 
-Todos los eventos internos se emiten como logs `key=value` compatibles con Datadog, CloudWatch, ELK y ExisRay.
+All internal events are emitted as `key=value` logs compatible with Datadog, CloudWatch, ELK and ExisRay.
 
 ```
 component=bug_bunny event=producer.publish method=POST path=acct/publish messaging_destination_name=acct_x messaging_routing_key=acct.start.42
@@ -353,19 +353,19 @@ component=bug_bunny event=consumer.execution_error error_class=RuntimeError erro
 component=bug_bunny event=consumer.connection_error attempt_count=2 retry_in_s=10 error_message="..."
 ```
 
-### Duraciones medidas internamente
+### Internally measured durations
 
-BugBunny mide y emite duraciones automáticamente — **no es necesario envolver llamadas a `client.publish` con `Process.clock_gettime` en el código de aplicación**. Las unidades siguen las [OpenTelemetry metric semantic conventions](https://opentelemetry.io/docs/specs/semconv/general/metrics/) (`s`, segundos como `Float`).
+BugBunny measures and emits durations automatically — **there is no need to wrap `client.publish` calls with `Process.clock_gettime` in application code**. Units follow the [OpenTelemetry metric semantic conventions](https://opentelemetry.io/docs/specs/semconv/general/metrics/) (`s`, seconds as `Float`).
 
-| Evento | Duración | Mide |
+| Event | Duration | Measures |
 |---|---|---|
-| `producer.published` | `duration_s` | Solo el `basic_publish` (TCP enqueue al broker). |
-| `producer.confirmed` | `publish_duration_s` + `confirm_duration_s` + `duration_s` (total) | Publish + espera de ACK del broker. |
-| `producer.rpc_response_received` | `duration_s` | Round-trip RPC completo (publish + procesamiento remoto + reply). |
-| `consumer.message_processed` | `duration_s` | Procesamiento del mensaje (router + controller + reply). |
-| `consumer.execution_error` | `duration_s` | Tiempo transcurrido hasta el error. |
+| `producer.published` | `duration_s` | Only the `basic_publish` (TCP enqueue to the broker). |
+| `producer.confirmed` | `publish_duration_s` + `confirm_duration_s` + `duration_s` (total) | Publish + wait for broker ACK. |
+| `producer.rpc_response_received` | `duration_s` | Full RPC round-trip (publish + remote processing + reply). |
+| `consumer.message_processed` | `duration_s` | Message processing (router + controller + reply). |
+| `consumer.execution_error` | `duration_s` | Elapsed time until the error. |
 
-Las claves sensibles (`password`, `token`, `secret`, `api_key`, `authorization`, etc.) se filtran automáticamente a `[FILTERED]` en toda la salida de logs.
+Sensitive keys (`password`, `token`, `secret`, `api_key`, `authorization`, etc.) are automatically filtered to `[FILTERED]` across all log output.
 
 ---
 
@@ -437,9 +437,15 @@ Artefactos de detalle (modelo `dev-*`, RFC-001). El README indexa; no duplica.
 | Comportamiento | [docs/behavior/behavior.md](docs/behavior/behavior.md) | completa — 6 flujos (backfill on-demand) |
 | Operaciones / Interfaz / Topología | — | F2 no implementado (dev-structure) — ver nota |
 
-**Coexistencia transitoria con destino pendiente (RFC-008 §2 — interim de migración):** el contrato y la arquitectura (jerarquía de excepciones, API de configuración, modos de entrega, diagrama de arquitectura) **permanecen embebidos** en este README y en `skill/SKILL.md` porque su capa de detalle destino (operaciones/interfaz/topología) está declarada pero **no implementada** (dev-structure F1, F2 del plan). Por RFC-008 §2: no se fabrica la capa, no se borra el contrato sin destino; migra cuando F2 entregue, mismo PR. Estado transitorio declarado, no excepción permanente. Origen del gap (resuelto, ahora normado): [sequre/ai_knowledge#95](https://github.com/sequre/ai_knowledge/issues/95).
+**Coexistencia transitoria con destino pendiente (RFC-008 §2 — interim de migración):** mientras la capa de detalle destino (operaciones/interfaz/topología) esté declarada pero **no implementada** (dev-structure F1, F2 del plan), permanecen embebidos/cruzados, bajo el interim normado:
 
-Guías how-to (audiencia humana, pre-estándar — pendiente de migrar a `docs/<capa>/`):
+- **En este README:** el contrato (jerarquía de excepciones, API de configuración, modos de entrega).
+- **En `skill/SKILL.md`:** además el diagrama de arquitectura (flujo RPC).
+- **Guías how-to** (`skill/references/*.md`, pre-estándar): el README las enlaza pese a la regla "no referenciar `skill/` desde el README" — destino futuro `docs/howto/`.
+
+Por RFC-008 §2: no se fabrica la capa, no se borra contrato sin destino, no se duplica; migra cuando F2 entregue, mismo PR. Estado transitorio declarado, no excepción permanente. Origen del gap (resuelto, normado): [sequre/ai_knowledge#95](https://github.com/sequre/ai_knowledge/issues/95).
+
+How-to (pre-estándar):
 [Routing](skill/references/routing.md) ·
 [Controllers](skill/references/controller.md) ·
 [Resources](skill/references/resource.md) ·
