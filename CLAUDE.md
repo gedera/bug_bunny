@@ -8,14 +8,30 @@ BugBunny es una gema Ruby que implementa una capa de enrutamiento RESTful sobre 
 
 ## Documentación
 
-- **Para humanos**: `docs/` (5 archivos) + `README.md`. Ver README para índice.
-- **Para agentes AI**: `skill/SKILL.md` + `skill/references/`. Es la skill empaquetada que otros proyectos consumen via `skill-manager sync`.
-- **Nunca referenciar `skill/` desde `docs/` o `README.md`** — son audiencias distintas.
+- **Modelo `dev-*` (RFC-001):** artefactos de detalle en `docs/<capa>/`
+  (`data/`, `glossary/`, `behavior/`); compuestos (`README.md` humano,
+  `skill/SKILL.md` agente version-locked) **indexan, no duplican**.
+  Artefactos generados por `dev-structure` / `dev-enrich`; compuestos por
+  `dev-compose`. Verificación humana antes de commitear.
+- **Estado actual:** `docs/data` = n/a (gema sin DB, declarado solo en índice);
+  `docs/glossary` parcial (acreta por PR); `docs/behavior` completo (6 flujos,
+  backfill on-demand); operaciones/interfaz/topología = dev-structure F2 no
+  implementado.
+- **Para agentes AI**: `skill/SKILL.md` (empaquetada en el `.gem`) +
+  `skill/references/`.
+- **Coexistencia transitoria con destino pendiente (RFC-008 §2 — interim de
+  migración):** contrato/arquitectura sigue embebido en
+  `README.md`/`skill/SKILL.md` y las guías how-to viven en `skill/references/`
+  (pre-estándar) porque su capa destino (operaciones/interfaz/topología) es
+  dev-structure F2 no implementado. Por norma: no se fabrica la capa, no se
+  borra el contrato sin destino; migra cuando F2 entregue, mismo PR. Estado
+  transitorio declarado en el índice de artefactos. Origen del gap (resuelto,
+  normado): `sequre/ai_knowledge#95`.
 
 ## Knowledge Base
 - Las skills en `.agents/skills/` incluyen conocimiento de dependencias.
 - Leer la skill de una dependencia ANTES de responder sobre ella.
-- Rebuild: `ruby .agents/skills/skill-manager/scripts/sync.rb`
+- Rebuild: `wispro-agent sync`
 
 ### Entorno
 - Versión de Ruby: leer `.ruby-version`

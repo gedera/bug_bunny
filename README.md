@@ -426,17 +426,27 @@ end
 
 ---
 
-## Documentation
+## Índice de artefactos
 
-- [Concepts](docs/concepts.md) — What BugBunny is, AMQP in 5 minutes, RPC vs fire-and-forget
-- [Routing](docs/howto/routing.md) — Full routing DSL reference
-- [Controllers](docs/howto/controller.md) — Filters, `rescue_from`, `render`, `after_action`
-- [Resource ORM](docs/howto/resource.md) — CRUD, typed and dynamic attributes, `.with` scoping
-- [Client Middleware](docs/howto/middleware_client.md) — Request/response middleware stack
-- [Consumer Middleware](docs/howto/middleware_consumer.md) — Message processing middleware stack
-- [Distributed Tracing](docs/howto/tracing.md) — Propagating trace context through RPC cycles
-- [Rails Setup](docs/howto/rails.md) — Full integration: Puma, Sidekiq, Zeitwerk, health checks
-- [Testing](docs/howto/testing.md) — Unit and integration testing with Bunny mocks
+Artefactos de detalle (modelo `dev-*`, RFC-001). El README indexa; no duplica.
+
+| Capa | Artefacto | Estado |
+|---|---|---|
+| Datos | — | n/a — gema sin DB (sin schema/models) |
+| Glosario | [docs/glossary/glossary.md](docs/glossary/glossary.md) | parcial, acreta por PR |
+| Comportamiento | [docs/behavior/behavior.md](docs/behavior/behavior.md) | completa — 6 flujos (backfill on-demand) |
+| Operaciones / Interfaz / Topología | — | F2 no implementado (dev-structure) — ver nota |
+
+**Coexistencia transitoria con destino pendiente (RFC-008 §2 — interim de migración):** el contrato y la arquitectura (jerarquía de excepciones, API de configuración, modos de entrega, diagrama de arquitectura) **permanecen embebidos** en este README y en `skill/SKILL.md` porque su capa de detalle destino (operaciones/interfaz/topología) está declarada pero **no implementada** (dev-structure F1, F2 del plan). Por RFC-008 §2: no se fabrica la capa, no se borra el contrato sin destino; migra cuando F2 entregue, mismo PR. Estado transitorio declarado, no excepción permanente. Origen del gap (resuelto, ahora normado): [sequre/ai_knowledge#95](https://github.com/sequre/ai_knowledge/issues/95).
+
+Guías how-to (audiencia humana, pre-estándar — pendiente de migrar a `docs/<capa>/`):
+[Routing](skill/references/routing.md) ·
+[Controllers](skill/references/controller.md) ·
+[Resources](skill/references/resource.md) ·
+[Client & Middleware](skill/references/client-middleware.md) ·
+[Consumer](skill/references/consumer.md) ·
+[Errores](skill/references/errores.md) ·
+[Testing](skill/references/testing.md)
 
 ---
 

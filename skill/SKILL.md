@@ -1,28 +1,44 @@
-# BugBunny Expert
-
-Skill de conocimiento completo sobre BugBunny. Consultame para cualquier pregunta sobre integración, arquitectura, API, errores y antipatrones.
-
+---
+name: bug_bunny
+description: >-
+  Routing RESTful sobre AMQP/RabbitMQ para microservicios Ruby/Rails: RPC
+  síncrono, fire-and-forget, Publisher Confirms, Resource ORM, controllers y
+  routing DSL tipo Rails. Usar cuando se integra/depura comunicación entre
+  servicios via RabbitMQ con la gema bug_bunny.
+triggers:
+  - gema `bug_bunny` / módulo `BugBunny`
+  - "símbolos `BugBunny::{Client,Consumer,Resource,Controller}`"
+  - "excepciones `BugBunny::{PublishUnroutable,PublishNacked,RemoteError}`"
 ---
 
-## Glosario
+# BugBunny Expert
 
-**AMQP** — Advanced Message Queuing Protocol. Protocolo binario que implementa RabbitMQ.
-**Bunny** — Cliente Ruby para AMQP. BugBunny lo usa internamente para conexiones, canales y publicación.
-**Exchange** — Recibe mensajes del producer y los enruta a queues según reglas. Tipos: `direct` (match exacto), `topic` (wildcards), `fanout` (broadcast).
-**Queue** — Almacena mensajes hasta que un consumer los consume. Las queues durables sobreviven reinicios del broker.
-**Routing Key** — String que el producer adjunta al mensaje. El exchange lo usa para decidir a qué queues enrutar.
-**Binding** — Enlace entre un exchange y una queue, opcionalmente con un patrón de routing key.
-**Session** — `BugBunny::Session` envuelve canales de Bunny con thread-safety y double-checked locking.
-**RPC** — Patrón síncrono que usa la pseudo-cola `amq.rabbitmq.reply-to` para respuestas sin crear queues temporales.
-**Fire-and-Forget** — Patrón asíncrono donde el producer publica y continúa sin esperar respuesta. Retorna `{ 'status' => 202 }`.
-**Publisher Confirms** — Extensión de RabbitMQ que confirma al publisher que el broker recibió el mensaje. BugBunny lo expone como `confirmed: true` en `Client#publish`: el publish bloquea hasta `wait_for_confirms`. Dos señales asíncronas del broker, ambas convertidas en excepciones raise-eables en el publish thread:
-- **NACK** (rechazo explícito) → `BugBunny::PublishNacked` (configurable via `config.nack_raise = false`).
-- **basic.return** (mandatory unroutable) → `BugBunny::PublishUnroutable` (configurable via `config.return_raise = false`).
-**Mandatory** — Flag de `basic.publish` que pide al broker retornar el mensaje al publisher si no es ruteable a ninguna cola. Se procesa via `basic.return` (no es respuesta del request).
-**basic.return** — Evento asincrónico que Bunny dispatcha por exchange (`Bunny::Exchange#on_return`). BugBunny registra un handler único por nombre de exchange al resolverlo en `Session#exchange` y lo delega a `Configuration#on_return` o al default que logea.
-**Resource** — ORM tipo ActiveRecord que mapea operaciones CRUD a llamadas AMQP.
-**Consumer** — Worker bloqueante que despacha mensajes a controladores mediante un Router.
-**Connection Pool** — Pool de conexiones (`connection_pool` gem) que comparte sessions entre threads. Cada slot cachea su `Session` y `Producer`.
+Skill de conocimiento sobre BugBunny. Integración, arquitectura, API, errores y antipatrones.
+
+## Índice de artefactos (fuente de verdad)
+
+El detalle vive en `docs/<capa>/` (modelo `dev-*`); esta skill **indexa y resume**, no duplica.
+
+| Capa | Artefacto | Estado |
+|---|---|---|
+| Glosario de dominio | [docs/glossary/glossary.md](../docs/glossary/glossary.md) | parcial, acreta por PR |
+| Comportamiento (flujos) | [docs/behavior/behavior.md](../docs/behavior/behavior.md) | completa — 6 flujos |
+| Datos | — | n/a — gema sin DB |
+| Operaciones / Interfaz / Topología | — | F2 no implementado — ver nota |
+
+> **Coexistencia transitoria con destino pendiente (RFC-008 §2 — interim de
+> migración):** el contrato/arquitectura (jerarquía de excepciones, API de
+> config, modos de entrega, diagrama de arquitectura) **permanece embebido**
+> abajo en esta skill porque su capa destino (operaciones/interfaz/topología)
+> está declarada pero **no implementada** (dev-structure F1, F2 del plan). Por
+> RFC-008 §2: no se fabrica la capa, no se borra el contrato sin destino; migra
+> cuando F2 entregue, mismo PR. Estado transitorio declarado. Origen del gap
+> (resuelto, normado): [sequre/ai_knowledge#95](https://github.com/sequre/ai_knowledge/issues/95).
+
+> **Glosario:** migrado a [docs/glossary/glossary.md](../docs/glossary/glossary.md)
+> (RFC-008 §2 — el compuesto referencia, no copia). Términos AMQP base
+> (Exchange, Queue, Routing Key, RPC, Publisher Confirms, Mandatory, etc.) y su
+> binding físico están ahí.
 
 ---
 
