@@ -8,7 +8,17 @@ skills:
     repo: sequre/ai_knowledge
   gem-release:
     repo: sequre/ai_knowledge
-  skill-builder:
+  dev-structure:
+    repo: sequre/ai_knowledge
+  dev-compose:
+    repo: sequre/ai_knowledge
+  dev-enrich:
+    repo: sequre/ai_knowledge
+  skill-feedback:
+    repo: sequre/ai_knowledge
+  agent-issue:
+    repo: sequre/ai_knowledge
+  dev-flow:
     repo: sequre/ai_knowledge
   matrix-element:
     repo: sequre/ai_knowledge
@@ -17,10 +27,6 @@ skills:
       auth_token: "${MATRIX_AUTH_TOKEN}"
       rooms:
         agents: "!VCHwQXgmXdyhhhPhoz:matrix.cloud.wispro.co"
-  skill-feedback:
-    repo: sequre/ai_knowledge
-  agent-issue:
-    repo: sequre/ai_knowledge
   documentation-writer:
     repo: github/awesome-copilot
     path: skills/documentation-writer
