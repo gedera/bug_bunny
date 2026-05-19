@@ -1,5 +1,24 @@
 # Changelog
 
+## [4.17.1] - 2026-05-19
+
+> Release docs-only sobre 4.17.0 — sin cambios en `lib/` ni API pública. Incorpora la familia de skills `dev-*` (RFC-001) y los artefactos de detalle version-locked (`docs/glossary`, `docs/behavior`) que viajan en el `.gem`.
+
+### Nuevas funcionalidades
+- Incorporar familia de skills `dev-*` (glosario + comportamiento) y recomponer composites (#47) — @Gabriel
+
+### Correcciones
+- Consistencia README: Quickstart Consumer, `rpc_timeout`, idioma, coexistencia — @Gabriel
+- Escapar `;` en Note del diagrama Mermaid (flujo confirmed) — @Gabriel
+
+### Documentación
+- Marcar verificación humana de `behavior.md` completada (RFC-001 §3.3) — @Gabriel
+- Rework `skill/SKILL.md` a RFC-008 endurecido (dev-compose 2.0.0) — @Gabriel
+- Alinear nota de coexistencia skill/README — @Gabriel
+
+### Otros cambios
+- Migrar de `service-release` a `gem-release` — @Gabriel
+
 ## [4.17.0] - 2026-05-13
 
 ### Nuevas funcionalidades
