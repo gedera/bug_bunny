@@ -19,7 +19,7 @@ Gema Ruby: capa de routing RESTful sobre AMQP/RabbitMQ. Microservicios se comuni
 
 ## Contrato resumido (piso mínimo)
 
-> Resume el contrato de **`bug_bunny` 4.17.0**. Suficiente para el uso típico sin abrir el detalle; el detalle version-locked está en [`../docs/behavior/behavior.md`](../docs/behavior/behavior.md) (6 flujos) y [`../docs/glossary/glossary.md`](../docs/glossary/glossary.md) (símbolos→significado). Antipatrones/API completa: más abajo (embebido interim, ver Cobertura y fronteras).
+> Resume el contrato de **`bug_bunny` 4.18.0**. Suficiente para el uso típico sin abrir el detalle; el detalle version-locked está en [`../docs/behavior/behavior.md`](../docs/behavior/behavior.md) (6 flujos) y [`../docs/glossary/glossary.md`](../docs/glossary/glossary.md) (símbolos→significado). Antipatrones/API completa: más abajo (embebido interim, ver Cobertura y fronteras).
 
 **Símbolos públicos clave**
 
@@ -31,7 +31,7 @@ Gema Ruby: capa de routing RESTful sobre AMQP/RabbitMQ. Microservicios se comuni
 | `BugBunny::Controller` | `before/around/after_action`, `rescue_from`, `render status:, json:` |
 | `BugBunny.routes.draw` | `resources :x` · `namespace` · `member`/`collection` |
 | `BugBunny.configure` | `host/port/username/password` · `rpc_timeout` (default 10) · `nack_raise`/`return_raise` (default `true`) · `on_return` |
-| Excepciones | `RemoteError` (500 con backtrace remoto) · `PublishNacked` · `PublishUnroutable` · `RequestTimeout` · `NotFound` · `UnprocessableEntity` |
+| Excepciones | `RemoteError` (500 con backtrace remoto) · `PublishNacked` · `PublishUnroutable` · `RequestTimeout` · `NotFound` · `UnprocessableEntity` · `CommunicationError` (envuelve cualquier `Bunny::Exception` — TCP/conn/canal; `.cause` preserva original) |
 
 **Uso típico**
 
@@ -54,6 +54,7 @@ client.publish('events', body: { type: 'x' })   # => { 'status' => 202 }
 - `confirmed:true + mandatory:true` con `return_raise` (default `true`) → `PublishUnroutable` si no rutea.
 - `BugBunny::Consumer.subscribe` requiere `connection:`. No correr el Consumer en threads de Puma (loop bloqueante).
 - `exchange_options: { durable: true }` debe matchear la declaración del consumer, o `Bunny::PreconditionFailed`.
+- **Errores de transporte (4.18+):** TCP fail, conn rota, canal cerrado → siempre `BugBunny::CommunicationError`. No rescatar `Bunny::TCPConnectionFailed`/`ConnectionClosedError` directo — quedó atrás de la frontera. La original sigue accesible vía `.cause`.
 
 ## Índice de artefactos (fuente de verdad)
 
@@ -431,8 +432,8 @@ Limitación de RSpec: `instance_double` valida que el método exista pero **no**
 **Resolución:** `rescue BugBunny::RemoteError => e` y acceder a `e.original_class`, `e.original_message`, `e.original_backtrace`. Revisar logs del consumer (`event=controller.unhandled_exception`).
 
 ### BugBunny::CommunicationError
-**Causa:** Fallo de conexión o reconexión agotada.
-**Resolución:** Verificar conectividad a RabbitMQ. Revisar `max_reconnect_attempts` y logs de reconexión.
+**Causa:** Fallo de transporte AMQP — envuelve cualquier `Bunny::Exception` que escape en la frontera del gem (`Client#publish`/`#request`/`#send`, `Producer#confirmed`, `BugBunny.create_connection`). Cubre TCP fail (`Bunny::TCPConnectionFailed`), conn rota in-flight (`ConnectionClosedError`), canal cerrado (`ChannelAlreadyClosed`), auth fail, etc. La excepción original queda en `.cause`.
+**Resolución:** Verificar conectividad a RabbitMQ (host/port/auth/vhost). Inspeccionar `e.cause` para clasificar el fallo concreto. Revisar `max_reconnect_attempts` y logs de reconexión.
 
 Ver catálogo completo en [Errores](references/errores.md).
 

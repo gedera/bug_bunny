@@ -1,5 +1,21 @@
 # Changelog
 
+## [4.18.0] - 2026-05-26
+
+> Behavior change menor: cualquier `Bunny::Exception` que escape en la frontera del gem (TCP fail, conn rota, canal cerrado, auth fail) ahora se envuelve como `BugBunny::CommunicationError`. La excepción original queda accesible vía `.cause`. Callers que rescatan `Bunny::TCPConnectionFailed` directo deben migrar a `BugBunny::CommunicationError`. Callers que ya rescatan `BugBunny::Error` / `CommunicationError`: sin cambios.
+
+### Correcciones
+- **`Client#publish`/`#request`/`#send` leak de `Bunny::TCPConnectionFailedForAllHosts` (#49):** el TCP fail nacía en `ConnectionPool::TimedStack#try_create` dentro de `@pool.with`, antes de entrar al `Producer#confirmed` que ya envolvía con `rescue StandardError`. `Client#run_in_pool` ahora envuelve cualquier `Bunny::Exception` → `BugBunny::CommunicationError` (cubre también `Bunny::ConnectionClosedError` in-flight sobre conn rota mid-publish). `BugBunny.create_connection` también envuelve (Railtie, scripts, tests). YARD `@raise` actualizado. — @Gabriel
+
+### Mejoras internas
+- `Producer#confirmed` rescue estrechado de `rescue StandardError` a `rescue Bunny::Exception` — no traga bugs internos (`NoMethodError`, `KeyError`) bajo la etiqueta de fallo de transporte. — @Gabriel
+- `CommunicationError` docstring expandido: declara que envuelve cualquier `Bunny::Exception`, no solo TCP, y que `.cause` preserva la original. — @Gabriel
+- `Client#run_in_pool` refactor: extraído `execute_in_pool` privado para mantener `Metrics/AbcSize`. — @Gabriel
+
+### Documentación
+- `docs/behavior/behavior.md` refrescado scoped (RFC-001 §3.3.3 vía quality-code Paso 5): nota de contrato de error wrapping en flujos Fire-and-forget y Confirmed; nueva entrada en §3 Inferencias; verificación humana 2026-05-26. — @Gabriel
+- `README.md` y `skill/SKILL.md` re-indexados vía `dev-compose`: jerarquía de excepciones refinada, gotcha nuevo sobre errores de transporte 4.18+, descripción de `BugBunny::CommunicationError` en errores comunes. — @Gabriel
+
 ## [4.17.1] - 2026-05-19
 
 > Release docs-only sobre 4.17.0 — sin cambios en `lib/` ni API pública. Incorpora la familia de skills `dev-*` (RFC-001) y los artefactos de detalle version-locked (`docs/glossary`, `docs/behavior`) que viajan en el `.gem`.

@@ -1,6 +1,6 @@
 # Comportamiento — bug_bunny
 
-> meta: artefacto `comportamiento` · RFC-007 (cadencia incremental default / completo on-demand) · generado dev-enrich 1.3.0 (backfill on-demand) · anclado a `a5cdb10` · cobertura: completa (6 flujos) · verificado por humano 2026-05-18
+> meta: artefacto `comportamiento` · RFC-007 (cadencia incremental default / completo on-demand) · generado dev-enrich 1.3.0 (backfill on-demand) · anclado a `94de2b4` · cobertura: completa (6 flujos) · verificado por humano 2026-05-18 (base) · 2026-05-26 (refresco scoped: contrato de error wrapping post-#49)
 
 ## 1. Resumen
 
@@ -68,6 +68,8 @@ sequenceDiagram
 ```
 Contexto: `client.rb:129-134` → `producer.rb:47-51` → `publish_message producer.rb:146-161`.
 
+**Errores (contrato cliente):** cualquier `Bunny::Exception` que escape durante `@pool.with` (TCP fail en `try_create`, `ConnectionClosedError` in-flight, `ChannelAlreadyClosed`, etc.) se envuelve como `BugBunny::CommunicationError` en `Client#run_in_pool` (`client.rb:155-167`). La excepción original queda en `.cause`. Los callers del `Client` no rescatan tipos `Bunny::*`.
+
 ### Flujo: Confirmed + basic.return bridge
 ACK del broker síncrono; `basic.return` (mandatory unroutable) llega en el reader thread de Bunny y se puentea al hilo de publish vía `@pending_returns` + `Concurrent::Event` con ventana de tolerancia GVL.
 
@@ -92,7 +94,7 @@ sequenceDiagram
     P-->>CL: PublishUnroutable (o éxito si slot vacío)
     Note over RT,S: on_return corre antes del raise · su excepción se loggea (no propaga)
 ```
-Contexto: `producer.rb:72-93,200-216,281-345`; `session.rb:70-74,204-250`. Branches: ack→ok · nack→`PublishNacked` (`producer.rb:235`) · return→`PublishUnroutable` (`producer.rb:325`) · timeout→`RequestTimeout` (`producer.rb:214-215`).
+Contexto: `producer.rb:72-93,200-216,281-345`; `session.rb:70-74,204-250`. Branches: ack→ok · nack→`PublishNacked` (`producer.rb:235`) · return→`PublishUnroutable` (`producer.rb:325`) · timeout→`RequestTimeout` (`producer.rb:214-215`) · canal/conn AMQP rota (`Bunny::Exception`)→`CommunicationError` (envuelta por `Producer#confirmed` `producer.rb:87-90` y/o `Client#run_in_pool` `client.rb:155-167`; `.cause` preserva la original).
 
 ### Flujo: Consumer subscribe loop + reconnect + health
 Loop bloqueante infinito con backoff exponencial + jitter en error; health check en TimerTask separado, **acoplado flojo** vía estado de session.
@@ -166,6 +168,7 @@ Contexto: `middleware/stack.rb:31-47` (build L43-47, `reverse.inject`), `base.rb
 | Secuencias y `file:line` extraídos por el LLM del código a `a5cdb10`; 2ª pasada LLM corrigió 3 discrepancias (flujo middleware invertido, timeout RPC `producer.rb:124`, timeout confirmed `producer.rb:214-215`) | confirmed | **verificado por humano 2026-05-18** (invariante RFC-001 §3.3 satisfecho) |
 | Orden wire `basic.return → basic.ack` garantizado por AMQP; `RETURN_RACE_WINDOW_S` cubre GVL | declared (código) / inferred (garantía AMQP) | confirmar lectura de `producer.rb:299-308` + spec AMQP |
 | Health check acoplado flojo al loop vía cierre de session | inferred | confirmar `consumer.rb:340-361` vs `106-124` |
+| Frontera de error del Client: cualquier `Bunny::Exception` durante `@pool.with` (try_create o in-flight) → `BugBunny::CommunicationError` con `.cause` preservada (`client.rb:155-167`). `Producer#confirmed` rescate estrechado a `Bunny::Exception` (`producer.rb:87-90`) — no traga bugs Ruby. `BugBunny.create_connection` también envuelve (`bug_bunny.rb:96-99`). | declared (código post-#49) | confirmar lectura de `client.rb:155-167`, `producer.rb:87-90`, `bug_bunny.rb:96-99` + specs `communication_error_wrapping_spec.rb` |
 
 ## 4. Cobertura y fronteras
 
@@ -173,4 +176,4 @@ Contexto: `middleware/stack.rb:31-47` (build L43-47, `reverse.inject`), `base.rb
 - **Lógica dispersa marcada (no fingida):** health check (thread aparte vía `Concurrent::TimerTask`, acople flojo con el loop sólo vía cierre de session). RFC-007: marcada, no diagramada como flujo limpio falso. (El orden onion del middleware NO es lógica dispersa: es mecanismo limpio y documentado en `stack.rb:37-39`.)
 - **Fuera de alcance:** estructura (operaciones/interfaz/topología) → dev-structure F2 (no implementado). Significado de términos → `glossary.md`. Datos → n/a (sin DB).
 - **Frescura:** PR que renombre/mueva un método citado → reviewer actualiza el diagrama y `file:line` en el mismo PR (RFC-001 §3.3).
-- **Verificación humana:** completada 2026-05-18 (invariante RFC-001 §3.3 satisfecho). Re-verificar en cada PR que toque un flujo citado (frescura).
+- **Verificación humana:** base completada 2026-05-18; refresco scoped 2026-05-26 (contrato de error wrapping post-#49 en Fire-and-forget y Confirmed; invariante RFC-001 §3.3 satisfecho). Re-verificar en cada PR que toque un flujo citado (frescura).
