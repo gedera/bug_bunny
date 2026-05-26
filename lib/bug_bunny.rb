@@ -80,7 +80,10 @@ module BugBunny
   # @option options [Integer] :continuation_timeout (15000) Timeout para operaciones RPC internas.
   #
   # @return [Bunny::Session] Una sesión de Bunny ya iniciada (`start` ya invocado).
-  # @raise [Bunny::TCPConnectionFailed] Si no se puede conectar al servidor.
+  # @raise [BugBunny::CommunicationError] Si no se puede establecer la conexión
+  #   (TCP fail, auth fail, vhost inválido, etc.). Envuelve cualquier
+  #   `Bunny::Exception` para preservar la frontera de abstracción del gem.
+  #   La excepción original queda en `.cause`.
   def self.create_connection(**options)
     conn_options = merge_connection_options(options)
     Bunny.new(conn_options).tap do |conn|
@@ -89,6 +92,10 @@ module BugBunny
       end
       conn.start
     end
+  rescue Bunny::Exception => e
+    raise BugBunny::CommunicationError,
+          "Failed to establish AMQP connection to #{conn_options[:host]}:#{conn_options[:port]}: " \
+          "#{e.class}: #{e.message}"
   end
 
   # Cierra la conexión global si existe.

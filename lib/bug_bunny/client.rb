@@ -138,9 +138,19 @@ module BugBunny
     # Ejecuta la lógica de envío dentro del contexto del Pool.
     # Mapea los argumentos al objeto Request y ejecuta la cadena de middlewares.
     #
+    # Cualquier `Bunny::Exception` que nazca durante la adquisición de la conexión
+    # (`@pool.with` → `try_create`) o durante operaciones sobre una conexión rota
+    # in-flight (canal cerrado, conn perdida) se envuelve en
+    # {BugBunny::CommunicationError}. Esto preserva el contrato de abstracción del
+    # gem: los callers del `Client` no deberían tener que rescatar tipos de
+    # `Bunny::*`. La excepción original queda accesible vía `.cause` (Ruby la
+    # preserva automáticamente al re-raisear dentro del `rescue`).
+    #
     # @param url [String] La ruta destino.
     # @param args [Hash] Argumentos pasados a los métodos públicos.
     # @yield [req] Bloque para configuración adicional del Request.
+    # @raise [BugBunny::CommunicationError] Si la conexión TCP/AMQP falla durante
+    #   la adquisición del slot del pool o durante la operación.
     def run_in_pool(url, args)
       req = build_request(url, args)
 
@@ -151,8 +161,19 @@ module BugBunny
       # de los keyword args. Evaluamos el warning sobre el estado final del Request.
       warn_return_raise_misuse(req)
 
-      # Ejecución dentro del Pool.
-      # Session y Producer se reutilizan por slot de conexión (ver #session_for / #producer_for).
+      execute_in_pool(req)
+    rescue BugBunny::Error
+      raise
+    rescue Bunny::Exception => e
+      raise BugBunny::CommunicationError, "AMQP failure on path=#{req&.path}: #{e.class}: #{e.message}"
+    end
+
+    # Ejecuta el Request dentro del Pool. Session y Producer se reutilizan por
+    # slot de conexión (ver #session_for / #producer_for).
+    #
+    # @param req [BugBunny::Request]
+    # @return [Hash] Respuesta del producer.
+    def execute_in_pool(req)
       @pool.with do |conn|
         session  = session_for(conn)
         producer = producer_for(conn, session)

@@ -377,11 +377,19 @@ RSpec.describe BugBunny::Producer do
       expect { confirmed_producer.confirmed(req) }.to raise_error(BugBunny::RequestTimeout, /Timeout/)
     end
 
-    it 'envuelve errores del canal como BugBunny::CommunicationError' do
-      allow(mock_channel).to receive(:wait_for_confirms).and_raise(StandardError, 'boom')
+    it 'envuelve Bunny::Exception del canal como BugBunny::CommunicationError' do
+      allow(mock_channel).to receive(:wait_for_confirms)
+        .and_raise(Bunny::ChannelAlreadyClosed.new('boom', double(id: 1)))
 
       expect { confirmed_producer.confirmed(build_request) }
         .to raise_error(BugBunny::CommunicationError, /boom/)
+    end
+
+    it 'no traga errores genéricos de Ruby (rescue es Bunny::Exception, no StandardError)' do
+      allow(mock_channel).to receive(:wait_for_confirms).and_raise(NoMethodError, 'bug interno')
+
+      expect { confirmed_producer.confirmed(build_request) }
+        .to raise_error(NoMethodError, 'bug interno')
     end
 
     it 'propaga BugBunny::Error sin envolver' do

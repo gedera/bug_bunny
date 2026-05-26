@@ -86,8 +86,8 @@ module BugBunny
       { 'status' => 202, 'body' => nil }
     rescue BugBunny::Error
       raise
-    rescue StandardError => e
-      raise BugBunny::CommunicationError, "Publisher confirms failed: #{e.message}"
+    rescue Bunny::Exception => e
+      raise BugBunny::CommunicationError, "Publisher confirms failed: #{e.class}: #{e.message}"
     ensure
       teardown_return_listener(request, return_listener)
     end

@@ -7,8 +7,24 @@ module BugBunny
   # Permite capturar cualquier error de la librería con un `rescue BugBunny::Error`.
   class Error < ::StandardError; end
 
-  # Error lanzado cuando ocurren problemas de red o conexión con RabbitMQ.
-  # Suele envolver excepciones nativas de la gema `bunny` (ej: TCP connection failure).
+  # Error lanzado cuando ocurren problemas de red, conexión o protocolo AMQP con RabbitMQ.
+  #
+  # Envuelve cualquier `Bunny::Exception` (TCP fail, auth fail, canal cerrado,
+  # `PreconditionFailed`, `ConnectionClosedError`, etc.) en las fronteras de
+  # abstracción del gem — `BugBunny.create_connection`, `BugBunny::Client#publish` /
+  # `#request` / `#send`, y `BugBunny::Producer#confirmed`. Los callers no deberían
+  # rescatar tipos de `Bunny::*` directamente: con `rescue BugBunny::CommunicationError`
+  # alcanza para cubrir cualquier fallo de transporte/broker.
+  #
+  # La excepción original queda accesible vía `.cause` (Ruby la preserva
+  # automáticamente al re-raisear dentro del `rescue`).
+  #
+  # @example
+  #   begin
+  #     client.publish('evt', exchange: 'x', body: payload)
+  #   rescue BugBunny::CommunicationError => e
+  #     logger.error("publish failed: #{e.message} cause=#{e.cause&.class}")
+  #   end
   class CommunicationError < Error; end
 
   # Error lanzado cuando la configuración de la gema es inválida.
