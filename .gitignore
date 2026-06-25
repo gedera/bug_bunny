@@ -14,3 +14,6 @@
 .env
 # Skills sync state (contiene rutas absolutas locales)
 skills.lock
+# multi-vendor-feedback: artefactos de runs y config local de vendors
+mvf-runs/
+vendors.local.yaml

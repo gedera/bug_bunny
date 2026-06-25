@@ -5,7 +5,36 @@ require 'json'
 module BugBunny
   # Clase base para todas las excepciones lanzadas por la gema BugBunny.
   # Permite capturar cualquier error de la librería con un `rescue BugBunny::Error`.
-  class Error < ::StandardError; end
+  #
+  # Para los errores derivados de una respuesta RPC (los que levanta
+  # {BugBunny::Middleware::RaiseError}), expone de forma uniforme la **materia
+  # prima** del error: el `status` y el `raw_response` (cuerpo crudo). La gema es
+  # **agnóstica al payload**: no interpreta la estructura del cuerpo de error: es
+  # el boundary de cada servicio quien lee `raw_response` y decide la semántica
+  # de dominio (códigos, detalles de validación, etc.).
+  #
+  # @example Leer la materia prima en el boundary del servicio
+  #   rescue BugBunny::Error => e
+  #     e.status       # => 409
+  #     e.raw_response # => { "error" => { "code" => "...", "message" => "...", "details" => {} } }
+  class Error < ::StandardError
+    # @return [Hash, String, nil] El cuerpo crudo de la respuesta de error, tal
+    #   como llegó por el wire. `nil` para errores que no provienen de una
+    #   respuesta RPC (ej: {CommunicationError}, {ConfigurationError}).
+    #
+    # @note **No loguear ni enviar a sinks (Sentry/logs) sin sanitizar.** El
+    #   cuerpo crudo puede contener datos sensibles (p. ej. en `details`). Antes
+    #   de cualquier sink, filtrar las claves sensibles del fleet
+    #   (`password|pass|passwd|secret|token|api_key|auth`) → `[FILTERED]`. La
+    #   gema entrega el cuerpo crudo a propósito; sanitizarlo es responsabilidad
+    #   del consumidor.
+    attr_accessor :raw_response
+
+    # @return [Integer, nil] El código de estado de la respuesta que originó el
+    #   error (ej: 400, 404, 409, 422, 500). `nil` para errores que no provienen
+    #   de una respuesta RPC.
+    attr_accessor :status
+  end
 
   # Error lanzado cuando ocurren problemas de red, conexión o protocolo AMQP con RabbitMQ.
   #
@@ -191,8 +220,9 @@ module BugBunny
     # @return [Hash, Array, String] Los mensajes de error listos para ser iterados.
     attr_reader :error_messages
 
-    # @return [String, Hash] El cuerpo crudo de la respuesta original.
-    attr_reader :raw_response
+    # `raw_response` y `status` se heredan de {BugBunny::Error} (poblados por
+    # {BugBunny::Middleware::RaiseError}); `raw_response` además se setea acá en
+    # el constructor para mantener el comportamiento histórico.
 
     # Inicializa la excepción procesando el cuerpo de la respuesta.
     #
