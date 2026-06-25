@@ -1,5 +1,19 @@
 # Changelog
 
+## [4.19.0] - 2026-06-25
+
+> Capa de errores transport-agnostic (#52). Cambio **aditivo y retrocompatible**: `.message` no se degrada y se suman dos accesores. Bump minor.
+
+### Nuevas funcionalidades
+- **`status` + `raw_response` uniformes en toda la jerarquía (#52):** subidos a la base `BugBunny::Error` (`attr_accessor`) y poblados por `RaiseError.on_complete` en **todas** las clases de error, no solo `UnprocessableEntity`. El consumidor accede a `e.status` / `e.raw_response` de forma uniforme; la gema queda agnóstica al payload y el boundary del servicio interpreta el envelope de dominio. — @Gabriel
+
+### Correcciones
+- **`.message` ya no vuelca un `Hash#inspect` con el envelope anidado (#52):** ante `{ error: { code, message, details } }`, `format_error_message` extrae `error.message` best-effort en vez de interpolar el Hash; mantiene el shape plano histórico (incluido `error: ""`) y cae a JSON. Es solo el string humano para logs/Sentry, no contrato. — @Gabriel
+
+### Documentación
+- `skill/references/errores.md` y `skill/SKILL.md`: nueva sección "Materia prima del error" (`status`/`raw_response`), formato de `.message` endurecido y advertencia de sanitización (no loguear `raw_response` crudo). — @Gabriel
+- Piloto RFC-014: `docs/release/release.md` (suplemento de release de la gema) (#51) — @Gabriel
+
 ## [4.18.0] - 2026-05-26
 
 > Behavior change menor: cualquier `Bunny::Exception` que escape en la frontera del gem (TCP fail, conn rota, canal cerrado, auth fail) ahora se envuelve como `BugBunny::CommunicationError`. La excepción original queda accesible vía `.cause`. Callers que rescatan `Bunny::TCPConnectionFailed` directo deben migrar a `BugBunny::CommunicationError`. Callers que ya rescatan `BugBunny::Error` / `CommunicationError`: sin cambios.
