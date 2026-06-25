@@ -435,6 +435,11 @@ Limitación de RSpec: `instance_double` valida que el método exista pero **no**
 **Causa:** Fallo de transporte AMQP — envuelve cualquier `Bunny::Exception` que escape en la frontera del gem (`Client#publish`/`#request`/`#send`, `Producer#confirmed`, `BugBunny.create_connection`). Cubre TCP fail (`Bunny::TCPConnectionFailed`), conn rota in-flight (`ConnectionClosedError`), canal cerrado (`ChannelAlreadyClosed`), auth fail, etc. La excepción original queda en `.cause`.
 **Resolución:** Verificar conectividad a RabbitMQ (host/port/auth/vhost). Inspeccionar `e.cause` para clasificar el fallo concreto. Revisar `max_reconnect_attempts` y logs de reconexión.
 
+**Materia prima (desde 4.19):** todo `BugBunny::Error` de respuesta RPC expone
+`e.status` y `e.raw_response` (cuerpo crudo) de forma uniforme — no solo 422. La
+gema es agnóstica al payload: el envelope de dominio se parsea en el boundary del
+servicio. No loguear `raw_response` sin sanitizar.
+
 Ver catálogo completo en [Errores](references/errores.md).
 
 ---

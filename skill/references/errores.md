@@ -22,6 +22,30 @@ StandardError
         └── BugBunny::RemoteError (500)
 ```
 
+## Materia prima del error (`status` + `raw_response`) — desde 4.19
+
+Todos los errores derivados de una respuesta RPC exponen de forma **uniforme**
+el `status` y el `raw_response` (cuerpo crudo), no solo `UnprocessableEntity`.
+La gema es **agnóstica al payload**: entrega el cuerpo crudo tal cual y el
+boundary del servicio decide la semántica de dominio (códigos, detalles, etc.).
+
+```ruby
+begin
+  client.request('clusters/42', method: :get)
+rescue BugBunny::Error => e
+  e.status       # => 409 (Integer, nil si el error no viene de una respuesta RPC)
+  e.raw_response # => cuerpo crudo tal como llegó por el wire (Hash/String/nil)
+end
+```
+
+> ⚠️ **No loguear `raw_response` crudo.** Puede contener datos sensibles. Filtrar
+> claves (`password|pass|passwd|secret|token|api_key|auth`) → `[FILTERED]` antes
+> de Sentry/logs. La gema lo entrega a propósito; sanitizar es del consumidor.
+
+Para consumir un envelope estructurado de dominio (ej. `{ error: { code,
+message, details } }`), parsealo en el boundary del servicio desde
+`e.raw_response` — la gema **no** expone `code`/`details` como contrato.
+
 ## Errores de Infraestructura
 
 ### BugBunny::CommunicationError
@@ -133,10 +157,15 @@ end
 
 ## Formato de Mensajes de Error
 
-El middleware `RaiseError` construye el mensaje así:
-1. Busca `{ "error": "...", "detail": "..." }` en el body.
-2. Si no encuentra, usa el Hash completo como JSON.
-3. Si el body está vacío, usa `"Unknown Error"`.
+El middleware `RaiseError` construye el `.message` humano (best-effort, para
+logs/Sentry — **no es contrato**) así:
+1. Envelope anidado `{ "error": { "message": "..." } }` → extrae `error.message`.
+2. Shape plano `{ "error": "...", "detail": "..." }` → concatena `error` + `detail`.
+3. Si ninguno aplica, usa el cuerpo completo como JSON (nunca un `Hash#inspect`).
+4. Si el body está vacío, usa `"Unknown Error"`.
+
+Para detalle estructurado (`code`/`details`), leé `e.raw_response` en el
+boundary del servicio (ver "Materia prima del error").
 
 ## Connection Pool Missing
 
