@@ -33,7 +33,7 @@ Sin tags declarados (`:slow`/`:js`) en la config de RSpec.
 | solo unit | `bundle exec rake spec:unit` | `spec/unit/**/*_spec.rb` |
 | solo integration | `bundle exec rake spec:integration` | `spec/integration/**/*_spec.rb` (requiere broker) |
 | Minitest legacy | `bundle exec rake test` | `test/**/*_test.rb` |
-| CI | `.github/workflows/main.yml` → `bundle exec rake` | matrix Ruby `3.4.4`, `ruby/setup-ruby@v1` + `bundler-cache`, on push `master` + PR |
+| CI | `.github/workflows/main.yml` → `bundle exec rake` | matrix Ruby `3.4.4`, `ruby/setup-ruby@v1` + `bundler-cache`, on push `main` + PR |
 
 > Todas las tareas RSpec corren con `--require spec_helper` (`Rakefile`).
 
@@ -67,10 +67,9 @@ RFC-013).
   `mocha`, `minitest-reporters` en gemspec) es **legacy** — el comentario del
   `Rakefile` lo declara explícito ("tests de integración legacy de Minitest").
   `confidence: high`.
-- **CI on `master`** (`main.yml`: `push: branches: [master]`) pero la rama
-  principal del repo es `main` → el trigger `push` no dispara en `main`; el CI
-  efectivo entra por `pull_request`. Posible drift de naming master/main. A
-  verificar con el dueño. `confidence: medium`.
+- ~~CI on `master` pero la rama principal es `main` (drift de naming)~~ →
+  **resuelto** (`main.yml` ahora dispara `push: branches: [main]`). El trigger
+  `push` corre en la rama por default; `pull_request` cubre los PRs.
 
 ## 4. Cobertura y fronteras
 
