@@ -24,7 +24,7 @@ en `lib/`**; el `ENV.fetch` vive en el **template** que sugiere al consumidor
   `port`, `username`, `password`, `vhost` — `required: true`; igual tienen
   default, `validate!` exige no-vacío).
 - **Con default:** 29 (todas; defaults en `initialize`/`init_callback_defaults`).
-- **Con rango validado:** 6 (`port`, `heartbeat`, `connection_timeout`,
+- **Con rango validado:** 7 (`port`, `heartbeat`, `connection_timeout`,
   `read_timeout`, `write_timeout`, `rpc_timeout`, `channel_prefetch`).
 - **Secretas (por nombre):** 1 (`password`).
 - **ENV leídas por la gema en `lib/`:** 0 (config 100% por code-default + bloque).
