@@ -415,8 +415,9 @@ Limitación de RSpec: `instance_double` valida que el método exista pero **no**
 **Causa:** No hubo respuesta en `config.rpc_timeout` segundos.
 **Resolución:** Verificar que el worker esté activo y que el controlador remoto no lance excepciones silenciosas.
 
-### BugBunny::SecurityError
+### Guard anti-RCE (403, no es excepción)
 **Causa:** El mensaje intenta ejecutar un controlador que no hereda de `BugBunny::Controller`.
+**Comportamiento:** El worker responde **403 Forbidden** + reject + log `event=consumer.security_violation` (`consumer.rb:222-228`); no levanta una excepción dedicada.
 **Resolución:** Verificar la jerarquía de controladores y que `config.controller_namespace` coincida.
 
 ### BugBunny::RouteNotFoundError (404)

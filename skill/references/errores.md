@@ -7,7 +7,6 @@ StandardError
 └── BugBunny::Error
     ├── BugBunny::CommunicationError
     ├── BugBunny::ConfigurationError
-    ├── BugBunny::SecurityError
     ├── BugBunny::PublishNacked
     ├── BugBunny::PublishUnroutable
     ├── BugBunny::ClientError (4xx)
@@ -58,9 +57,10 @@ message, details } }`), parsealo en el boundary del servicio desde
 **Validaciones:** host (String no vacío), port (1-65535), username/password (no nil), heartbeat (0-3600), rpc_timeout (>0), channel_prefetch (1-10000).
 **Resolución:** Revisar el bloque `BugBunny.configure` y corregir valores.
 
-### BugBunny::SecurityError
+### Guard anti-RCE (403, no es excepción)
 **Causa:** Un mensaje intenta ejecutar un controlador que no hereda de `BugBunny::Controller`.
-**Cuándo:** El consumer resuelve la clase pero falla la validación `is_a?(BugBunny::Controller)`.
+**Cuándo:** El consumer resuelve la clase (`constantize`) pero falla `controller_class < BugBunny::Controller` (`consumer.rb:222-228`).
+**Comportamiento:** El worker **no levanta una excepción** — loguea `event=consumer.security_violation`, responde **403 Forbidden** al caller RPC y rechaza el mensaje sin requeue.
 **Resolución:** Verificar que el controlador herede de `BugBunny::Controller` y que `config.controller_namespace` sea correcto.
 
 ### BugBunny::PublishNacked

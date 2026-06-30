@@ -379,7 +379,6 @@ BugBunny maps RabbitMQ responses to a semantic exception hierarchy, similar to h
 BugBunny::Error
 ├── CommunicationError                  (wraps any Bunny::Exception — TCP/auth/channel — at the gem boundary; .cause preserves the original)
 ├── ConfigurationError                  (invalid config attribute)
-├── SecurityError                       (unauthorized controller resolution)
 ├── PublishNacked                       (broker basic.nack on :confirmed publish)
 ├── PublishUnroutable                   (broker basic.return on mandatory + :confirmed)
 ├── ClientError (4xx)

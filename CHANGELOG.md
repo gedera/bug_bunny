@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+> Limpieza de dead code. **Breaking en sentido estricto** (se elimina una constante pública), pero **funcionalmente inerte**: la clase nunca se levantaba. Definir el bump al release.
+
+### Removed
+- **`BugBunny::SecurityError` eliminada (dead code):** la clase estaba definida y documentada como el control anti-RCE, pero **ninguna ruta de código la levantaba**. La protección real (clase enrutada debe heredar de `BugBunny::Controller`) ya existe en `Consumer` y responde **403 Forbidden** + reject + log `consumer.security_violation`, no una excepción. Un `rescue BugBunny::SecurityError` en un consumidor era código muerto (la excepción nunca se disparaba). Doc ajustada (`docs/errors/`, README, skill). — @Gabriel
+
 ## [4.19.0] - 2026-06-25
 
 > Capa de errores transport-agnostic (#52). Cambio **aditivo y retrocompatible**: `.message` no se degrada y se suman dos accesores. Bump minor.

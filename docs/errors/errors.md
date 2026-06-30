@@ -1,7 +1,7 @@
 # Errores — bug_bunny
 
 > meta: artefacto errores · RFC-020 · generado `arch-structure` (§a/§b/§d) +
-> `arch-enrich` (§c) · anclado a `5d7851a`, `lib/bug_bunny/exception.rb`,
+> `arch-enrich` (§c) · anclado a `d0533bf`, `lib/bug_bunny/exception.rb`,
 > `remote_error.rb`, `middleware/raise_error.rb`, `controller.rb`, `consumer.rb`
 > · fecha 2026-06-30 · cobertura: §a/§b/§d completas (estructura); §c política
 > completa (enrich, **inferida** de HTTP/AMQP — verificación humana pendiente).
@@ -26,7 +26,6 @@ Jerarquía (todas bajo `BugBunny::Error < ::StandardError`):
 └── BugBunny::Error                      base · attr_accessor :status, :raw_response (#52)
     ├── CommunicationError               fallo de red/conexión/protocolo AMQP
     ├── ConfigurationError               configuración inválida de la gema
-    ├── SecurityError                    acceso no permitido a controladores (anti-RCE)
     ├── PublishNacked                    broker NACK en publish :confirmed
     ├── PublishUnroutable                broker return (mandatory) sin binding
     ├── ClientError                      base 4xx
@@ -47,7 +46,6 @@ Jerarquía (todas bajo `BugBunny::Error < ::StandardError`):
 | `Error` | `::StandardError` | base — no se levanta directa salvo `resource.rb:122` (pool ausente) |
 | `CommunicationError` | `Error` | `bug_bunny.rb:96`, `session.rb:177,285`, `producer.rb:90`, `client.rb:168` — envuelve cualquier `Bunny::Exception` en la frontera del gem; original en `.cause` |
 | `ConfigurationError` | `Error` | `configuration.rb:262,269,277` — validación al final de `BugBunny.configure` |
-| `SecurityError` | `Error` | definida; sin raise-site localizado en `lib/` (ver §3) |
 | `PublishNacked` | `Error` | `producer.rb:235` — NACK del broker en modo `:confirmed`. Attrs: `path`, `nacked_count`. Opt-out `nack_raise: false` |
 | `PublishUnroutable` | `Error` | `producer.rb:325` — `basic.return` con `mandatory: true`. Attrs: `path`, `exchange`, `routing_key`, `reply_code`, `reply_text`, `correlation_id`. Opt-out `return_raise: false` |
 | `ClientError` | `Error` | `raise_error.rb:170` — 4xx no mapeado explícito |
@@ -86,6 +84,7 @@ operaciones de RFC-003 (`docs/api/`, hoy pendiente — ver §4), no las redefine
 | Cliente RPC | otro ≥400 | `ClientError` | 4xx no mapeado |
 | Productor (publish `:confirmed`) | n/a (AMQP) | `PublishNacked` / `PublishUnroutable` | NACK / return del broker — no es status HTTP |
 | Transporte (frontera gem) | n/a (AMQP) | `CommunicationError` | fallo de red/broker, envuelve `Bunny::Exception` |
+| **Worker (dispatch)** | **403** | — (no excepción; responde 403 + reject) | guard anti-RCE: clase enrutada no subclase de `BugBunny::Controller` (`consumer.rb:222-228`) |
 
 ### c. Política por error
 
@@ -96,7 +95,6 @@ HTTP (RFC 9110) + AMQP — verificación humana pendiente (ver §3).
 |---|---|---|---|---|
 | `CommunicationError` | sí (fallo transitorio de red/broker) | sí (`network_recovery_interval`; Bunny auto-recover) | el retry de un **publish** puede duplicar salvo consumidor idempotente; un **read** RPC es seguro | reintentar con backoff; si persiste, circuit-break y alertar |
 | `ConfigurationError` | **no** (bug de config) | — | n/a | fail-fast al boot; corregir el bloque `configure` |
-| `SecurityError` | **no** | — | n/a | rechazar; investigar (posible intento de RCE por clase no autorizada) |
 | `PublishNacked` | sí, con cautela (NACK puede ser transitorio: disk full, replicación) | sí | el re-publish puede duplicar → requiere dedup aguas abajo | reintentar acotado; si persiste, alertar (problema del broker) |
 | `PublishUnroutable` | **no** (no hay binding para la routing key) | — | n/a | corregir routing key / topología de bindings; alertar (mensaje perdido) |
 | `BadRequest` (400) | **no** | — | n/a | corregir el request del cliente |
@@ -163,11 +161,14 @@ parsea el body, devuelve `parsed['errors']` por convención o el cuerpo completo
 
 ## 3. Inferencias
 
-- **`SecurityError`** (`exception.rb:65`) está definida con docstring (anti-RCE,
-  valida herencia de clases enrutadas) pero **no se localizó su raise-site** en
-  `lib/` al commit `5d7851a`. `confidence: low` — puede levantarse en una capa de
-  routing no cubierta por el grep, ser aspiracional, o levantarse por el host. A
-  verificar con el dueño del código.
+- **Guard anti-RCE = 403, no excepción.** El control de seguridad que valida la
+  herencia de la clase enrutada vive en `consumer.rb:222-228`: si la clase
+  resuelta no es subclase de `BugBunny::Controller`, el worker loguea
+  `consumer.security_violation`, responde **403 'Forbidden'** (`handle_fatal_error`)
+  y rechaza el mensaje sin requeue — **no levanta una excepción dedicada**. La ex
+  `BugBunny::SecurityError` (nunca levantada en ninguna ruta de código) fue
+  **eliminada como dead code**; el contrato real del unhappy path de RCE es el 403
+  (ver §b). `confidence: high` (verificado por grep exhaustivo + lectura del guard).
 - **§b superficies AMQP** (`PublishNacked`/`PublishUnroutable`/`CommunicationError`)
   no tienen status HTTP: son señales del protocolo AMQP, no del envelope RPC. Se
   listan como `n/a (AMQP)` para no forzar un código HTTP inventado.
