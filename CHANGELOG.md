@@ -2,10 +2,14 @@
 
 ## [Unreleased]
 
-> Limpieza de dead code. **Breaking en sentido estricto** (se elimina una constante pública), pero **funcionalmente inerte**: la clase nunca se levantaba. Definir el bump al release.
+> **BREAKING — requiere bump MAJOR.** Se elimina la constante pública `BugBunny::SecurityError`. Aunque la excepción nunca se *levantaba*, su **ausencia rompe en evaluación**: un `rescue BugBunny::SecurityError` en un consumidor resuelve la constante cuando *cualquier* excepción entra a ese bloque → `NameError` que enmascara la excepción original. Por eso es breaking real, no inerte.
 
 ### Removed
-- **`BugBunny::SecurityError` eliminada (dead code):** la clase estaba definida y documentada como el control anti-RCE, pero **ninguna ruta de código la levantaba**. La protección real (clase enrutada debe heredar de `BugBunny::Controller`) ya existe en `Consumer` y responde **403 Forbidden** + reject + log `consumer.security_violation`, no una excepción. Un `rescue BugBunny::SecurityError` en un consumidor era código muerto (la excepción nunca se disparaba). Doc ajustada (`docs/errors/`, README, skill). — @Gabriel
+- **`BugBunny::SecurityError` eliminada:** introducida en `4f27bea` ("security controller") como la excepción prevista del control anti-RCE, pero **nunca se cableó** — ninguna ruta de código la levanta. La protección real (la clase enrutada debe heredar de `BugBunny::Controller`) vive en `Consumer` (`consumer.rb:222-228`) y responde **403 Forbidden** + reject + log `consumer.security_violation`, no una excepción. Eliminar la clase **no debilita** la protección (el guard 403 queda intacto). Doc ajustada (`docs/errors/`, README, skill). — @Gabriel
+
+  **Migración para consumidores:** quitar cualquier `rescue BugBunny::SecurityError`; el caso de controlador inválido llega como respuesta **403** en el envelope RPC (mapeable a `BugBunny::ClientError`/manejo de status), no como excepción local.
+
+  **Alcance verificado:** el grep que confirmó "nunca levantada" fue **in-repo** (lib + spec + test de esta gema). No se auditaron apps/gemas consumidoras externas — el bump MAJOR es la salvaguarda para ellas.
 
 ## [4.19.0] - 2026-06-25
 
