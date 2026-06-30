@@ -1,10 +1,10 @@
 # Errores — bug_bunny
 
-> meta: artefacto errores · RFC-020 (parte estructural) · generado `arch-structure`
-> · anclado a `5d7851a`, `lib/bug_bunny/exception.rb`, `remote_error.rb`,
-> `middleware/raise_error.rb`, `controller.rb`, `consumer.rb` · fecha 2026-06-30
-> · cobertura: §a/§b/§d completas (régimen estructura); §c sembrado `—`
-> (política → `arch-enrich`).
+> meta: artefacto errores · RFC-020 · generado `arch-structure` (§a/§b/§d) +
+> `arch-enrich` (§c) · anclado a `5d7851a`, `lib/bug_bunny/exception.rb`,
+> `remote_error.rb`, `middleware/raise_error.rb`, `controller.rb`, `consumer.rb`
+> · fecha 2026-06-30 · cobertura: §a/§b/§d completas (estructura); §c política
+> completa (enrich, **inferida** de HTTP/AMQP — verificación humana pendiente).
 
 ## 1. Resumen
 
@@ -89,7 +89,27 @@ operaciones de RFC-003 (`docs/api/`, hoy pendiente — ver §4), no las redefine
 
 ### c. Política por error
 
-`—` (sembrado · retriable/backoff/idempotencia/acción → `arch-enrich`, RFC-020 §c).
+Enriquecimiento `arch-enrich` (RFC-020 §c). Política **inferida** de semántica
+HTTP (RFC 9110) + AMQP — verificación humana pendiente (ver §3).
+
+| excepción | retriable | backoff | idempotencia | acción sugerida |
+|---|---|---|---|---|
+| `CommunicationError` | sí (fallo transitorio de red/broker) | sí (`network_recovery_interval`; Bunny auto-recover) | el retry de un **publish** puede duplicar salvo consumidor idempotente; un **read** RPC es seguro | reintentar con backoff; si persiste, circuit-break y alertar |
+| `ConfigurationError` | **no** (bug de config) | — | n/a | fail-fast al boot; corregir el bloque `configure` |
+| `SecurityError` | **no** | — | n/a | rechazar; investigar (posible intento de RCE por clase no autorizada) |
+| `PublishNacked` | sí, con cautela (NACK puede ser transitorio: disk full, replicación) | sí | el re-publish puede duplicar → requiere dedup aguas abajo | reintentar acotado; si persiste, alertar (problema del broker) |
+| `PublishUnroutable` | **no** (no hay binding para la routing key) | — | n/a | corregir routing key / topología de bindings; alertar (mensaje perdido) |
+| `BadRequest` (400) | **no** | — | n/a | corregir el request del cliente |
+| `NotFound` (404) | **no** | — | n/a | verificar recurso/identificador |
+| `RoutingError` (404) | **no** | — | n/a | corregir verbo/path; el servicio remoto no tiene esa ruta registrada |
+| `NotAcceptable` (406) | **no** | — | n/a | corregir content negotiation |
+| `RequestTimeout` (408) | sí (transitorio) | sí | el retry de un publish/RPC mutante puede duplicar → idempotencia requerida | reintentar con backoff; subir `rpc_timeout` si es crónico |
+| `Conflict` (409) | **no** sin resolver el conflicto | — | depende del flujo | resolver el estado en conflicto antes de reintentar |
+| `UnprocessableEntity` (422) | **no** (error semántico/validación) | — | n/a | corregir el payload; leer `error_messages` / `raw_response` |
+| `ClientError` (4xx genérico) | **no** (default 4xx) | — | n/a | inspeccionar status concreto |
+| `ServerError` (5xx genérico) | sí (transitorio) | sí | idempotencia requerida si la op muta estado | reintentar con backoff |
+| `InternalServerError` (500) | sí (transitorio) | sí | idem | reintentar con backoff; si persiste, escalar al dueño del worker |
+| `RemoteError` (500) | depende de `original_class` | depende | depende | inspeccionar `original_class`/`original_backtrace`; tratar como bug del worker remoto, no reintentar a ciegas |
 
 ### d. Shape del payload de error
 
@@ -151,6 +171,13 @@ parsea el body, devuelve `parsed['errors']` por convención o el cuerpo completo
 - **§b superficies AMQP** (`PublishNacked`/`PublishUnroutable`/`CommunicationError`)
   no tienen status HTTP: son señales del protocolo AMQP, no del envelope RPC. Se
   listan como `n/a (AMQP)` para no forzar un código HTTP inventado.
+- **§c política (enrich):** la columna retriable/backoff/idempotencia/acción está
+  **inferida** de la semántica estándar (HTTP RFC 9110 para 4xx/5xx, comportamiento
+  AMQP para NACK/return/transporte), **no** de una política declarada en el código
+  del gem. `confidence: medium`. A confirmar con el dueño del código /
+  consumidores reales (sobre todo idempotencia de re-publish y el caso
+  `RemoteError`, que depende del `original_class` del worker). El gem **no impone**
+  retry: la decisión es del consumidor en su boundary.
 
 ## 4. Cobertura y fronteras
 

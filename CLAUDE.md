@@ -13,13 +13,20 @@ BugBunny es una gema Ruby que implementa una capa de enrutamiento RESTful sobre 
   `skill/SKILL.md` agente version-locked) **indexan, no duplican**.
   Artefactos generados por `dev-structure` / `dev-enrich`; compuestos por
   `dev-compose`. Verificación humana antes de commitear.
-- **Estado actual:** `docs/data` = n/a (gema sin DB, declarado solo en índice);
-  `docs/glossary` parcial (acreta por PR); `docs/behavior` completo (6 flujos,
-  backfill on-demand); operaciones/interfaz/topología = dev-structure F2 no
-  implementado; `docs/errors` (RFC-020) **estructura completa** (§a inventario de
-  excepciones + §b status→excepción + §d shape de payload; jerarquía bajo
-  `BugBunny::Error`, #52 sumó `status`/`raw_response`), §c política sembrada `—`
-  (pendiente de `arch-enrich`).
+- **Estado actual:**
+  - `docs/data` = n/a (gema sin DB, declarado solo en índice).
+  - `docs/behavior` completo (6 flujos, backfill on-demand).
+  - `docs/glossary` parcial (acreta por PR).
+  - `docs/errors` (RFC-020) completo: §a/§b/§d (estructura) + §c política
+    (enrich, **inferida** de HTTP/AMQP, verificación humana pendiente).
+  - `docs/config` (RFC-012) inventario base completo (§a-§e/§i); enriquecimiento
+    semántico (§f/§g/§h/§j) pendiente de `arch-enrich`.
+  - `docs/consumed` (RFC-018) RabbitMQ-vía-`bunny`: §a/§b/§d completo; §c/§e
+    (retry/degradación) pendiente de `arch-enrich`.
+  - `docs/test` (RFC-013) estructura completa (§a-§d); §e-§h (gaps/contract/
+    incidente/PII) pendiente de `arch-enrich`.
+  - operaciones/interfaz/topología (RFC-003/004/006) = dev-structure F2 no
+    implementado (interim RFC-008 §2).
 - **Para agentes AI**: `skill/SKILL.md` (empaquetada en el `.gem`) +
   `skill/references/`.
 - **Coexistencia transitoria con destino pendiente (RFC-008 §2 — interim de
