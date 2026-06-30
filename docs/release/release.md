@@ -1,9 +1,9 @@
 # Release — bug_bunny
 
-> meta: artefacto release · RFC-014 (shape v2.0, `proposed`) · generado
-> manualmente (**piloto RFC-014** — suplemento gema, valida patrón 1 +
-> per-repo-visible) · anclado a `.github/workflows/release.yml`, `*.gemspec`,
-> `lib/bug_bunny/version.rb`, `CHANGELOG.md`, git · fecha 2026-06-01 · cobertura:
+> meta: artefacto release · RFC-014 (`accepted`) · generado por `arch-structure`
+> + `arch-enrich` (híbrido RFC-014 §2; nació como piloto manual #51, re-anclado
+> a la RFC vigente) · anclado a `.github/workflows/release.yml`, `*.gemspec`,
+> `lib/bug_bunny/version.rb`, `CHANGELOG.md`, git · fecha 2026-06-30 · cobertura:
 > completa (régimen gema: build→publish, §e/f/g n/a).
 
 ## 1. Resumen
@@ -20,9 +20,9 @@ out-of-repo).
 
 ### a. Hecho verificable
 
-- **Convención de versión:** SemVer `vX.X.X`. Actual: **4.18.0**.
-- **Source of truth:** tag remoto (`v4.18.0`) + **triple mirror**
-  `lib/bug_bunny/version.rb` (`VERSION = '4.18.0'`) ← `bug_bunny.gemspec:7`
+- **Convención de versión:** SemVer `vX.X.X`. Actual: **4.19.0**.
+- **Source of truth:** tag remoto (`v4.19.0`) + **triple mirror**
+  `lib/bug_bunny/version.rb` (`VERSION = '4.19.0'`) ← `bug_bunny.gemspec:7`
   (`spec.version = BugBunny::VERSION`).
 - **Changelog canónico:** `CHANGELOG.md` único.
 - **Patrón de trigger:** `gema-tag` (patrón 1).
@@ -33,7 +33,7 @@ out-of-repo).
 
 - **Convención:** SemVer `vX.X.X` (**con `v`** — distinto al servicio).
 - **Source of truth:** tag remoto canónico (`git tag --sort=-v:refname` →
-  `v4.18.0`).
+  `v4.19.0`).
 - **Mirror:** `lib/bug_bunny/version.rb` (`VERSION`), leído por
   `bug_bunny.gemspec:7` (`spec.version = BugBunny::VERSION`).
   `required_ruby_version >= 2.6.0` (`bug_bunny.gemspec:17`).
@@ -58,7 +58,7 @@ out-of-repo).
   `on: push: tags: ['v*']` → `ruby/setup-ruby@v1` → `gem build *.gemspec` +
   `gem push *.gem` (auth `secrets.RUBYGEMS_API_KEY`). Auditable y versionado con
   el código; se ancla a `file:line`, no se referencia como caja negra.
-- **Consumo:** los servicios la pinnean por versión (`gem "bug_bunny", "~> 4.18.0"`)
+- **Consumo:** los servicios la pinnean por versión (`gem "bug_bunny", "~> 4.19.0"`)
   desde RubyGems — **no** git-source.
 
 ### e. Deploy / publish
@@ -80,7 +80,7 @@ procedimiento per-repo porque no vive acá. Una versión yankeada se anotaría e
 ### h. Dependencias de deploy inter-servicio
 
 - **Consumidores** (cruza RFC-018): servicios del fleet la pinnean
-  `~> 4.18.0` (semántica minor-compatible). Un cambio de contrato del gem
+  `~> 4.19.0` (semántica minor-compatible). Un cambio de contrato del gem
   (ej. el behavior-change de `4.18.0` — `Bunny::Exception` → `CommunicationError`)
   obliga a los consumidores a migrar; el `CHANGELOG.md` lo documenta como
   breaking note. **Orden de deploy:** los consumidores adoptan al hacer `bundle

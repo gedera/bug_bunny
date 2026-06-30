@@ -16,7 +16,11 @@ BugBunny es una gema Ruby que implementa una capa de enrutamiento RESTful sobre 
 - **Estado actual:** `docs/data` = n/a (gema sin DB, declarado solo en índice);
   `docs/glossary` parcial (acreta por PR); `docs/behavior` completo (6 flujos,
   backfill on-demand); operaciones/interfaz/topología = dev-structure F2 no
-  implementado.
+  implementado; `docs/errors` (RFC-020) **pendiente** — la jerarquía de
+  excepciones públicas (`exception.rb`, `remote_error.rb`,
+  `middleware/raise_error.rb`) existe y #52 sumó `status`/`raw_response`; el
+  contrato de error vive hoy embebido en `docs/behavior/behavior.md` + composites
+  (interim RFC-008 §2). Generar la capa con `arch-structure` cuando se priorice.
 - **Para agentes AI**: `skill/SKILL.md` (empaquetada en el `.gem`) +
   `skill/references/`.
 - **Coexistencia transitoria con destino pendiente (RFC-008 §2 — interim de
