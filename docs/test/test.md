@@ -1,10 +1,10 @@
 # Test — bug_bunny
 
-> meta: artefacto test · RFC-013 (estructural §a/§b/§c/§d) · generado
-> `arch-structure` · anclado a `5eea236`, `Rakefile`, `bug_bunny.gemspec`,
-> `spec/spec_helper.rb`, `.github/workflows/main.yml` · fecha 2026-06-30 ·
-> cobertura: §a/§b/§c/§d completas; §e gaps · §f contract-assessment · §g
-> link-incidente · §h PII sembrados `—` (→ `arch-enrich`).
+> meta: artefacto test · RFC-013 · generado `arch-structure` (§a-§d) +
+> `arch-enrich` (§e-§h) · anclado a `24ea397`, `Rakefile`, `bug_bunny.gemspec`,
+> `spec/spec_helper.rb`, `spec/support/integration_helper.rb`,
+> `.github/workflows/main.yml`, `CHANGELOG.md` · fecha 2026-06-30 · cobertura:
+> §a-§d (estructura) + §e-§h (enrich, anclado a specs/CHANGELOG) completas.
 
 ## 1. Resumen
 
@@ -55,11 +55,42 @@ Sin tags declarados (`:slow`/`:js`) en la config de RSpec.
 **n/a** — sin SimpleCov ni `.simplecov` ni `SimpleCov.start` en el repo. No hay
 umbral de coverage declarado.
 
-### e/f/g/h. Enriquecimiento
+### e. Gaps de cobertura
 
-`—` (gaps de cobertura · contract-assessment de RFC-003/018/020 · link a
-incidente del que nació un test de regresión · PII en fixtures → `arch-enrich`,
-RFC-013).
+- **Integration specs no corren en CI:** `main.yml` no declara servicio RabbitMQ;
+  las 7 integration specs **se skipean** vía `rabbitmq_available?`
+  (`spec/support/integration_helper.rb:14`, ver `publisher_confirms_spec.rb:10`).
+  En CI solo se ejercitan las **15 unit specs** → el contrato AMQP real (publish/
+  consume/confirms contra broker) **no se valida en pipeline**, solo localmente
+  con broker. Gap relevante.
+- **Sin medición de cobertura:** no hay SimpleCov ni umbral → la cobertura no está
+  cuantificada (no se sabe el % de líneas ejercidas).
+
+### f. Contract-assessment
+
+¿Los tests cubren los contratos públicos? (RFC-020/018/012/003)
+
+| contrato | specs que lo cubren | veredicto |
+|---|---|---|
+| **Errores RFC-020** (status→excepción, materia prima) | `raise_error_spec`, `remote_error_spec`, `communication_error_wrapping_spec`, `error_handling_spec` (integration) | **bien cubierto** (unit) |
+| **Consumed RFC-018** (Bunny::Exception→`CommunicationError`) | `communication_error_wrapping_spec`, `client_session_pool_spec` | cubierto (unit) |
+| **Config RFC-012** (validaciones de `Configuration`) | `configuration_spec` | cubierto |
+| **Confirms** (`PublishNacked`/`PublishUnroutable`) | `producer_spec`, `publisher_confirms_spec` (integration) | parcial en CI (la parte integration skipea sin broker) |
+| **Operaciones/routing** (RFC-003, capa F2) | `route_spec`, `request_spec`, `controller_spec`, `controller_after_action_spec`, `resource_spec` | cubierto (unit) |
+
+### g. Link a incidente → test de regresión
+
+| incidente | test de regresión | ancla |
+|---|---|---|
+| **#52** (`status`/`raw_response` en toda la jerarquía + hardening de `format_error_message`) | `raise_error_spec` — comentarios explícitos "Alcance issue #52" | `spec/unit/raise_error_spec.rb:59,120,169` |
+| **#49** (leak de `Bunny::TCPConnectionFailedForAllHosts` en `try_create`) | `communication_error_wrapping_spec` — "Client#publish — TCP fail en try_create (issue #49 caso original)" | `spec/unit/communication_error_wrapping_spec.rb:41` |
+
+### h. PII en fixtures / factories
+
+- **Sin PII.** No hay fixtures con datos personales: `spec_helper` usa
+  placeholders (`guest`/`localhost`), las rutas de test son `ping`/`node`/`user`
+  **sin payloads de datos reales**, y `bunny_mocks.rb` mockea el driver. Cruza
+  RFC-026: nada que clasificar/anonimizar. `confidence: high`.
 
 ## 3. Inferencias
 
@@ -73,8 +104,7 @@ RFC-013).
 
 ## 4. Cobertura y fronteras
 
-- §a/§b/§c/§d **completas** al commit ancla; §e-§h sembrados `—`.
-- **Integration specs requieren un RabbitMQ vivo** — no corren aislados sin
-  broker. La evaluación de qué contratos públicos (RFC-003/018/020) cubren los
-  tests es §f, fuera de structure.
+- §a-§d (estructura) + §e-§h (enrich, anclado a specs/CHANGELOG) **completas**.
+- **Integration specs requieren un RabbitMQ vivo** y se skipean sin broker (§e) —
+  por eso no se ejercitan en CI.
 - **Contenido de cada test case** queda en el código, no se inventaria acá.

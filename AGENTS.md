@@ -15,9 +15,9 @@ proyecto y convenciones de equipo, ver `CLAUDE.md`. Para la entrada humana, ver
 | Comportamiento | `docs/behavior/behavior.md` | completo (6 flujos) | secuencias de publish/RPC/consume/confirms, contrato de error-wrapping |
 | Glosario | `docs/glossary/glossary.md` | parcial (acreta por PR) | término de negocio → binding físico en `lib/` |
 | Errores | `docs/errors/errors.md` | completo (§a/b/d estructura + §c política inferida) | jerarquía de excepciones públicas, mapeo `status→excepción`, shape del payload, política retry |
-| Configuración | `docs/config/configuracion.md` | inventario base completo | opciones de `Configuration`, defaults, inyecciones del `Railtie`, ENV sugeridas al consumidor |
-| Dependencias consumidas | `docs/consumed/rabbitmq.md` | §a/b/d completo | qué consume del broker RabbitMQ vía `bunny`, mapeo error-Bunny→excepción |
-| Test | `docs/test/test.md` | estructura completa | suites RSpec/Minitest, comandos, CI, fixtures |
+| Configuración | `docs/config/configuracion.md` | completo (estructura + enrich §f/g/h) | opciones de `Configuration`, defaults, failure-mode/threading, inyecciones del `Railtie`, ENV sugeridas |
+| Dependencias consumidas | `docs/consumed/rabbitmq.md` | completo (estructura + enrich §c/e) | qué consume del broker RabbitMQ vía `bunny`, mapeo error-Bunny→excepción, retry/degradación |
+| Test | `docs/test/test.md` | completo (estructura + enrich §e-h) | suites RSpec/Minitest, CI, contract-assessment, link a incidentes (#49/#52) |
 | Release | `docs/release/release.md` | completo | patrón gema-tag, versionado, publish a RubyGems |
 | Datos | — | n/a | gema sin DB |
 | Operaciones / Interfaz / Topología | — | dev-structure F2 no implementado | contrato embebido en `README.md`/`skill/SKILL.md` (interim RFC-008 §2) |
@@ -26,12 +26,13 @@ proyecto y convenciones de equipo, ver `CLAUDE.md`. Para la entrada humana, ver
 | Multi-tenancy (RFC-023) | — | n/a | sin modelo de tenant propio; el aislamiento es por `vhost` de RabbitMQ (config) |
 | Data-lifecycle (RFC-026) | — | n/a | gema sin DB ni datos persistidos propios |
 
-## Enriquecimiento pendiente (`arch-enrich`)
+## Enriquecimiento
 
-- `docs/errors/errors.md` §c — política inferida de HTTP/AMQP, falta confirmar con dueño.
-- `docs/config/configuracion.md` §f/§g/§h/§j — semántica/failure-mode/threading.
-- `docs/consumed/rabbitmq.md` §c/§e — retry/idempotencia + degradación si RabbitMQ cae.
-- `docs/test/test.md` §e-§h — gaps de cobertura, contract-assessment, link a incidente, PII.
+Completo en errors (§c), config (§f/g/h), consumed (§c/e) y test (§e-h), anclado
+a YARD/specs/CHANGELOG. Pendiente de **verificación humana** (inferencias):
+
+- `docs/errors/errors.md` §c — política retry inferida de HTTP/AMQP (`confidence:medium`); confirmar idempotencia de re-publish y caso `RemoteError` con consumidores reales.
+- `docs/glossary/glossary.md` — parcial por diseño, acreta por PR.
 
 ## Convenciones operativas
 

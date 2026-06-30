@@ -1,11 +1,11 @@
 # Dependencia consumida: RabbitMQ (vía `bunny`) — bug_bunny
 
-> meta: artefacto consumed · RFC-018 (estructural §a/§b/§d) · generado
-> `arch-structure` · anclado a `5eea236`, `bug_bunny.gemspec`,
+> meta: artefacto consumed · RFC-018 · generado `arch-structure` (§a/§b/§d) +
+> `arch-enrich` (§c/§e) · anclado a `24ea397`, `bug_bunny.gemspec`,
 > `lib/bug_bunny.rb`, `lib/bug_bunny/session.rb`, `lib/bug_bunny/producer.rb`,
-> `lib/bug_bunny/middleware/raise_error.rb` · fecha 2026-06-30 · cobertura:
-> §a/§b/§d completas; §c (retry/idempotencia) y §e (degradación) sembrados `—`
-> (→ `arch-enrich`).
+> `lib/bug_bunny/consumer.rb`, `lib/bug_bunny/middleware/raise_error.rb` · fecha
+> 2026-06-30 · cobertura: §a/§b/§d (estructura) + §c/§e (enrich, anclado a
+> `consumer.rb`) completas.
 
 ## 1. Resumen
 
@@ -65,10 +65,22 @@ catálogo `docs/errors/errors.md` (RFC-020), no lo redefine.
 > BugBunny::CommunicationError` cubre cualquier fallo de transporte/broker. La
 > original queda en `.cause`.
 
-### c / e. Enriquecimiento
+### c. Retry / idempotencia
 
-`—` (retry/idempotencia-semántica §c · degradación/qué pasa si RabbitMQ cae §e →
-`arch-enrich`, RFC-018).
+| aspecto | comportamiento (anclado) |
+|---|---|
+| recuperación de conexión | `automatically_recover = true` (default): Bunny recupera canales/suscripciones tras corte TCP (`configuration.rb:60-61`). |
+| retry del Consumer | `Consumer#subscribe` reintenta en cualquier `StandardError` con **backoff exponencial** `network_recovery_interval * 2^(n-1)` cap `max_reconnect_interval`, hasta `max_reconnect_attempts` (`nil` = ∞) (`consumer.rb:106-124`). |
+| ack | `manual_ack: true` (`consumer.rb:90`) → entrega **at-least-once**: si el worker cae tras procesar pero antes del ack, el mensaje se re-entrega. **El handler debe ser idempotente.** |
+| retry de publish | **no automático** — un publish fallido levanta `CommunicationError`/`PublishNacked`; reintentarlo puede **duplicar** salvo dedup aguas abajo. |
+| RPC | `request` espera reply hasta `rpc_timeout`; el retry de un RPC mutante requiere idempotencia (correlación por `correlation_id`). |
+
+### e. Degradación (si RabbitMQ cae)
+
+- **Al conectar:** `create_connection` levanta `CommunicationError` (`bug_bunny.rb:95`); no hay fallback ni cola local — el caller decide (circuit-break/alertar).
+- **Consumer:** entra al loop de reconexión con backoff; por default (`max_reconnect_attempts = nil`) **reintenta indefinidamente**, logueando `consumer.connection_error` con `retry_in_s` (`consumer.rb:120-122`). Si se fija un máximo y se agota → `consumer.reconnect_exhausted` y re-raise (el worker muere).
+- **Publisher:** cada publish/RPC sobre conexión caída levanta `CommunicationError` (envuelto en `client.rb:168`); **sin buffering** — el mensaje no sale.
+- **Sin circuit-breaker propio:** la gema no trae breaker ni outbox; la resiliencia aguas arriba (reintentar el comando, encolar, alertar) es responsabilidad del consumidor.
 
 ## 3. Inferencias
 
@@ -79,7 +91,7 @@ catálogo `docs/errors/errors.md` (RFC-020), no lo redefine.
 
 ## 4. Cobertura y fronteras
 
-- §a/§b/§d **completas** al commit ancla; §c/§e sembrados `—`.
+- §a/§b/§d (estructura) + §c/§e (enrich, anclado a `consumer.rb`) **completas**.
 - **`connection_pool` (`>= 2.4`):** utilidad de pooling de las conexiones Bunny
   (`Resource.connection_pool`), **no** un sistema externo con su propio
   contrato de error de red → no es entrada consumed; el timeout de pool
