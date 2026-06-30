@@ -181,15 +181,15 @@ parsea el body, devuelve `parsed['errors']` por convención o el cuerpo completo
 
 ## 4. Cobertura y fronteras
 
-- **§a/§b/§d completas** al commit ancla; **§c sembrado `—`** (política →
-  `arch-enrich`).
+- **§a/§b/§d (estructura) + §c (enrich, política inferida) completas** al commit
+  ancla. §c marcada `confidence: medium` (ver §3).
 - **RFC-003 (`docs/api/`) pendiente:** §b referencia "superficie" de operaciones
   pero la capa operaciones no está generada (dev-structure F2, ver `CLAUDE.md`).
   Cuando se genere, §b debe cruzar las operaciones reales.
 - **Frontera con `consumed` (RFC-018):** este artefacto = errores que la gema
   **emite**. Los errores de `Bunny::*` que la gema **consume** y envuelve en
-  `CommunicationError` son su mapeo error-proveedor→excepción; viven del lado
-  consumed (capa no generada — la gema consume `bunny`/`connection_pool`).
+  `CommunicationError` son su mapeo error-proveedor→excepción; viven en
+  `docs/consumed/rabbitmq.md` §d (que referencia este catálogo, no lo redefine).
 - **Errores internos no-públicos** (rescatados adentro, no cruzan la frontera) y
   los `ArgumentError`/`NameError` de mal-uso de la API de config quedan fuera:
   no son contrato runtime.
