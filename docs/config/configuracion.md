@@ -1,11 +1,12 @@
 # Configuración — bug_bunny
 
-> meta: artefacto configuración · RFC-012 (inventario base shape v2.2) · generado
-> `arch-structure` · anclado a `5eea236`, `lib/bug_bunny/configuration.rb`,
-> `lib/bug_bunny.rb`, `lib/bug_bunny/railtie.rb`,
+> meta: artefacto configuración · RFC-012 · generado `arch-structure` (inventario
+> §a-§e/§i) + `arch-enrich` (§f/§g/§h/§j) · anclado a `24ea397`,
+> `lib/bug_bunny/configuration.rb`, `lib/bug_bunny.rb`, `lib/bug_bunny/railtie.rb`,
+> `lib/bug_bunny/consumer.rb`,
 > `lib/generators/bug_bunny/install/templates/initializer.rb` · fecha 2026-06-30
-> · cobertura: §a/§b/§c/§d/§e/§i completas; enriquecimiento (§f categoría/
-> failure-mode/side-effect, §g/§h/§j) sembrado `—` (→ `arch-enrich`).
+> · cobertura: §a-§e/§i (estructura) + §f/§g/§h (enrich, anclado a YARD) completas;
+> §j n/a.
 
 ## 1. Resumen
 
@@ -105,11 +106,48 @@ El install template (`initializer.rb`) **sugiere al consumidor** wirear 4 ENV
 | `rake_tasks` | carga `tasks/bug_bunny.rake` (`bug_bunny:sync`) | `:38-40` |
 | `Spring.after_fork` | cierra conexión en preloader Spring | `:43-47` |
 
-### f/g/h/j. Enriquecimiento
+### f. Enriquecimiento semántico
 
-`—` (categoría · failure-mode · side-effect · scope-override · business-reason ·
-ramificadores intra-config · threading · mapeo de inyección a gemas →
-`arch-enrich`, RFC-012).
+Agrupado por familia. Anclado a los YARD de `configuration.rb` y al comportamiento
+del código.
+
+| familia | categoría | failure-mode | side-effect | business-reason |
+|---|---|---|---|---|
+| Conexión (`host`/`port`/`username`/`password`/`vhost`) | conectividad | valor inválido/vacío → `ConfigurationError` en `validate!`; credencial/host errados → `CommunicationError` al conectar (`bug_bunny.rb:95`) | abre socket TCP al broker | identidad y destino del broker; `vhost` aísla ambientes |
+| Timeouts (`connection_timeout`/`read_timeout`/`write_timeout`/`heartbeat`/`continuation_timeout`) | resiliencia/latencia | muy bajo → cortes espurios bajo carga; muy alto → detección de fallo lenta | — | tuning de la conexión Bunny; `heartbeat` detecta conexiones zombi |
+| `rpc_timeout` | latencia | el worker remoto no responde a tiempo → `RequestTimeout` (`producer.rb:124,214`) | bloquea el hilo llamante hasta el timeout | techo de espera de un RPC síncrono |
+| Resiliencia (`automatically_recover`/`network_recovery_interval`/`max_reconnect_attempts`/`max_reconnect_interval`) | resiliencia | `max_reconnect_attempts` agotado → el Consumer re-levanta y muere (`consumer.rb:110-112`) | reintentos con **backoff exponencial** `network_recovery_interval * 2^(n-1)` cap `max_reconnect_interval` (`consumer.rb:115-118`) | sobrevivir caídas transitorias del broker sin perder el worker |
+| QoS (`channel_prefetch`) | rendimiento | alto → un worker lento acapara mensajes; `1` → menor throughput | controla unacked in-flight (backpressure) | balancea fairness vs throughput (default `1` = fair round-robin) |
+| Health (`health_check_interval`/`health_check_file`) | observabilidad | `health_check_file` no escribible → el touch falla (degradación de visibilidad, no del flujo) | **escribe (touch) un archivo** en cada health check OK; `nil` desactiva | probe para orquestadores (K8s/Swarm) |
+| Callbacks (`on_return`/`on_rpc_reply`/`rpc_reply_headers`) | extensibilidad | una excepción en `on_return` se captura pero **degrada visibilidad** (YARD `configuration.rb:147`) | corren en hilos sensibles (ver §h) | propagar trace-context / alertar unroutable |
+| Confirms (`nack_raise`/`return_raise`) | integridad de entrega | `false` → NACK/return solo se logea, la llamada retorna `202` (modo legacy, posible pérdida silenciosa) | habilitan el raise de `PublishNacked`/`PublishUnroutable` | elegir entre fail-fast vs best-effort en publish confirmado |
+| Routing (`controller_namespace`) | seguridad | clase fuera del namespace/herencia → `SecurityError` (anti-RCE) | acota qué clases son enrutables | superficie de control de RCE |
+| Logging (`logger`/`bunny_logger`/`log_tags`) | observabilidad | — | salida a `$stdout` por default | trazabilidad estructurada |
+| Infra (`exchange_options`/`queue_options`) | infraestructura | options incompatibles con el broker → `PreconditionFailed` (vía `CommunicationError`) | defaults globales mergeados por recurso | declaración AMQP por default |
+
+### g. Ramificadores intra-config
+
+- `health_check_file = nil` (default) **desactiva** el touchfile aunque
+  `health_check_interval` siga corriendo (`configuration.rb:99-101,207`).
+- `return_raise` es **inerte cuando `mandatory: false`** — sin `mandatory` el
+  broker nunca retorna, así que el flag no tiene efecto (`configuration.rb:171`).
+- `nack_raise`/`return_raise` se sobreescriben **por request** (`Client#publish`),
+  ganando sobre el valor global (scope-override).
+
+### h. Threading
+
+| opción | hilo de ejecución | restricción |
+|---|---|---|
+| `on_return` | **hilo interno del consumidor de Bunny** (`configuration.rb:147`) | debe ser rápido y no lanzar; BugBunny captura, pero degrada visibilidad |
+| `on_rpc_reply` | **hilo llamante** tras recibir el reply RPC (`configuration.rb:132`) | hidrata trace-context en el publisher |
+| `rpc_reply_headers` | hilo del consumer, justo antes del `basic_publish` del reply (`configuration.rb:125`) | debe retornar un Hash de headers |
+| reconexión del Consumer | hilo del `subscribe` loop (`consumer.rb:90,122`) | `sleep wait` bloquea ese hilo durante el backoff |
+
+### j. Inyección a gemas configuradas
+
+**n/a** — la gema **no** configura otras gemas vía bloque `Gema.configure` en
+initializers; expone su propio `BugBunny.configure`. El `Railtie` inyecta al
+host (§i), no a gemas terceras.
 
 ## 3. Inferencias
 
@@ -122,12 +160,13 @@ ramificadores intra-config · threading · mapeo de inyección a gemas →
 
 ## 4. Cobertura y fronteras
 
-- §a/§b/§c/§d/§e/§i **completas** al commit ancla; enriquecimiento sembrado `—`.
+- §a-§e/§i (estructura) + §f/§g/§h (enrich) **completas** al commit ancla; §j n/a.
 - **Linter de secretos (advisory):** `password` default `'guest'` y el template
   `RABBITMQ_PASSWORD` default `'guest'` matchean el patrón de secreto, pero el
   valor es el placeholder default de RabbitMQ, **no** un secreto hardcodeado. El
   consumidor debe inyectar la credencial real vía ENV en prod (lo dice el header
   del template). No es hallazgo de fuga.
-- **Fuera de alcance:** la semántica de cada timeout/flag (qué falla si se
-  setea mal, side-effects de threading de los callbacks `on_return`/
-  `on_rpc_reply` que corren en el hilo del consumidor de Bunny) → `arch-enrich`.
+- **Enriquecimiento (§f/§g/§h):** anclado a los YARD de `configuration.rb` y al
+  backoff real de `consumer.rb` — no inventado. La elección de valores concretos
+  (tuning de timeouts/prefetch por ambiente) es decisión operativa del consumidor,
+  no del artefacto.
