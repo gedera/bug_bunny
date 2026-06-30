@@ -22,7 +22,7 @@ proyecto y convenciones de equipo, ver `CLAUDE.md`. Para la entrada humana, ver
 | Datos | — | n/a | gema sin DB |
 | Operaciones / Interfaz / Topología | — | dev-structure F2 no implementado | contrato embebido en `README.md`/`skill/SKILL.md` (interim RFC-008 §2) |
 | Eventos (RFC-005) | — | n/a | la gema es el transporte de eventos, no declara un catálogo de eventos de dominio propio |
-| Seguridad (RFC-017) | — | n/a | sin authn/authz propias; el único control es `SecurityError` (validación de herencia de controladores), cubierto en `docs/errors/` |
+| Seguridad (RFC-017) | — | n/a | sin authn/authz propias; el único control es el guard anti-RCE (clase enrutada debe heredar de `BugBunny::Controller`, si no → 403), cubierto en `docs/errors/` |
 | Multi-tenancy (RFC-023) | — | n/a | sin modelo de tenant propio; el aislamiento es por `vhost` de RabbitMQ (config) |
 | Data-lifecycle (RFC-026) | — | n/a | gema sin DB ni datos persistidos propios |
 

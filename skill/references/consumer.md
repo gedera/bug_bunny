@@ -119,5 +119,5 @@ livenessProbe:
 |-----------|-----------|
 | Ruta no encontrada | 404 + log `event=consumer.route_not_found` |
 | Controller no encontrado (namespace) | 404 + log `event=consumer.controller_not_found` |
-| Controller no hereda de BugBunny::Controller | `SecurityError` |
+| Controller no hereda de BugBunny::Controller | 403 Forbidden + reject + log `event=consumer.security_violation` (guard anti-RCE) |
 | Excepción no capturada en controller | 500 + log `event=controller.unhandled_exception` con backtrace |

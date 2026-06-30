@@ -60,10 +60,6 @@ module BugBunny
   # Se levanta al final de {BugBunny.configure} si algún atributo no pasa las validaciones.
   class ConfigurationError < Error; end
 
-  # Error lanzado cuando ocurren un acceso no permitido a controladores.
-  # Protege contra vulnerabilidades de RCE validando la herencia de las clases enrutadas.
-  class SecurityError < Error; end
-
   # Error lanzado cuando el broker responde NACK a una publicación en modo `:confirmed`.
   #
   # Un NACK significa que el broker rechazó explícitamente el mensaje (ej: política de

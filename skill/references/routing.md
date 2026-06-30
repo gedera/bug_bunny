@@ -69,7 +69,7 @@ El consumer resuelve el controlador concatenando:
 
 Ejemplo: namespace `:admin`, controller `:reports` → `BugBunny::Controllers::Admin::ReportsController`
 
-Valida que el controlador sea subclase de `BugBunny::Controller`. Si no, lanza `SecurityError`.
+Valida que el controlador sea subclase de `BugBunny::Controller` (guard anti-RCE). Si no, el worker loguea `consumer.security_violation`, responde **403 Forbidden** y rechaza el mensaje sin requeue (`consumer.rb:222-228`) — no levanta una excepción dedicada.
 
 ## Route Object
 
