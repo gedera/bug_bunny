@@ -1,8 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [5.0.0] - 2026-07-01
 
-> **BREAKING — requiere bump MAJOR.** Se elimina la constante pública `BugBunny::SecurityError`. Aunque la excepción nunca se *levantaba*, su **ausencia rompe en evaluación**: un `rescue BugBunny::SecurityError` en un consumidor resuelve la constante cuando *cualquier* excepción entra a ese bloque → `NameError` que enmascara la excepción original. Por eso es breaking real, no inerte.
+> **BREAKING.** Se elimina la constante pública `BugBunny::SecurityError`. Aunque la excepción nunca se *levantaba*, su **ausencia rompe en evaluación**: un `rescue BugBunny::SecurityError` en un consumidor resuelve la constante cuando *cualquier* excepción entra a ese bloque → `NameError` que enmascara la excepción original. Por eso es breaking real, no inerte.
 
 ### Removed
 - **`BugBunny::SecurityError` eliminada:** introducida en `4f27bea` ("security controller") como la excepción prevista del control anti-RCE, pero **nunca se cableó** — ninguna ruta de código la levanta. La protección real (la clase enrutada debe heredar de `BugBunny::Controller`) vive en `Consumer` (`consumer.rb:222-228`) y responde **403 Forbidden** + reject + log `consumer.security_violation`, no una excepción. Eliminar la clase **no debilita** la protección (el guard 403 queda intacto). Doc ajustada (`docs/errors/`, README, skill). — @Gabriel
@@ -10,6 +10,12 @@
   **Migración para consumidores:** quitar cualquier `rescue BugBunny::SecurityError`; el caso de controlador inválido llega como respuesta **403** en el envelope RPC (mapeable a `BugBunny::ClientError`/manejo de status), no como excepción local.
 
   **Alcance verificado:** el grep que confirmó "nunca levantada" fue **in-repo** (lib + spec + test de esta gema). No se auditaron apps/gemas consumidoras externas — el bump MAJOR es la salvaguarda para ellas.
+
+### Correcciones
+- **CI: el workflow disparaba en `push` a `master`, pero la rama por default es `main` (#56):** el job de tests (Ruby 3.4.4) nunca corría en push a `main`, solo entraba por `pull_request`. Apuntado a `main`. — @Gabriel
+
+### Documentación
+- **Cobertura de arquitectura completa (dev-* / RFC-artefacto):** nuevas capas `docs/errors/` (RFC-020), `docs/config/` (RFC-012), `docs/consumed/` (RFC-018) y `docs/test/` (RFC-013), con enriquecimiento semántico (política de errores, retry/degradación, threading, contract-assessment); `docs/release/` re-anclado a RFC-014 `accepted`; `AGENTS.md` con stanza "Mapa de conocimiento". Empaquetado version-locked en la gema (#54, #55, #57). — @Gabriel
 
 ## [4.19.0] - 2026-06-25
 
