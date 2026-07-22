@@ -1,14 +1,14 @@
 # Test — bug_bunny
 
 > meta: artefacto test · RFC-013 · generado `arch-structure` (§a-§d) +
-> `arch-enrich` (§e-§h) · anclado a `24ea397`, `Rakefile`, `bug_bunny.gemspec`,
+> `arch-enrich` (§e-§h) · anclado a `7bf1da7`, `Rakefile`, `bug_bunny.gemspec`,
 > `spec/spec_helper.rb`, `spec/support/integration_helper.rb`,
-> `.github/workflows/main.yml`, `CHANGELOG.md` · fecha 2026-06-30 · cobertura:
+> `.github/workflows/main.yml`, `CHANGELOG.md` · fecha 2026-07-22 · cobertura:
 > §a-§d (estructura) + §e-§h (enrich, anclado a specs/CHANGELOG) completas.
 
 ## 1. Resumen
 
-Suite principal **RSpec** (`spec/`, 22 specs: 15 unit + 7 integration). Tarea
+Suite principal **RSpec** (`spec/`, 23 specs: 16 unit + 7 integration). Tarea
 `:test` legacy de **Minitest** (`test/`, 2 archivos) fuera del default y del CI.
 CI corre `bundle exec rake` (= `:spec`) en Ruby 3.4.4. Sin coverage tool
 configurado.
@@ -19,7 +19,7 @@ configurado.
 
 | framework | dir | nivel | nº | propósito |
 |---|---|---|---|---|
-| **RSpec** `~> 3.0` | `spec/unit/` | unit | 15 | client/session pool, configuration, consumer, producer, controller, raise_error, remote_error, request, route, observability, otel, resource, middleware |
+| **RSpec** `~> 3.0` | `spec/unit/` | unit | 16 | client/session pool, configuration, consumer, producer, controller, raise_error, remote_error, request, route, observability, otel, resource, middleware, `extra_top_level_params` (hook de params hermanos en `Resource#save`) |
 | **RSpec** | `spec/integration/` | integration | 7 | client, consumer_middleware, controller, error_handling, infrastructure, publisher_confirms, resource — **requieren RabbitMQ real** (usan `BugBunny.create_connection` + pool) |
 | **Minitest** `~> 5.0` (+ `mocha`, `minitest-reporters`) | `test/integration/` | integration (legacy) | 2 | `manual_client_test.rb`, `infrastructure_test.rb` — tarea `:test`, **no** en default ni CI |
 
@@ -60,7 +60,7 @@ umbral de coverage declarado.
 - **Integration specs no corren en CI:** `main.yml` no declara servicio RabbitMQ;
   las 7 integration specs **se skipean** vía `rabbitmq_available?`
   (`spec/support/integration_helper.rb:14`, ver `publisher_confirms_spec.rb:10`).
-  En CI solo se ejercitan las **15 unit specs** → el contrato AMQP real (publish/
+  En CI solo se ejercitan las **16 unit specs** → el contrato AMQP real (publish/
   consume/confirms contra broker) **no se valida en pipeline**, solo localmente
   con broker. Gap relevante.
 - **Sin medición de cobertura:** no hay SimpleCov ni umbral → la cobertura no está

@@ -440,7 +440,7 @@ module BugBunny
         rk = calculate_routing_key(id)
         flat_payload = changes_to_send
         key = self.class.param_key
-        wrapped_payload = { key => flat_payload }
+        wrapped_payload = { key => flat_payload }.merge(extra_top_level_params)
 
         path = is_new ? self.class.resource_name : "#{self.class.resource_name}/#{id}"
         method = is_new ? :post : :put
@@ -465,6 +465,20 @@ module BugBunny
     rescue BugBunny::UnprocessableEntity => e
       load_remote_rabbit_errors(e.error_messages)
       false
+    end
+
+    # Params top-level extra a incluir en el body del `save`, JUNTO al recurso
+    # envuelto en `param_key` (no dentro de él). Default: ninguno.
+    #
+    # Las subclases lo sobrescriben para enviar datos HERMANOS del recurso que no
+    # forman parte de sus atributos ni deben persistir en el modelo — p. ej. una
+    # credencial de transporte que el servidor lee como `params[:x]` y que no se
+    # serializa dentro del recurso. Se mergea sobre `{ param_key => attrs }`, así
+    # que no debe usar `param_key` como clave (colisionaría con el recurso).
+    #
+    # @return [Hash]
+    def extra_top_level_params
+      {}
     end
 
     # Elimina el recurso del servidor remoto (DELETE).

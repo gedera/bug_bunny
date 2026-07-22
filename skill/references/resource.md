@@ -65,6 +65,24 @@ order.errors                             # ActiveModel::Errors
 - **Existente** (`persisted? == true`): Envía PUT solo con atributos cambiados (`changes_to_send`).
 - Captura `BugBunny::UnprocessableEntity` (422) y carga `resource.errors`. Retorna `false`.
 
+### Params top-level hermanos: `extra_top_level_params`
+
+Por default `save` envía el body `{ param_key => attrs }`. Una subclase puede sobrescribir `extra_top_level_params` (default `{}`) para mergear datos **top-level hermanos** del recurso —fuera del wrapper `param_key`— sin que sean atributos del recurso ni se persistan en el modelo. Caso de uso: un dato de transporte (p. ej. una credencial) que el servidor lee como `params[:x]`.
+
+```ruby
+class Service < BugBunny::Resource
+  self.param_key = 'service'
+  attr_accessor :registry_auth   # dato transiente, NO atributo del recurso
+
+  def extra_top_level_params
+    registry_auth ? { registry_auth: registry_auth } : {}
+  end
+end
+# save envía: { 'service' => { ...attrs }, registry_auth: '...' }
+```
+
+No debe usar `param_key` como clave (colisionaría con el wrapper del recurso).
+
 ## Contexto Dinámico (.with)
 
 ### Forma de bloque (recomendada)

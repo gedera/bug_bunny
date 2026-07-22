@@ -17,7 +17,7 @@ proyecto y convenciones de equipo, ver `CLAUDE.md`. Para la entrada humana, ver
 | Errores | `docs/errors/errors.md` | completo (§a/b/d estructura + §c política inferida) | jerarquía de excepciones públicas, mapeo `status→excepción`, shape del payload, política retry |
 | Configuración | `docs/config/configuracion.md` | completo (estructura + enrich §f/g/h) | opciones de `Configuration`, defaults, failure-mode/threading, inyecciones del `Railtie`, ENV sugeridas |
 | Dependencias consumidas | `docs/consumed/rabbitmq.md` | completo (estructura + enrich §c/e) | qué consume del broker RabbitMQ vía `bunny`, mapeo error-Bunny→excepción, retry/degradación |
-| Test | `docs/test/test.md` | completo (estructura + enrich §e-h) | suites RSpec/Minitest, CI, contract-assessment, link a incidentes (#49/#52) |
+| Test | `docs/test/testing.md` | completo (estructura + enrich §e-h) | suites RSpec/Minitest, CI, contract-assessment, link a incidentes (#49/#52) |
 | Release | `docs/release/release.md` | completo | patrón gema-tag, versionado, publish a RubyGems |
 | Datos | — | n/a | gema sin DB |
 | Operaciones / Interfaz / Topología | — | dev-structure F2 no implementado | contrato embebido en `README.md`/`skill/SKILL.md` (interim RFC-008 §2) |
