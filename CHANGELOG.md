@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.1.0] - 2026-07-22
+
+### Nuevas funcionalidades
+- **Hook `extra_top_level_params` en `Resource#save`:** una subclase puede sobrescribirlo (default `{}`) para mergear datos TOP-LEVEL hermanos del recurso en el body del `save` —fuera del wrapper `param_key`— sin que sean atributos del recurso ni se persistan en el modelo. Caso de uso: un dato de transporte (p. ej. una credencial) que el servidor lee como `params[:x]`. No-breaking (el default `{}` deja el body idéntico para los recursos que no lo sobrescriben). — @Pslp
+
+### Documentación
+- `docs/test/` incrementado (spec `extra_top_level_params`, conteos 16 unit / 23 total) y renombrado a `docs/test/testing.md` (filename canónico RFC-013). Hook documentado en el contrato interino `skill/references/resource.md`. — @Pslp
+
 ## [5.0.0] - 2026-07-01
 
 > **BREAKING.** Se elimina la constante pública `BugBunny::SecurityError`. Aunque la excepción nunca se *levantaba*, su **ausencia rompe en evaluación**: un `rescue BugBunny::SecurityError` en un consumidor resuelve la constante cuando *cualquier* excepción entra a ese bloque → `NameError` que enmascara la excepción original. Por eso es breaking real, no inerte.
