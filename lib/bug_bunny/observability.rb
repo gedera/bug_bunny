@@ -27,6 +27,46 @@ module BugBunny
       SENSITIVE_KEYS.any? { |sensitive| key_str.include?(sensitive) }
     end
 
+    # Alternación de keys sensibles ordenada de más larga a más corta: en un regex
+    # la alternación matchea leftmost-first, así que sin este orden `auth` ganaría
+    # sobre `authorization` y el patrón dejaría de matchear (`orization=x` no sigue
+    # con `[:=]`).
+    SENSITIVE_KEYS_ALTERNATION = SENSITIVE_KEYS.sort_by { |k| -k.length }.join('|').freeze
+
+    # Reglas de VALOR sensible, como pares `[regex, reemplazo]`.
+    #
+    # {.sensitive_key?} solo ve el NOMBRE de la clave; no puede ver una credencial
+    # embebida en TEXTO LIBRE. El caso canónico es el `message` de una excepción
+    # inesperada (llega como `reason=` o `error_message=`, nombres no sensibles):
+    # un `NoMethodError` sobre un objeto de respuesta HTTP puede arrastrar
+    # `Authorization: "Bearer eyJ..."` en su mensaje y el filtro por-clave lo deja
+    # pasar entero al log.
+    #
+    # El reemplazo conserva el nombre de la clave cuando viaja dentro del texto
+    # (`token=[FILTERED]`, no `[FILTERED]`): saber QUÉ credencial apareció es
+    # diagnóstico útil; su valor no.
+    SENSITIVE_VALUE_RULES = [
+      # Esquemas de autenticación HTTP: "Bearer <jwt>", "Basic <base64>".
+      [/\b(?:bearer|basic)\s+[A-Za-z0-9\-._~+\/]{8,}={0,2}/i, '[FILTERED]'],
+      # La key viaja DENTRO del texto: `token=abc`, `password: 'x'`, `"api_key" => "y"`.
+      [/\b(#{SENSITIVE_KEYS_ALTERNATION})["']?\s*(?:=>|[:=])\s*["']?[^\s,;"'}\])]+/i, '\1=[FILTERED]'],
+      # Credenciales en una URL: `amqp://user:pass@host` → conserva el esquema y el host.
+      [%r{(://)[^\s/:@]+:[^\s/@]+@}, '\1[FILTERED]@']
+    ].freeze
+
+    # Redacta credenciales embebidas en un valor de texto libre.
+    #
+    # Complementa a {.sensitive_key?}: esa filtra por NOMBRE de clave, esta por
+    # CONTENIDO. Se aplica a todo valor no numérico que {#safe_log} serializa.
+    #
+    # @param value [Object] El valor a redactar (se serializa con `to_s`).
+    # @return [String] El valor con las credenciales reemplazadas por `[FILTERED]`.
+    def self.redact_value(value)
+      SENSITIVE_VALUE_RULES.reduce(value.to_s) do |acc, (pattern, replacement)|
+        acc.gsub(pattern, replacement)
+      end
+    end
+
     private
 
     # Registra un evento estructurado. Nunca eleva excepciones.
@@ -43,12 +83,15 @@ module BugBunny
         val = BugBunny::Observability.sensitive_key?(k) ? '[FILTERED]' : v
         next if val.nil?
 
+        # La redacción por CONTENIDO se aplica a todo valor no numérico: el filtro
+        # por-clave de arriba no ve una credencial embebida en texto libre.
         formatted = case val
                     when Numeric then val
                     when Hash
-                      val.to_json
-                    when String then val.include?(' ') ? val.inspect : val
-                    else val.to_s.include?(' ') ? val.to_s.inspect : val
+                      BugBunny::Observability.redact_value(val.to_json)
+                    else
+                      redacted = BugBunny::Observability.redact_value(val)
+                      redacted.include?(' ') ? redacted.inspect : redacted
                     end
         "#{k}=#{formatted}"
       end.compact.join(' ')
