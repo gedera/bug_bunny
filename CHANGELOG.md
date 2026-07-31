@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.1.1] - 2026-07-31
+
+### Correcciones
+- **`safe_log` redacta credenciales embebidas en el VALOR, no solo por nombre de clave (#61):** el filtro por-clave solo ve el NOMBRE, así que una credencial en texto libre pasaba entera al log. El caso canónico es el `message` de una excepción inesperada, que llega como `reason=`/`error_message=` —nombres no sensibles— y puede arrastrar `Authorization: "Bearer …"`. Se agrega `Observability.redact_value`, aplicada a todo valor no numérico que `safe_log` serializa, con tres reglas: esquemas de auth HTTP (`Bearer`/`Basic`), key sensible dentro del texto (conserva el nombre de la key y filtra solo el valor) y credenciales en URL (`user:pass@host`). Cubre las variantes con separador y camelCase (`access_token=`, `user_password=`, `accessToken=`), igual que el matching por substring de `sensitive_key?`. No-breaking: no cambia firmas ni el formato `k=v`, y un log sin credenciales sale idéntico. Riesgo asumido: sobre-redacción de contenido diagnóstico anclado a marcadores de credencial (un `token=missing` sale filtrado). — @gedera
+- **Un valor `Hash` sigue siendo JSON parseable después de redactar:** se agrega `Observability.redact_structure`, que redacta la estructura **antes** de serializar (recorre `Hash` anidado y `Array`) en vez de aplicar el regex sobre el JSON ya serializado, que colapsaba el par `"token": "abc"` y dejaba el campo sin parsear — el secreto desaparecía, pero quien consume el log perdía el objeto entero. De paso, las keys internas del `Hash` ahora también pasan por `sensitive_key?`. — @gedera
+
+### Documentación
+- La lista de claves sensibles **deja de replicarse**: el docblock de `Error#raw_response` y `docs/errors/` apuntan a `Observability::SENSITIVE_KEYS` como canónica, en vez de duplicarla. La copia venía desincronizada (incluía `pass` bare, que está excluido a propósito para no filtrar `passport_number`, y le faltaban `authorization`, `credential`, `private_key`, `csrf`, `session_id`). `docs/glossary/`, README y `skill/` describen ahora las dos capas de redacción. — @Pslp
+
 ## [5.1.0] - 2026-07-22
 
 ### Nuevas funcionalidades
