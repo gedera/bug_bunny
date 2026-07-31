@@ -80,9 +80,10 @@ module BugBunny
     #
     # Se usa para los valores `Hash` de {#safe_log}. Redactar el JSON ya serializado con
     # {.redact_value} no sirve: la regla de key-dentro-del-texto normaliza el separador a
-    # `=` y se come la comilla de cierre de la key, dejando `{"token=[FILTERED]",...}` —
-    # el secreto desaparece, pero el campo deja de ser JSON parseable y quien consume el
-    # log pierde el objeto entero.
+    # `=` y se come la comilla de cierre de la key, dejando un objeto donde el par
+    # `"token": "abc"` quedó colapsado en `"token=[FILTERED]"` — el secreto desaparece,
+    # pero el campo deja de ser JSON parseable y quien consume el log pierde el objeto
+    # entero, no solo el valor redactado.
     #
     # Recorriendo la estructura, además, las keys internas SÍ pasan por {.sensitive_key?}
     # (que solo veía las keys de primer nivel del metadata).

@@ -156,8 +156,13 @@ parsea el body, devuelve `parsed['errors']` por convención o el cuerpo completo
 
 > **Seguridad (cruza RFC-017):** `raw_response` puede contener datos sensibles en
 > `details`. La gema lo entrega crudo a propósito; **sanitizar antes de cualquier
-> sink** (Sentry/logs) filtrando `password|pass|passwd|secret|token|api_key|auth`
-> → `[FILTERED]` es responsabilidad del consumidor (`exception.rb:25-30`).
+> sink** (Sentry/logs) es responsabilidad del consumidor (`exception.rb:25-34`).
+> La lista canónica de claves sensibles es `Observability::SENSITIVE_KEYS`
+> (`observability.rb:13-16`) y **no se replica acá** — replicarla la desincroniza
+> (ojo: `pass` bare NO está en la lista, a propósito, para no filtrar
+> `passport_number`). Para sanear se reusa `Observability.sensitive_key?` (filtra
+> por NOMBRE de clave) y `Observability.redact_structure` (recorre la estructura
+> y además redacta credenciales embebidas en el VALOR → `[FILTERED]`).
 
 ## 3. Inferencias
 

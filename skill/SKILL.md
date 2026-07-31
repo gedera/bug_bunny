@@ -129,7 +129,7 @@ Por RFC-008 §2: no se fabrica la capa, no se borra contrato sin destino, no se 
 | `BugBunny::Controller` | Base class tipo Rails. `before_action`, `around_action`, `after_action`, `rescue_from`, `render`. |
 | `BugBunny::Resource` | ORM sobre AMQP. `find`, `where`, `create`, `save`, `destroy`. ActiveModel validations y callbacks. |
 | `BugBunny::Routing::RouteSet` | DSL de rutas: `resources`, `namespace`, `member`, `collection`. |
-| `BugBunny::Observability` | Mixin de logging estructurado. `safe_log` nunca lanza excepciones. Filtra keys sensibles. |
+| `BugBunny::Observability` | Mixin de logging estructurado. `safe_log` nunca lanza excepciones. Redacta credenciales en dos capas: por nombre de clave (`sensitive_key?`) y por contenido del valor (`redact_value` / `redact_structure`, para la credencial embebida en texto libre). |
 | `BugBunny::Middleware::Stack` | Builder de middlewares client-side (onion architecture tipo Faraday). |
 | BugBunny::Request | Value object del mensaje saliente con metadata AMQP completa. |
 | BugBunny::OTel | Helpers para emitir campos siguiendo las OTel semantic conventions for messaging. |

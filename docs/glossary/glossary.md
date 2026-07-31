@@ -127,7 +127,7 @@ Cadena transversal que corre antes del dispatch al controller (tracing, auth, lo
 - `lib/bug_bunny/consumer_middleware.rb` — `BugBunny::ConsumerMiddleware`
 
 ## Observability
-Mixin de logging estructurado `key=value` que implementa OTel semantic conventions for messaging; `safe_log` nunca lanza; filtra claves sensibles a `[FILTERED]`.
+Mixin de logging estructurado `key=value` que implementa OTel semantic conventions for messaging; `safe_log` nunca lanza; redacta a `[FILTERED]` en dos capas — por **NOMBRE de clave** (`sensitive_key?`, substring sobre `SENSITIVE_KEYS`) y por **CONTENIDO del valor** (`redact_value`, para la credencial embebida en texto libre que la capa de clave no ve; `redact_structure` para un `Hash`, redactado antes de serializar para no romper el JSON).
 
 **Binding:**
 - `lib/bug_bunny/observability.rb` — `BugBunny::Observability`

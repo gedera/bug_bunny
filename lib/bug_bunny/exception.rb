@@ -23,11 +23,15 @@ module BugBunny
     #   respuesta RPC (ej: {CommunicationError}, {ConfigurationError}).
     #
     # @note **No loguear ni enviar a sinks (Sentry/logs) sin sanitizar.** El
-    #   cuerpo crudo puede contener datos sensibles (p. ej. en `details`). Antes
-    #   de cualquier sink, filtrar las claves sensibles del fleet
-    #   (`password|pass|passwd|secret|token|api_key|auth`) → `[FILTERED]`. La
-    #   gema entrega el cuerpo crudo a propósito; sanitizarlo es responsabilidad
-    #   del consumidor.
+    #   cuerpo crudo puede contener datos sensibles (p. ej. en `details`). La
+    #   lista canónica de claves sensibles es
+    #   {BugBunny::Observability::SENSITIVE_KEYS} — no la repliques acá ni en el
+    #   consumidor: se desincroniza (ojo que `pass` bare NO está en la lista, a
+    #   propósito, para no filtrar `passport_number`). Para sanear, reusá
+    #   {BugBunny::Observability.sensitive_key?} (filtra por NOMBRE de clave) y
+    #   {BugBunny::Observability.redact_structure} (recorre la estructura y
+    #   además redacta credenciales embebidas en el VALOR). La gema entrega el
+    #   cuerpo crudo a propósito; sanitizarlo es responsabilidad del consumidor.
     attr_accessor :raw_response
 
     # @return [Integer, nil] El código de estado de la respuesta que originó el

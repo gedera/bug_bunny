@@ -37,9 +37,13 @@ rescue BugBunny::Error => e
 end
 ```
 
-> ⚠️ **No loguear `raw_response` crudo.** Puede contener datos sensibles. Filtrar
-> claves (`password|pass|passwd|secret|token|api_key|auth`) → `[FILTERED]` antes
-> de Sentry/logs. La gema lo entrega a propósito; sanitizar es del consumidor.
+> ⚠️ **No loguear `raw_response` crudo.** Puede contener datos sensibles. Sanear
+> antes de Sentry/logs con `Observability.redact_structure` (recorre la
+> estructura: filtra por nombre de clave y también redacta la credencial
+> embebida en el valor). **No replicar la lista de claves** — la canónica es
+> `Observability::SENSITIVE_KEYS`; replicarla la desincroniza (y `pass` bare NO
+> está en ella, a propósito, para no filtrar `passport_number`). La gema entrega
+> el cuerpo crudo a propósito; sanitizar es del consumidor.
 
 Para consumir un envelope estructurado de dominio (ej. `{ error: { code,
 message, details } }`), parsealo en el boundary del servicio desde

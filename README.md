@@ -365,7 +365,10 @@ BugBunny measures and emits durations automatically — **there is no need to wr
 | `consumer.message_processed` | `duration_s` | Message processing (router + controller + reply). |
 | `consumer.execution_error` | `duration_s` | Elapsed time until the error. |
 
-Sensitive keys (`password`, `token`, `secret`, `api_key`, `authorization`, etc.) are automatically filtered to `[FILTERED]` across all log output.
+Credentials are redacted to `[FILTERED]` across all log output, in two layers:
+
+- **By key name** — sensitive keys (`password`, `token`, `secret`, `api_key`, `authorization`, etc.) are matched as substrings, so variants like `user_password` or `accessToken` are covered too.
+- **By value content** — a credential embedded in free text is redacted even when the key name is *not* sensitive. The canonical case: an unexpected exception whose `message` carries `Authorization: "Bearer …"` and reaches the log as `reason=`. Covers HTTP auth schemes, a sensitive key inside the text, and credentials in a URL. `Hash` values are redacted **before** being serialized, so the field stays valid JSON.
 
 ---
 
