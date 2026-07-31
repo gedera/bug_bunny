@@ -49,7 +49,16 @@ module BugBunny
       # Esquemas de autenticación HTTP: "Bearer <jwt>", "Basic <base64>".
       [/\b(?:bearer|basic)\s+[A-Za-z0-9\-._~+\/]{8,}={0,2}/i, '[FILTERED]'],
       # La key viaja DENTRO del texto: `token=abc`, `password: 'x'`, `"api_key" => "y"`.
-      [/\b(#{SENSITIVE_KEYS_ALTERNATION})["']?\s*(?:=>|[:=])\s*["']?[^\s,;"'}\])]+/i, '\1=[FILTERED]'],
+      #
+      # El prefijo `\w*` va en lugar de un `\b`: `_` es word-char, así que un borde de
+      # palabra NO existe dentro de `access_token` ni de `accessToken` y esas variantes
+      # se colarían en claro — justo las que {.sensitive_key?} cubre a propósito con
+      # substring matching. Se captura el prefijo para conservar el nombre COMPLETO de la
+      # key en el log (`access_token=[FILTERED]`): saber qué credencial apareció es
+      # diagnóstico útil. No reintroduce el falso positivo de `passport_number` porque
+      # ninguna key de SENSITIVE_KEYS es substring suyo (por eso `pass` bare está excluida).
+      [/(\w*(?:#{SENSITIVE_KEYS_ALTERNATION}))["']?\s*(?:=>|[:=])\s*["']?[^\s,;"'}\])]+/i,
+       '\1=[FILTERED]'],
       # Credenciales en una URL: `amqp://user:pass@host` → conserva el esquema y el host.
       [%r{(://)[^\s/:@]+:[^\s/@]+@}, '\1[FILTERED]@']
     ].freeze
@@ -64,6 +73,31 @@ module BugBunny
     def self.redact_value(value)
       SENSITIVE_VALUE_RULES.reduce(value.to_s) do |acc, (pattern, replacement)|
         acc.gsub(pattern, replacement)
+      end
+    end
+
+    # Redacta una estructura ANTES de serializarla, recorriendo keys y valores.
+    #
+    # Se usa para los valores `Hash` de {#safe_log}. Redactar el JSON ya serializado con
+    # {.redact_value} no sirve: la regla de key-dentro-del-texto normaliza el separador a
+    # `=` y se come la comilla de cierre de la key, dejando `{"token=[FILTERED]",...}` —
+    # el secreto desaparece, pero el campo deja de ser JSON parseable y quien consume el
+    # log pierde el objeto entero.
+    #
+    # Recorriendo la estructura, además, las keys internas SÍ pasan por {.sensitive_key?}
+    # (que solo veía las keys de primer nivel del metadata).
+    #
+    # @param obj [Object] Estructura a redactar (Hash/Array anidados incluidos).
+    # @return [Object] La misma forma, con los valores sensibles reemplazados.
+    def self.redact_structure(obj)
+      case obj
+      when Hash
+        obj.each_with_object({}) do |(k, v), acc|
+          acc[k] = sensitive_key?(k) ? '[FILTERED]' : redact_structure(v)
+        end
+      when Array then obj.map { |element| redact_structure(element) }
+      when Numeric, TrueClass, FalseClass, NilClass then obj
+      else redact_value(obj)
       end
     end
 
@@ -88,7 +122,9 @@ module BugBunny
         formatted = case val
                     when Numeric then val
                     when Hash
-                      BugBunny::Observability.redact_value(val.to_json)
+                      # Se redacta la estructura y DESPUÉS se serializa: al revés el campo
+                      # queda con el secreto tapado pero el JSON roto (ver .redact_structure).
+                      BugBunny::Observability.redact_structure(val).to_json
                     else
                       redacted = BugBunny::Observability.redact_value(val)
                       redacted.include?(' ') ? redacted.inspect : redacted

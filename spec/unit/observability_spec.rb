@@ -80,6 +80,62 @@ RSpec.describe BugBunny::Observability do
       expect(BugBunny::Observability.redact_value('passport_number=AB123'))
         .to include('AB123')
     end
+
+    # `_` es word-char: un `\b` antes de la key NO encuentra borde dentro de
+    # `access_token` ni de `accessToken`, y esas variantes se colaban en claro.
+    # Son exactamente las que sensitive_key? cubre a propósito con substring matching.
+    it 'redacta la variante con separador (access_token) conservando el nombre completo' do
+      redacted = BugBunny::Observability.redact_value('request failed access_token=eyJsecret.jwt')
+
+      expect(redacted).not_to include('eyJsecret.jwt')
+      expect(redacted).to include('access_token=[FILTERED]')
+    end
+
+    it 'redacta la variante con prefijo (user_password)' do
+      redacted = BugBunny::Observability.redact_value('invalid params user_password=hunter2')
+
+      expect(redacted).not_to include('hunter2')
+      expect(redacted).to include('user_password=[FILTERED]')
+    end
+
+    it 'redacta la variante camelCase (accessToken)' do
+      redacted = BugBunny::Observability.redact_value('boom accessToken=eyJsecret.jwt')
+
+      expect(redacted).not_to include('eyJsecret.jwt')
+      expect(redacted).to include('accessToken=[FILTERED]')
+    end
+
+    it 'no redacta una key no sensible con sufijo numérico (processing_session_count)' do
+      expect(BugBunny::Observability.redact_value('processing_session_count=5'))
+        .to eq('processing_session_count=5')
+    end
+  end
+
+  describe '.redact_structure (estructura antes de serializar)' do
+    it 'redacta por key interna y deja la forma intacta' do
+      redacted = BugBunny::Observability.redact_structure(
+        'token' => 'abc123', 'host' => 'rabbit'
+      )
+
+      expect(redacted).to eq('token' => '[FILTERED]', 'host' => 'rabbit')
+    end
+
+    it 'recorre Hash anidado y Array' do
+      redacted = BugBunny::Observability.redact_structure(
+        'nested' => { 'api_key' => 'xyz', 'n' => 1 },
+        'list' => ['token=abc123', 'clean']
+      )
+
+      expect(redacted).to eq(
+        'nested' => { 'api_key' => '[FILTERED]', 'n' => 1 },
+        'list' => ['token=[FILTERED]', 'clean']
+      )
+    end
+
+    it 'no altera numéricos ni booleanos ni nil' do
+      expect(BugBunny::Observability.redact_structure('n' => 1, 'ok' => true, 'x' => nil))
+        .to eq('n' => 1, 'ok' => true, 'x' => nil)
+    end
   end
 
   describe '#safe_log — redacción por contenido' do
@@ -98,6 +154,22 @@ RSpec.describe BugBunny::Observability do
 
       expect(last_log_line).not_to include('abc123xyz')
       expect(last_log_line).to include('[FILTERED]')
+    end
+
+    # La redacción no puede costar la estructura: quien consume el log parsea este campo
+    # como JSON, y un objeto roto le hace perder TODOS los pares, no solo el redactado.
+    it 'mantiene el campo Hash como JSON parseable después de redactar' do
+      host.safe_log(:error, 'unhandled_exception',
+                    details: { 'token' => 'abc123xyz', 'host' => 'rabbit',
+                               'nested' => { 'api_key' => 'xyz789', 'n' => 1 } })
+
+      field = last_log_line[/details=(\S+)/, 1]
+
+      expect { JSON.parse(field) }.not_to raise_error
+      expect(JSON.parse(field)).to eq(
+        'token' => '[FILTERED]', 'host' => 'rabbit',
+        'nested' => { 'api_key' => '[FILTERED]', 'n' => 1 }
+      )
     end
 
     it 'no altera un valor numérico' do
