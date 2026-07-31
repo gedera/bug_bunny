@@ -1,10 +1,11 @@
 # Errores — bug_bunny
 
 > meta: artefacto errores · RFC-020 · generado `arch-structure` (§a/§b/§d) +
-> `arch-enrich` (§c) · anclado a `d0533bf`, `lib/bug_bunny/exception.rb`,
-> `remote_error.rb`, `middleware/raise_error.rb`, `controller.rb`, `consumer.rb`
-> · fecha 2026-06-30 · cobertura: §a/§b/§d completas (estructura); §c política
-> completa (enrich, **inferida** de HTTP/AMQP — verificación humana pendiente).
+> `arch-enrich` (§c) · anclado a `5697541`, `lib/bug_bunny/exception.rb`,
+> `remote_error.rb`, `middleware/raise_error.rb`, `controller.rb`, `consumer.rb`,
+> `observability.rb` · fecha 2026-07-31 · cobertura: §a/§b/§d completas
+> (estructura); §c política completa (enrich, **inferida** de HTTP/AMQP —
+> verificación humana pendiente).
 
 ## 1. Resumen
 

@@ -2,8 +2,9 @@
 
 > meta: artefacto release · RFC-014 (`accepted`) · generado por `arch-structure`
 > + `arch-enrich` (híbrido RFC-014 §2; nació como piloto manual #51, re-anclado
-> a la RFC vigente) · anclado a `.github/workflows/release.yml`, `*.gemspec`,
-> `lib/bug_bunny/version.rb`, `CHANGELOG.md`, git · fecha 2026-06-30 · cobertura:
+> a la RFC vigente) · anclado a `5697541`
+> (`.github/workflows/release.yml`, `*.gemspec`, `lib/bug_bunny/version.rb`,
+> `CHANGELOG.md`) · fecha 2026-07-31 · cobertura:
 > completa (régimen gema: build→publish, §e/f/g n/a).
 
 ## 1. Resumen
@@ -20,9 +21,9 @@ out-of-repo).
 
 ### a. Hecho verificable
 
-- **Convención de versión:** SemVer `vX.X.X`. Actual: **4.19.0**.
-- **Source of truth:** tag remoto (`v4.19.0`) + **triple mirror**
-  `lib/bug_bunny/version.rb` (`VERSION = '4.19.0'`) ← `bug_bunny.gemspec:7`
+- **Convención de versión:** SemVer `vX.X.X`. Actual: **5.1.1**.
+- **Source of truth:** tag remoto (`v5.1.1`) + **triple mirror**
+  `lib/bug_bunny/version.rb` (`VERSION = '5.1.1'`) ← `bug_bunny.gemspec:7`
   (`spec.version = BugBunny::VERSION`).
 - **Changelog canónico:** `CHANGELOG.md` único.
 - **Patrón de trigger:** `gema-tag` (patrón 1).
@@ -33,7 +34,7 @@ out-of-repo).
 
 - **Convención:** SemVer `vX.X.X` (**con `v`** — distinto al servicio).
 - **Source of truth:** tag remoto canónico (`git tag --sort=-v:refname` →
-  `v4.19.0`).
+  `v5.1.1`).
 - **Mirror:** `lib/bug_bunny/version.rb` (`VERSION`), leído por
   `bug_bunny.gemspec:7` (`spec.version = BugBunny::VERSION`).
   `required_ruby_version >= 2.6.0` (`bug_bunny.gemspec:17`).
@@ -58,8 +59,8 @@ out-of-repo).
   `on: push: tags: ['v*']` → `ruby/setup-ruby@v1` → `gem build *.gemspec` +
   `gem push *.gem` (auth `secrets.RUBYGEMS_API_KEY`). Auditable y versionado con
   el código; se ancla a `file:line`, no se referencia como caja negra.
-- **Consumo:** los servicios la pinnean por versión (`gem "bug_bunny", "~> 4.19.0"`)
-  desde RubyGems — **no** git-source.
+- **Consumo:** los servicios la pinnean por versión (`gem "bug_bunny", "~> X.Y.0"`,
+  hoy `~> 5.1.0`) desde RubyGems — **no** git-source.
 
 ### e. Deploy / publish
 
@@ -79,12 +80,19 @@ procedimiento per-repo porque no vive acá. Una versión yankeada se anotaría e
 
 ### h. Dependencias de deploy inter-servicio
 
-- **Consumidores** (cruza RFC-018): servicios del fleet la pinnean
-  `~> 4.19.0` (semántica minor-compatible). Un cambio de contrato del gem
-  (ej. el behavior-change de `4.18.0` — `Bunny::Exception` → `CommunicationError`)
-  obliga a los consumidores a migrar; el `CHANGELOG.md` lo documenta como
-  breaking note. **Orden de deploy:** los consumidores adoptan al hacer `bundle
-  update bug_bunny` — no hay deploy coordinado (cada servicio elige cuándo).
+- **Consumidores** (cruza RFC-018): servicios del fleet la pinnean con la forma
+  `~> X.Y.0` — **patch-compatible**, no minor: `~> 5.1.0` resuelve
+  `>= 5.1.0, < 5.2.0`, así que un minor **no entra** sin editar el `Gemfile`.
+  Consecuencia operativa: un fix publicado como **patch** lo toman con
+  `bundle update bug_bunny`; uno publicado como **minor** requiere tocar el pin
+  en cada consumidor. Estado hoy: `box_manager_service` y `box_radius_manager`
+  en `~> 5.1.0`; `box_acs_manager` y `box_cluster_manager` todavía en
+  `~> 4.19.0` (bumps pendientes). Un cambio de contrato del gem (ej. el
+  behavior-change de `4.18.0` — `Bunny::Exception` → `CommunicationError`, o la
+  eliminación de `BugBunny::SecurityError` en `5.0.0`) obliga a los consumidores
+  a migrar; el `CHANGELOG.md` lo documenta como breaking note. **Orden de
+  deploy:** los consumidores adoptan al hacer `bundle update bug_bunny` — no hay
+  deploy coordinado (cada servicio elige cuándo).
 
 ### i. Contrato con la skill productora
 

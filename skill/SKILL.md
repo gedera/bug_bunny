@@ -19,7 +19,9 @@ Gema Ruby: capa de routing RESTful sobre AMQP/RabbitMQ. Microservicios se comuni
 
 ## Contrato resumido (piso mínimo)
 
-> Resume el contrato de **`bug_bunny` 4.18.0**. Suficiente para el uso típico sin abrir el detalle; el detalle version-locked está en [`../docs/behavior/behavior.md`](../docs/behavior/behavior.md) (6 flujos) y [`../docs/glossary/glossary.md`](../docs/glossary/glossary.md) (símbolos→significado). Antipatrones/API completa: más abajo (embebido interim, ver Cobertura y fronteras).
+> Resume el contrato de **`bug_bunny` 5.1.1** (anclado a `v5.1.1`). Suficiente para el uso típico sin abrir el detalle; el detalle version-locked está en el **Índice de artefactos** de abajo. Antipatrones/API completa: más abajo (embebido interim, ver Cobertura y fronteras).
+>
+> **Si venís de 4.x, dos breaking a mirar antes de subir:** `5.0.0` eliminó la constante pública `BugBunny::SecurityError` (un `rescue BugBunny::SecurityError` que sobreviva revienta con `NameError` y **enmascara la excepción original**) y `4.18.0` cambió el wrapping `Bunny::Exception` → `CommunicationError`. Detalle en `CHANGELOG.md`.
 
 **Símbolos públicos clave**
 
@@ -58,14 +60,21 @@ client.publish('events', body: { type: 'x' })   # => { 'status' => 202 }
 
 ## Índice de artefactos (fuente de verdad)
 
-El detalle vive en `docs/<capa>/` (modelo `dev-*`); esta skill **indexa y resume**, no duplica. Links relativos = version-locked (mismo tag del release; `gemspec.files` incluye `docs/**`).
+El detalle vive en `docs/<capa>/` (modelo `dev-*`); esta skill **indexa y resume**, no duplica. Links relativos = version-locked (mismo tag del release, `v5.1.1`; `gemspec.files` incluye `docs/**`, así que estos archivos viajan dentro del `.gem` que ya tenés instalado).
 
 | Capa | Artefacto | Estado |
 |---|---|---|
 | Glosario de dominio | [docs/glossary/glossary.md](../docs/glossary/glossary.md) | parcial, acreta por PR |
 | Comportamiento (flujos) | [docs/behavior/behavior.md](../docs/behavior/behavior.md) | completa — 6 flujos |
+| Configuración | [docs/config/configuracion.md](../docs/config/configuracion.md) | §a-§e/§i estructura + §f/§g/§h enrich — completa |
+| Dependencias consumidas | [docs/consumed/rabbitmq.md](../docs/consumed/rabbitmq.md) | §a/§b/§d estructura + §c/§e enrich |
+| Errores | [docs/errors/errors.md](../docs/errors/errors.md) | §a/§b/§d completas; §c política inferida (verificación humana pendiente) |
+| Test | [docs/test/testing.md](../docs/test/testing.md) | §a-§h — 16 unit / 7 integration |
+| Release | [docs/release/release.md](../docs/release/release.md) | completa (régimen gema: build→publish; §e/f/g n/a) |
 | Datos | — | n/a — gema sin DB |
-| Operaciones / Interfaz / Topología | — | F2 no implementado — ver Cobertura y fronteras |
+| Eventos | — | n/a — la gema **es** el transporte; no declara catálogo de eventos de dominio propio |
+| Seguridad | — | n/a — sin authn/authz propias; el guard anti-RCE (403) está en `docs/errors/` |
+| Operaciones / Interfaz / Topología | — | pendiente — ver Cobertura y fronteras |
 
 > **Glosario:** migrado a [docs/glossary/glossary.md](../docs/glossary/glossary.md)
 > (RFC-008 §2 — el compuesto referencia, no copia). Términos AMQP base
@@ -74,13 +83,15 @@ El detalle vive en `docs/<capa>/` (modelo `dev-*`); esta skill **indexa y resume
 
 ## Cobertura y fronteras
 
-**Coexistencia transitoria con destino pendiente (RFC-008 §2 — interim de migración):** mientras la capa de detalle destino (operaciones/interfaz/topología) esté declarada pero **no implementada** (dev-structure F1, F2 del plan), permanecen embebidos bajo el interim normado:
+**Coexistencia transitoria con destino pendiente (RFC-008 §2 — interim de migración):** mientras las capas `docs/api/` (operaciones), `docs/interface/` y `docs/topology/` no estén generadas para este repo, el contrato que les correspondería permanece embebido bajo el interim normado:
 
 - **En esta skill (abajo):** el contrato detallado (jerarquía de excepciones, API de config, modos de entrega) **y** el diagrama de arquitectura (flujo RPC). El *Contrato resumido* de arriba es el piso mínimo (RFC-008 §2); lo de abajo es el detalle interim hasta que exista `docs/api|interface|topology`.
 - **En `README.md`:** el contrato (sin el diagrama de arquitectura).
 - **Guías how-to** (`references/*.md`, pre-estándar): destino futuro `docs/howto/`.
 
-Por RFC-008 §2: no se fabrica la capa, no se borra contrato sin destino, no se duplica; migra cuando F2 entregue, mismo PR. Estado transitorio declarado, no excepción permanente. Origen del gap (resuelto, normado): [sequre/ai_knowledge#95](https://github.com/sequre/ai_knowledge/issues/95).
+Por RFC-008 §2: no se fabrica la capa, no se borra contrato sin destino, no se duplica; migra cuando se generen, mismo PR. Estado transitorio declarado, no excepción permanente. Origen del gap (resuelto, normado): [sequre/ai_knowledge#95](https://github.com/sequre/ai_knowledge/issues/95).
+
+> **Nota de alcance (2026-07-31):** la justificación original de este interim era que el generador no implementaba esas capas. Ya las implementa, así que el pendiente es de **este repo**, no de tooling — en particular `docs/interface/` (RFC-004), donde correspondería registrar la API pública (incluidos `Observability.redact_value` y `.redact_structure`, agregados en `5.1.1`). Queda como trabajo propio, fuera del alcance de este release.
 
 ---
 

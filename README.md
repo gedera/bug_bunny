@@ -432,20 +432,31 @@ end
 
 Artefactos de detalle (modelo `dev-*`, RFC-001). El README indexa; no duplica.
 
+Anclado a `v5.1.1`.
+
 | Capa | Artefacto | Estado |
 |---|---|---|
-| Datos | — | n/a — gema sin DB (sin schema/models) |
 | Glosario | [docs/glossary/glossary.md](docs/glossary/glossary.md) | parcial, acreta por PR |
 | Comportamiento | [docs/behavior/behavior.md](docs/behavior/behavior.md) | completa — 6 flujos (backfill on-demand) |
-| Operaciones / Interfaz / Topología | — | F2 no implementado (dev-structure) — ver nota |
+| Configuración | [docs/config/configuracion.md](docs/config/configuracion.md) | §a-§e/§i estructura + §f/§g/§h enrich — completa |
+| Dependencias consumidas | [docs/consumed/rabbitmq.md](docs/consumed/rabbitmq.md) | §a/§b/§d estructura + §c/§e enrich |
+| Errores | [docs/errors/errors.md](docs/errors/errors.md) | §a/§b/§d completas; §c política inferida (verificación humana pendiente) |
+| Test | [docs/test/testing.md](docs/test/testing.md) | §a-§h — 16 unit / 7 integration |
+| Release | [docs/release/release.md](docs/release/release.md) | completa (régimen gema: build→publish; §e/f/g n/a) |
+| Datos | — | n/a — gema sin DB (sin schema/models) |
+| Eventos | — | n/a — la gema **es** el transporte; no declara catálogo de eventos de dominio propio |
+| Seguridad | — | n/a — sin authn/authz propias; el guard anti-RCE (403) se documenta en `docs/errors/` |
+| Operaciones / Interfaz / Topología | — | pendiente — ver nota |
 
-**Coexistencia transitoria con destino pendiente (RFC-008 §2 — interim de migración):** mientras la capa de detalle destino (operaciones/interfaz/topología) esté declarada pero **no implementada** (dev-structure F1, F2 del plan), permanecen embebidos/cruzados, bajo el interim normado:
+**Coexistencia transitoria con destino pendiente (RFC-008 §2 — interim de migración):** mientras las capas `docs/api/` (operaciones), `docs/interface/` y `docs/topology/` no estén generadas para este repo, el contrato que les correspondería permanece embebido:
 
-- **En este README:** el contrato (jerarquía de excepciones, API de configuración, modos de entrega).
+- **En este README:** la jerarquía de excepciones, la API de configuración y los modos de entrega.
 - **En `skill/SKILL.md`:** además el diagrama de arquitectura (flujo RPC).
 - **Guías how-to** (`skill/references/*.md`, pre-estándar): el README las enlaza pese a la regla "no referenciar `skill/` desde el README" — destino futuro `docs/howto/`.
 
-Por RFC-008 §2: no se fabrica la capa, no se borra contrato sin destino, no se duplica; migra cuando F2 entregue, mismo PR. Estado transitorio declarado, no excepción permanente. Origen del gap (resuelto, normado): [sequre/ai_knowledge#95](https://github.com/sequre/ai_knowledge/issues/95).
+Por RFC-008 §2: no se fabrica la capa, no se borra contrato sin destino, no se duplica; migra cuando se generen, mismo PR. Estado transitorio declarado, no excepción permanente. Origen del gap (resuelto, normado): [sequre/ai_knowledge#95](https://github.com/sequre/ai_knowledge/issues/95).
+
+> **Nota de alcance (2026-07-31):** la justificación original de este interim era que el generador no implementaba esas capas. Ya las implementa, así que el pendiente es de **este repo**, no de tooling — en particular `docs/interface/` (RFC-004), que es donde correspondería registrar la API pública de la gema. Queda como trabajo propio, fuera del alcance de este release.
 
 How-to (pre-estándar):
 [Routing](skill/references/routing.md) ·

@@ -1,6 +1,6 @@
 # Glosario — bug_bunny
 
-> meta: artefacto `glosario` · RFC-009 (binding opcional, r: §2 materialización no-tabular) · generado dev-enrich (siembra) · anclado a `a5cdb10` · cobertura: parcial, acreta por PR
+> meta: artefacto `glosario` · RFC-009 (binding opcional, r: §2 materialización no-tabular) · generado dev-enrich (siembra) · anclado a `5697541` · fecha 2026-07-31 · cobertura: parcial, acreta por PR
 
 ## 1. Resumen
 
