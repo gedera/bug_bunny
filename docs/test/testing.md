@@ -84,6 +84,7 @@ umbral de coverage declarado.
 |---|---|---|
 | **#52** (`status`/`raw_response` en toda la jerarquía + hardening de `format_error_message`) | `raise_error_spec` — comentarios explícitos "Alcance issue #52" | `spec/unit/raise_error_spec.rb:59,120,169` |
 | **#49** (leak de `Bunny::TCPConnectionFailedForAllHosts` en `try_create`) | `communication_error_wrapping_spec` — "Client#publish — TCP fail en try_create (issue #49 caso original)" | `spec/unit/communication_error_wrapping_spec.rb:41` |
+| **#62** (`changes_to_send` enviaba `nil` cuando un método del modelo tapaba un atributo dinámico homónimo) | `resource_attributes_spec` — "colisión entre un atributo dinámico y un método homónimo": el caso que deniega (el método resuelve a `nil` → gana el atributo) y el de no-regresión (el método resuelve a un valor → gana el método) | `spec/unit/resource_attributes_spec.rb:104,115` |
 
 ### h. PII en fixtures / factories
 
