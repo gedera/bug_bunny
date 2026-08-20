@@ -116,6 +116,33 @@ order.changed                        # → ['name', 'custom_field']
 order.changes_to_send                # → { 'name' => 'New Name', 'custom_field' => 'value' }
 ```
 
+### Colisión entre un atributo dinámico y un método homónimo
+
+`changes_to_send` lee cada valor con `public_send(key)`, así que un **método de
+instancia definido en el modelo** con el mismo nombre que un atributo dinámico
+**gana** sobre el valor seteado. Es deliberado: hay modelos cuyo reader devuelve
+el valor ya normalizado y es ese el que tiene que viajar.
+
+La excepción es el caso mudo: **un atributo que el caller seteó explícitamente
+nunca se envía como `nil`.** Si el método homónimo resuelve a `nil` —el patrón
+del reader de conveniencia sobre el shape que devuelve el servidor, que sobre un
+objeto recién construido no encuentra el campo— gana el valor del atributo.
+
+```ruby
+class Container < BugBunny::Resource
+  def name                      # reader del *inspect* del servidor
+    self.Name&.delete_prefix('/')
+  end
+end
+
+c = Container.new('name' => 'helper_1')
+c.name                          # → nil (todavía no hay `Name`: no vino del servidor)
+c.changes_to_send               # → { 'name' => 'helper_1' }   ← el atributo, no el nil
+```
+
+Sin esa regla la key viajaba presente y en `nil`: sin excepción, y un `compact`
+del otro lado la borraba sin dejar rastro (#62).
+
 ## Callbacks Disponibles
 
 Definidos con `define_model_callbacks`:

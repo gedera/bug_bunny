@@ -367,7 +367,25 @@ module BugBunny
       # 2. Construir el payload con los valores actuales de esas keys
       payload = {}
       changed_keys.each do |key|
-        payload[key] = public_send(key)
+        value = public_send(key)
+
+        # Un atributo que el caller seteó explícitamente NUNCA se envía como nil.
+        #
+        # `public_send` no lee el atributo: ejecuta el método. Si el modelo define
+        # un método de instancia homónimo de un atributo dinámico —el patrón del
+        # reader de conveniencia sobre el shape que devuelve el servidor
+        # (`def name`, `def state`)—, ese método le tapa el valor al write path.
+        # Sobre un objeto recién construido el campo del servidor todavía no
+        # existe, así que devuelve nil y el atributo viajaba como nil: la key
+        # presente, el valor perdido, sin ninguna excepción. Del otro lado un
+        # `compact` lo borra sin dejar rastro (#62).
+        #
+        # La precedencia general NO se invierte: cuando el método resuelve a un
+        # valor sigue ganando él, porque hay modelos cuyo reader devuelve el valor
+        # ya normalizado por su builder y es ese el que tiene que viajar.
+        value = @extra_attributes[key] if value.nil? && @extra_attributes.key?(key)
+
+        payload[key] = value
       end
 
       return payload unless payload.empty?

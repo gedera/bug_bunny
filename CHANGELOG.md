@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.1.2] - 2026-08-20
+
+### Correcciones
+- **`changes_to_send` ya no envía `nil` cuando un método del modelo tapa un atributo dinámico homónimo (#62):** el payload se armaba con `public_send(key)`, así que un método de instancia con el mismo nombre que un atributo dinámico le tapaba el valor al write path. Cuando ese método es un **reader de conveniencia sobre el shape que devuelve el servidor** (`def name` leyendo `Name`, `def state` leyendo `State`), sobre un objeto recién construido el campo todavía no existe → devuelve `nil`, y **el atributo que el caller seteó explícitamente viajaba como `nil`**: la key presente, el valor perdido, sin ninguna excepción; un `compact` del otro lado la borraba sin dejar rastro. Ahora un atributo seteado explícitamente nunca se envía como `nil`. **La precedencia general NO se invierte:** cuando el método homónimo resuelve a un valor sigue ganando él, porque hay modelos cuyo reader devuelve el valor ya normalizado por su builder y es ese el que tiene que viajar. No-breaking: un modelo sin colisión de nombres arma un payload idéntico. — @Pslp
+
+> **Qué mirar si consumís el ORM.** El síntoma no era un error sino un **atributo faltante del otro lado**. Caso real: `sequre/box_manager_service#318` — un container creado por RPC nacía con nombre aleatorio, lo que dejaba inoperante la adopción por nombre determinista y hacía que cada reintento largara un helper nuevo en paralelo sobre el mismo volumen. Si tenés un modelo con un `def <atributo>` que lee la respuesta del servidor y además aceptás ese nombre como atributo de escritura, esta versión es la que hace que el valor viaje.
+
 ## [5.1.1] - 2026-07-31
 
 ### Correcciones
