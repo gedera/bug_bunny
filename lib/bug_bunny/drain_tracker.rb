@@ -20,7 +20,8 @@ module BugBunny
     end
 
     # Envuelve el procesamiento de una entrega. Cuenta la entrega como procesada aunque
-    # el bloque levante, porque el mensaje ya salió de la cola (ack o reject).
+    # el bloque levante: {Consumer#handle_delivery} rechaza la que falla antes del ack, así
+    # que en todos los caminos el mensaje ya salió de la cola (ack o reject).
     #
     # @yield El procesamiento de la entrega.
     # @return [void]

@@ -63,12 +63,20 @@ RSpec.describe 'Consumer.drain', :integration do
     client.publish('ping', method: :get, exchange: exchange_name, exchange_type: 'topic', routing_key: 'ping')
   end
 
-  def messages_in_queue
-    admin_connection.create_channel.queue(queue_name, queue_opts.merge(passive: true)).message_count
+  def passive_queue
+    admin_connection.create_channel.queue(queue_name, queue_opts.merge(passive: true))
   end
 
+  def messages_in_queue
+    passive_queue.message_count
+  end
+
+  # La conexión es del llamador: drain cierra su canal, no la conexión.
   def drain
-    BugBunny::Consumer.drain(connection: BugBunny.create_connection, **drain_args)
+    connection = BugBunny.create_connection
+    BugBunny::Consumer.drain(connection: connection, **drain_args)
+  ensure
+    connection&.close
   end
 
   it 'procesa todos los mensajes encolados, los ack-ea y retorna cuántos fueron' do
@@ -88,6 +96,48 @@ RSpec.describe 'Consumer.drain', :integration do
 
     expect(drain).to eq(0)
     expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at).to be < 1
+  end
+
+  # Criterio 5: shutdown corre al volver y cierra el canal. Se mira el canal y no el
+  # `consumer_count`: ése queda en 0 por el `cancel` aunque falte el `ensure shutdown`, así
+  # que un test sobre él pasaría con el defecto intacto. El canal se toma antes: es el mismo
+  # que después usa drain.
+  it 'cierra su canal al volver, con la cola vacía y con mensajes' do
+    [0, 2].each do |pending|
+      pending.times { publish_ping }
+      sleep 0.3 if pending.positive?
+
+      connection = BugBunny.create_connection
+      consumer = BugBunny::Consumer.new(connection)
+      channel = consumer.session.channel
+
+      consumer.drain(**drain_args)
+
+      expect(channel).not_to be_open, "con #{pending} mensajes el canal quedó abierto"
+    ensure
+      connection&.close
+    end
+  end
+
+  # Review de #65: un middleware que levanta dejaba la entrega sin ack ni reject; con
+  # prefetch 1 trababa la cola y drain volvía "con éxito" sin haber sacado nada.
+  it 'una entrega cuyo middleware levanta sale de la cola y no traba el prefetch' do
+    exploding = Class.new(BugBunny::ConsumerMiddleware::Base) do
+      def call(*)
+        raise 'middleware roto'
+      end
+    end
+    BugBunny.consumer_middlewares.use exploding
+    BugBunny.configure { |config| config.channel_prefetch = 1 }
+    3.times { publish_ping }
+    sleep 0.3
+
+    expect(drain).to eq(3)
+    expect(messages_in_queue).to eq(0)
+    expect(DrainSpec::PingController.handled_count.value).to eq(0)
+  ensure
+    BugBunny.configuration.instance_variable_set(:@consumer_middlewares, BugBunny::ConsumerMiddleware::Stack.new)
+    BugBunny.configure { |config| config.channel_prefetch = 1 }
   end
 
   it 'procesa en la misma vuelta un mensaje que llega dentro de la ventana de inactividad' do

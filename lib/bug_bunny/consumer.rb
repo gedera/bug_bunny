@@ -43,7 +43,8 @@ module BugBunny
 
     # Método de conveniencia para instanciar y drenar en un solo paso.
     #
-    # @param connection [Bunny::Session] Una conexión TCP activa a RabbitMQ.
+    # @param connection [Bunny::Session] Una conexión TCP activa a RabbitMQ. Es de quien
+    #   llama: `drain` no la cierra (ver {#drain}).
     # @param args [Hash] Argumentos que se pasarán al método {#drain}.
     # @return [Integer] Cantidad de mensajes procesados.
     def self.drain(connection:, **args)
@@ -124,11 +125,27 @@ module BugBunny
     #
     # **Mensajes que llegan mientras drena:** un mensaje que llega antes de que venza la
     # ventana de inactividad se procesa en esta vuelta; lo que llega después queda para
-    # la próxima corrida. Un mensaje entregado en el instante del cancel puede no llegar a
-    # ack-earse: vuelve a la cola (at-least-once, nunca se pierde).
+    # la próxima corrida. Una entrega ya recibida cuando se cancela se procesa antes de
+    # volver (Bunny drena su work pool al cancelar); si igual no llegara a ack-earse, vuelve
+    # a la cola (at-least-once, nunca se pierde).
     #
-    # No arranca el health check ni reintenta la conexión: un job que falla lo reintenta
-    # el framework que lo corre.
+    # **Con un flujo sostenido, no retorna.** Si los mensajes llegan más seguido que
+    # `drain_idle_timeout`, la ventana nunca vence: la duración la decide el productor, no
+    # la cola que había al arrancar. Acotalo desde afuera (el timeout del job de Sidekiq,
+    # `activeDeadlineSeconds` en k8s), sabiendo que cortarlo a mitad de una entrega da
+    # redelivery.
+    #
+    # **Una entrega que falla sale de la cola.** Si un middleware o el manejo de error
+    # levanta antes del ack, se rechaza sin requeue, igual que los errores de
+    # `process_message`; no queda ocupando el prefetch.
+    #
+    # No tiene loop de reconexión ni health check: un job que falla lo reintenta el
+    # framework que lo corre. (Bunny sí recupera la conexión por su cuenta si
+    # `automatically_recover` está activo.)
+    #
+    # **La conexión es de quien llama:** `drain` cierra su canal al volver, no la conexión,
+    # porque puede ser compartida (un pool, la del publisher). Si la creaste para esta
+    # corrida, cerrala vos (ver el README).
     #
     # @param queue_name [String] Nombre de la cola a drenar.
     # @param exchange_name [String] Nombre del exchange al cual enlazar la cola.
@@ -208,20 +225,47 @@ module BugBunny
     # @param body [String] El payload crudo del mensaje.
     # @return [void]
     def handle_delivery(delivery_info, properties, body)
-      trace_id = properties.correlation_id
-      logger = BugBunny.configuration.logger
+      settled = false
 
       core = lambda {
-        if logger.respond_to?(:tagged)
-          logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
-        elsif defined?(Rails) && Rails.logger.respond_to?(:tagged)
-          Rails.logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
-        else
-          process_message(delivery_info, properties, body)
-        end
+        with_log_tags(properties.correlation_id) { process_message(delivery_info, properties, body) }
+        settled = true
       }
 
       BugBunny.configuration.consumer_middlewares.call(delivery_info, properties, body, &core)
+    rescue StandardError => e
+      settle_failed_delivery(delivery_info, settled, e)
+    end
+
+    # Corre el bloque con el `correlation_id` como tag del logger, si el logger los soporta.
+    #
+    # @param trace_id [String, nil]
+    # @return [Object] lo que devuelva el bloque
+    def with_log_tags(trace_id, &block)
+      logger = BugBunny.configuration.logger
+      if logger.respond_to?(:tagged)
+        logger.tagged(trace_id, &block)
+      elsif defined?(Rails) && Rails.logger.respond_to?(:tagged)
+        Rails.logger.tagged(trace_id, &block)
+      else
+        yield
+      end
+    end
+
+    # Una entrega cuyo procesamiento levantó FUERA del rescue de `process_message` (un
+    # middleware, o `handle_fatal_error`) quedaba sin ack ni reject: con prefetch 1 ocupaba
+    # el único lugar, el broker dejaba de entregar y `drain` volvía "con éxito" con la cola
+    # llena. Se rechaza sin requeue, igual que `process_message` hace con sus propios
+    # errores. Si ya se había resuelto (el error vino después del ack), sólo se loguea:
+    # rechazar un tag ya confirmado cierra el canal.
+    #
+    # @param delivery_info [Bunny::DeliveryInfo, Bunny::GetResponse] Metadatos de entrega.
+    # @param settled [Boolean] si `process_message` ya hizo ack o reject.
+    # @param error [StandardError] lo que levantó.
+    # @return [void]
+    def settle_failed_delivery(delivery_info, settled, error)
+      safe_log(:error, 'consumer.delivery_failed', settled: settled, **exception_metadata(error))
+      session.channel.reject(delivery_info.delivery_tag, false) unless settled
     end
 
     # Se suscribe sin bloquear y espera a que la cola quede quieta `drain_idle_timeout`
