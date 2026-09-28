@@ -50,12 +50,6 @@ module BugBunny
       new(connection).drain(**args)
     end
 
-    # Segundos sin entregas tras los cuales {#drain} da la cola por vacía.
-    DEFAULT_DRAIN_IDLE_TIMEOUT = 5
-
-    # Cada cuánto {#drain} revisa si se cumplió la ventana de inactividad.
-    DRAIN_POLL_INTERVAL = 0.1
-
     # Inicializa un nuevo consumidor.
     #
     # @param connection [Bunny::Session] Conexión nativa de Bunny.
@@ -83,13 +77,13 @@ module BugBunny
       attempt = 0
 
       begin
-        q = declare_infrastructure(queue_name: queue_name, exchange_name: exchange_name,
-                                   routing_key: routing_key, exchange_type: exchange_type,
-                                   exchange_opts: exchange_opts, queue_opts: queue_opts)
+        queue = declare_infrastructure(queue_name: queue_name, exchange_name: exchange_name,
+                                       routing_key: routing_key, exchange_type: exchange_type,
+                                       exchange_opts: exchange_opts, queue_opts: queue_opts)
 
         start_health_check(queue_name)
 
-        q.subscribe(manual_ack: true, block: block) do |delivery_info, properties, body|
+        queue.subscribe(manual_ack: true, block: block) do |delivery_info, properties, body|
           handle_delivery(delivery_info, properties, body)
         end
       rescue StandardError => e
@@ -124,8 +118,9 @@ module BugBunny
     # 1. Si la cola tiene 0 mensajes al arrancar, retorna `0` sin esperar.
     # 2. Si hay mensajes, se suscribe con `manual_ack: true` respetando `channel_prefetch`,
     #    igual que el modo bloqueante.
-    # 3. Termina cuando pasaron `idle_timeout` segundos sin entregas y no queda ningún
-    #    mensaje en proceso. Cancela el consumer y cierra el canal ({#shutdown}).
+    # 3. Termina cuando pasaron `drain_idle_timeout` segundos (ver {Configuration}) sin
+    #    entregas y no queda ningún mensaje en proceso. Cancela el consumer y cierra el
+    #    canal ({#shutdown}).
     #
     # **Mensajes que llegan mientras drena:** un mensaje que llega antes de que venza la
     # ventana de inactividad se procesa en esta vuelta; lo que llega después queda para
@@ -141,29 +136,24 @@ module BugBunny
     # @param exchange_type [String] Tipo de exchange ('direct', 'topic', 'fanout').
     # @param exchange_opts [Hash] Opciones adicionales para el exchange (durable, auto_delete).
     # @param queue_opts [Hash] Opciones adicionales para la cola (durable, auto_delete).
-    # @param idle_timeout [Numeric] Segundos sin entregas para dar la cola por vacía.
-    # @return [Integer] Cantidad de mensajes procesados en esta vuelta.
-    # @raise [ArgumentError] Si `idle_timeout` no es un número positivo.
+    # @return [Integer] Cantidad de mensajes procesados en esta vuelta (incluye los rechazados:
+    #   también salieron de la cola).
     def drain(queue_name:, exchange_name:, routing_key:, exchange_type: 'direct', exchange_opts: {},
-              queue_opts: {}, idle_timeout: DEFAULT_DRAIN_IDLE_TIMEOUT)
-      unless idle_timeout.is_a?(Numeric) && idle_timeout.positive?
-        raise ArgumentError, 'idle_timeout must be a positive number'
-      end
-
+              queue_opts: {})
       started_at = monotonic_now
-      q = declare_infrastructure(queue_name: queue_name, exchange_name: exchange_name,
-                                 routing_key: routing_key, exchange_type: exchange_type,
-                                 exchange_opts: exchange_opts, queue_opts: queue_opts)
+      queue = declare_infrastructure(queue_name: queue_name, exchange_name: exchange_name,
+                                     routing_key: routing_key, exchange_type: exchange_type,
+                                     exchange_opts: exchange_opts, queue_opts: queue_opts)
 
-      pending = q.message_count
-      safe_log(:info, 'consumer.drain_start', queue: queue_name, pending_count: pending, idle_timeout_s: idle_timeout)
-      return 0 if pending.zero?
+      pending_count = queue.message_count
+      safe_log(:info, 'consumer.drain_start', queue: queue_name, pending_count: pending_count)
+      return 0 if pending_count.zero?
 
-      processed = consume_until_idle(q, idle_timeout)
+      processed_count = consume_until_idle(queue)
 
-      safe_log(:info, 'consumer.drain_finished', queue: queue_name, processed_count: processed,
+      safe_log(:info, 'consumer.drain_finished', queue: queue_name, processed_count: processed_count,
                                                  duration_s: (monotonic_now - started_at).round(3))
-      processed
+      processed_count
     ensure
       shutdown
     end
@@ -187,22 +177,22 @@ module BugBunny
     #
     # @return [Bunny::Queue] La cola declarada y enlazada.
     def declare_infrastructure(queue_name:, exchange_name:, routing_key:, exchange_type:, exchange_opts:, queue_opts:)
-      x = session.exchange(name: exchange_name, type: exchange_type, opts: exchange_opts)
-      q = session.queue(queue_name, queue_opts)
-      q.bind(x, routing_key: routing_key)
+      exchange = session.exchange(name: exchange_name, type: exchange_type, opts: exchange_opts)
+      queue = session.queue(queue_name, queue_opts)
+      queue.bind(exchange, routing_key: routing_key)
 
       # 📊 LOGGING DE OBSERVABILIDAD: Calculamos las opciones finales para mostrarlas en consola
-      final_x_opts = BugBunny::Session::DEFAULT_EXCHANGE_OPTIONS
-                     .merge(BugBunny.configuration.exchange_options || {})
-                     .merge(exchange_opts || {})
-      final_q_opts = BugBunny::Session::DEFAULT_QUEUE_OPTIONS
-                     .merge(BugBunny.configuration.queue_options || {})
-                     .merge(queue_opts || {})
+      effective_exchange_opts = BugBunny::Session::DEFAULT_EXCHANGE_OPTIONS
+                                .merge(BugBunny.configuration.exchange_options || {})
+                                .merge(exchange_opts || {})
+      effective_queue_opts = BugBunny::Session::DEFAULT_QUEUE_OPTIONS
+                             .merge(BugBunny.configuration.queue_options || {})
+                             .merge(queue_opts || {})
 
-      safe_log(:info, 'consumer.start', queue: queue_name, queue_opts: final_q_opts)
+      safe_log(:info, 'consumer.start', queue: queue_name, queue_opts: effective_queue_opts)
       safe_log(:info, 'consumer.bound', exchange: exchange_name, exchange_type: exchange_type,
-                                        routing_key: routing_key, exchange_opts: final_x_opts)
-      q
+                                        routing_key: routing_key, exchange_opts: effective_exchange_opts)
+      queue
     end
 
     # Pasa una entrega por los middlewares y el logger con tags, y la procesa.
@@ -225,21 +215,23 @@ module BugBunny
       BugBunny.configuration.consumer_middlewares.call(delivery_info, properties, body, &core)
     end
 
-    # Se suscribe sin bloquear y espera a que la cola quede quieta `idle_timeout` segundos
-    # sin ningún mensaje en proceso; después cancela el consumer.
+    # Se suscribe sin bloquear y espera a que la cola quede quieta `drain_idle_timeout`
+    # segundos sin ningún mensaje en proceso; después cancela la suscripción.
     #
     # @return [Integer] Cantidad de mensajes procesados.
-    def consume_until_idle(queue, idle_timeout)
+    def consume_until_idle(queue)
+      idle_timeout = BugBunny.configuration.drain_idle_timeout
+      poll_interval = BugBunny.configuration.drain_poll_interval
       tracker = BugBunny::DrainTracker.new
 
-      consumer = queue.subscribe(manual_ack: true, block: false) do |delivery_info, properties, body|
+      subscription = queue.subscribe(manual_ack: true, block: false) do |delivery_info, properties, body|
         tracker.track { handle_delivery(delivery_info, properties, body) }
       end
 
-      sleep DRAIN_POLL_INTERVAL until tracker.idle?(idle_timeout)
+      sleep poll_interval until tracker.idle?(idle_timeout)
 
-      consumer.cancel
-      sleep DRAIN_POLL_INTERVAL while tracker.busy?
+      subscription.cancel
+      sleep poll_interval while tracker.busy?
       tracker.processed
     end
 
