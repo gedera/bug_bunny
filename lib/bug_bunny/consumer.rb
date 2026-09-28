@@ -41,6 +41,21 @@ module BugBunny
       new(connection).subscribe(**args)
     end
 
+    # Método de conveniencia para instanciar y drenar en un solo paso.
+    #
+    # @param connection [Bunny::Session] Una conexión TCP activa a RabbitMQ.
+    # @param args [Hash] Argumentos que se pasarán al método {#drain}.
+    # @return [Integer] Cantidad de mensajes procesados.
+    def self.drain(connection:, **args)
+      new(connection).drain(**args)
+    end
+
+    # Segundos sin entregas tras los cuales {#drain} da la cola por vacía.
+    DEFAULT_DRAIN_IDLE_TIMEOUT = 5
+
+    # Cada cuánto {#drain} revisa si se cumplió la ventana de inactividad.
+    DRAIN_POLL_INTERVAL = 0.1
+
     # Inicializa un nuevo consumidor.
     #
     # @param connection [Bunny::Session] Conexión nativa de Bunny.
@@ -68,40 +83,14 @@ module BugBunny
       attempt = 0
 
       begin
-        # Declaración de Infraestructura
-        x = session.exchange(name: exchange_name, type: exchange_type, opts: exchange_opts)
-        q = session.queue(queue_name, queue_opts)
-        q.bind(x, routing_key: routing_key)
-
-        # 📊 LOGGING DE OBSERVABILIDAD: Calculamos las opciones finales para mostrarlas en consola
-        final_x_opts = BugBunny::Session::DEFAULT_EXCHANGE_OPTIONS
-                       .merge(BugBunny.configuration.exchange_options || {})
-                       .merge(exchange_opts || {})
-        final_q_opts = BugBunny::Session::DEFAULT_QUEUE_OPTIONS
-                       .merge(BugBunny.configuration.queue_options || {})
-                       .merge(queue_opts || {})
-
-        safe_log(:info, 'consumer.start', queue: queue_name, queue_opts: final_q_opts)
-        safe_log(:info, 'consumer.bound', exchange: exchange_name, exchange_type: exchange_type,
-                                          routing_key: routing_key, exchange_opts: final_x_opts)
+        q = declare_infrastructure(queue_name: queue_name, exchange_name: exchange_name,
+                                   routing_key: routing_key, exchange_type: exchange_type,
+                                   exchange_opts: exchange_opts, queue_opts: queue_opts)
 
         start_health_check(queue_name)
 
         q.subscribe(manual_ack: true, block: block) do |delivery_info, properties, body|
-          trace_id = properties.correlation_id
-          logger = BugBunny.configuration.logger
-
-          core = lambda {
-            if logger.respond_to?(:tagged)
-              logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
-            elsif defined?(Rails) && Rails.logger.respond_to?(:tagged)
-              Rails.logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
-            else
-              process_message(delivery_info, properties, body)
-            end
-          }
-
-          BugBunny.configuration.consumer_middlewares.call(delivery_info, properties, body, &core)
+          handle_delivery(delivery_info, properties, body)
         end
       rescue StandardError => e
         attempt += 1
@@ -126,6 +115,59 @@ module BugBunny
       shutdown
     end
 
+    # Consume la cola hasta vaciarla y retorna: el modo para correr un consumidor como job
+    # (Sidekiq, un Job de k8s) en vez de como un proceso eterno.
+    #
+    # A diferencia de `subscribe(block: false)`, que retorna al instante, este método
+    # bloquea mientras haya mensajes y vuelve cuando la cola queda quieta:
+    #
+    # 1. Si la cola tiene 0 mensajes al arrancar, retorna `0` sin esperar.
+    # 2. Si hay mensajes, se suscribe con `manual_ack: true` respetando `channel_prefetch`,
+    #    igual que el modo bloqueante.
+    # 3. Termina cuando pasaron `idle_timeout` segundos sin entregas y no queda ningún
+    #    mensaje en proceso. Cancela el consumer y cierra el canal ({#shutdown}).
+    #
+    # **Mensajes que llegan mientras drena:** un mensaje que llega antes de que venza la
+    # ventana de inactividad se procesa en esta vuelta; lo que llega después queda para
+    # la próxima corrida. Un mensaje entregado en el instante del cancel puede no llegar a
+    # ack-earse: vuelve a la cola (at-least-once, nunca se pierde).
+    #
+    # No arranca el health check ni reintenta la conexión: un job que falla lo reintenta
+    # el framework que lo corre.
+    #
+    # @param queue_name [String] Nombre de la cola a drenar.
+    # @param exchange_name [String] Nombre del exchange al cual enlazar la cola.
+    # @param routing_key [String] Patrón de enrutamiento (ej: 'users.*').
+    # @param exchange_type [String] Tipo de exchange ('direct', 'topic', 'fanout').
+    # @param exchange_opts [Hash] Opciones adicionales para el exchange (durable, auto_delete).
+    # @param queue_opts [Hash] Opciones adicionales para la cola (durable, auto_delete).
+    # @param idle_timeout [Numeric] Segundos sin entregas para dar la cola por vacía.
+    # @return [Integer] Cantidad de mensajes procesados en esta vuelta.
+    # @raise [ArgumentError] Si `idle_timeout` no es un número positivo.
+    def drain(queue_name:, exchange_name:, routing_key:, exchange_type: 'direct', exchange_opts: {},
+              queue_opts: {}, idle_timeout: DEFAULT_DRAIN_IDLE_TIMEOUT)
+      unless idle_timeout.is_a?(Numeric) && idle_timeout.positive?
+        raise ArgumentError, 'idle_timeout must be a positive number'
+      end
+
+      started_at = monotonic_now
+      q = declare_infrastructure(queue_name: queue_name, exchange_name: exchange_name,
+                                 routing_key: routing_key, exchange_type: exchange_type,
+                                 exchange_opts: exchange_opts, queue_opts: queue_opts)
+
+      pending = q.message_count
+      safe_log(:info, 'consumer.drain_start', queue: queue_name, pending_count: pending, idle_timeout_s: idle_timeout)
+      return 0 if pending.zero?
+
+      processed = consume_until_idle(q, idle_timeout)
+
+      safe_log(:info, 'consumer.drain_finished', queue: queue_name, processed_count: processed,
+                                                 duration_s: (monotonic_now - started_at).round(3))
+      processed
+    ensure
+      shutdown
+    end
+
     # Detiene el health check timer y cierra el canal de forma ordenada.
     #
     # Llamar explícitamente al hacer shutdown del worker (SIGTERM, at_exit, etc.).
@@ -140,6 +182,71 @@ module BugBunny
     end
 
     private
+
+    # Declara exchange y cola, los enlaza y loguea las opciones efectivas.
+    #
+    # @return [Bunny::Queue] La cola declarada y enlazada.
+    def declare_infrastructure(queue_name:, exchange_name:, routing_key:, exchange_type:, exchange_opts:, queue_opts:)
+      x = session.exchange(name: exchange_name, type: exchange_type, opts: exchange_opts)
+      q = session.queue(queue_name, queue_opts)
+      q.bind(x, routing_key: routing_key)
+
+      # 📊 LOGGING DE OBSERVABILIDAD: Calculamos las opciones finales para mostrarlas en consola
+      final_x_opts = BugBunny::Session::DEFAULT_EXCHANGE_OPTIONS
+                     .merge(BugBunny.configuration.exchange_options || {})
+                     .merge(exchange_opts || {})
+      final_q_opts = BugBunny::Session::DEFAULT_QUEUE_OPTIONS
+                     .merge(BugBunny.configuration.queue_options || {})
+                     .merge(queue_opts || {})
+
+      safe_log(:info, 'consumer.start', queue: queue_name, queue_opts: final_q_opts)
+      safe_log(:info, 'consumer.bound', exchange: exchange_name, exchange_type: exchange_type,
+                                        routing_key: routing_key, exchange_opts: final_x_opts)
+      q
+    end
+
+    # Pasa una entrega por los middlewares y el logger con tags, y la procesa.
+    #
+    # @return [void]
+    def handle_delivery(delivery_info, properties, body)
+      trace_id = properties.correlation_id
+      logger = BugBunny.configuration.logger
+
+      core = lambda {
+        if logger.respond_to?(:tagged)
+          logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
+        elsif defined?(Rails) && Rails.logger.respond_to?(:tagged)
+          Rails.logger.tagged(trace_id) { process_message(delivery_info, properties, body) }
+        else
+          process_message(delivery_info, properties, body)
+        end
+      }
+
+      BugBunny.configuration.consumer_middlewares.call(delivery_info, properties, body, &core)
+    end
+
+    # Se suscribe sin bloquear y espera a que la cola quede quieta `idle_timeout` segundos
+    # sin ningún mensaje en proceso; después cancela el consumer.
+    #
+    # @return [Integer] Cantidad de mensajes procesados.
+    def consume_until_idle(queue, idle_timeout)
+      tracker = BugBunny::DrainTracker.new
+
+      consumer = queue.subscribe(manual_ack: true, block: false) do |delivery_info, properties, body|
+        tracker.track { handle_delivery(delivery_info, properties, body) }
+      end
+
+      sleep DRAIN_POLL_INTERVAL until tracker.idle?(idle_timeout)
+
+      consumer.cancel
+      sleep DRAIN_POLL_INTERVAL while tracker.busy?
+      tracker.processed
+    end
+
+    # @return [Float] Reloj monotónico en segundos.
+    def monotonic_now
+      Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    end
 
     # Procesa un mensaje individual recibido de la cola orquestando el ruteo declarativo.
     #
