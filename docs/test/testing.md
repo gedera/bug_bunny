@@ -5,10 +5,11 @@
 > `spec/spec_helper.rb`, `spec/support/integration_helper.rb`,
 > `.github/workflows/main.yml`, `CHANGELOG.md` · fecha 2026-07-22 · cobertura:
 > §a-§d (estructura) + §e-§h (enrich, anclado a specs/CHANGELOG) completas.
+> Incremento 2026-09-28 (#64): conteos, `drain_*_spec` y el gap de aislamiento.
 
 ## 1. Resumen
 
-Suite principal **RSpec** (`spec/`, 23 specs: 16 unit + 7 integration). Tarea
+Suite principal **RSpec** (`spec/`, 25 specs: 17 unit + 8 integration). Tarea
 `:test` legacy de **Minitest** (`test/`, 2 archivos) fuera del default y del CI.
 CI corre `bundle exec rake` (= `:spec`) en Ruby 3.4.4. Sin coverage tool
 configurado.
@@ -19,8 +20,8 @@ configurado.
 
 | framework | dir | nivel | nº | propósito |
 |---|---|---|---|---|
-| **RSpec** `~> 3.0` | `spec/unit/` | unit | 16 | client/session pool, configuration, consumer, producer, controller, raise_error, remote_error, request, route, observability, otel, resource, middleware, `extra_top_level_params` (hook de params hermanos en `Resource#save`) |
-| **RSpec** | `spec/integration/` | integration | 7 | client, consumer_middleware, controller, error_handling, infrastructure, publisher_confirms, resource — **requieren RabbitMQ real** (usan `BugBunny.create_connection` + pool) |
+| **RSpec** `~> 3.0` | `spec/unit/` | unit | 17 | client/session pool, configuration, consumer, `drain_tracker`, producer, controller, raise_error, remote_error, request, route, observability, otel, resource, middleware, `extra_top_level_params` (hook de params hermanos en `Resource#save`) |
+| **RSpec** | `spec/integration/` | integration | 8 | client, consumer_middleware, controller, drain, error_handling, infrastructure, publisher_confirms, resource — **requieren RabbitMQ real** (usan `BugBunny.create_connection` + pool) |
 | **Minitest** `~> 5.0` (+ `mocha`, `minitest-reporters`) | `test/integration/` | integration (legacy) | 2 | `manual_client_test.rb`, `infrastructure_test.rb` — tarea `:test`, **no** en default ni CI |
 
 Sin tags declarados (`:slow`/`:js`) en la config de RSpec.
@@ -58,9 +59,9 @@ umbral de coverage declarado.
 ### e. Gaps de cobertura
 
 - **Integration specs no corren en CI:** `main.yml` no declara servicio RabbitMQ;
-  las 7 integration specs **se skipean** vía `rabbitmq_available?`
+  las 8 integration specs **se skipean** vía `rabbitmq_available?`
   (`spec/support/integration_helper.rb:14`, ver `publisher_confirms_spec.rb:10`).
-  En CI solo se ejercitan las **16 unit specs** → el contrato AMQP real (publish/
+  En CI solo se ejercitan las **17 unit specs** → el contrato AMQP real (publish/
   consume/confirms contra broker) **no se valida en pipeline**, solo localmente
   con broker. Gap relevante.
 - **Sin medición de cobertura:** no hay SimpleCov ni umbral → la cobertura no está
@@ -75,8 +76,17 @@ umbral de coverage declarado.
 | **Errores RFC-020** (status→excepción, materia prima) | `raise_error_spec`, `remote_error_spec`, `communication_error_wrapping_spec`, `error_handling_spec` (integration) | **bien cubierto** (unit) |
 | **Consumed RFC-018** (Bunny::Exception→`CommunicationError`) | `communication_error_wrapping_spec`, `client_session_pool_spec` | cubierto (unit) |
 | **Config RFC-012** (validaciones de `Configuration`) | `configuration_spec` | cubierto |
+| **Consumer#drain** (drenar y salir, #64) | `drain_tracker_spec` (unit, reloj inyectado), `drain_spec` (integration) | cubierto; la parte integration skipea sin broker. Validado por mutación: quitar la espera, el retorno temprano o el chequeo de `busy?` hace fallar el test correspondiente |
 | **Confirms** (`PublishNacked`/`PublishUnroutable`) | `producer_spec`, `publisher_confirms_spec` (integration) | parcial en CI (la parte integration skipea sin broker) |
 | **Operaciones/routing** (RFC-003, capa F2) | `route_spec`, `request_spec`, `controller_spec`, `controller_after_action_spec`, `resource_spec` | cubierto (unit) |
+
+- **Aislamiento entre specs — corregido 2026-09-28 (#64):** el `after` de
+  `configuration_spec` reemplazaba la configuración global por una con defaults
+  (`guest`), así que los specs de integración que corrían después se conectaban
+  como `guest` y se **skipeaban como "RabbitMQ no disponible" aun con broker**.
+  Cuántos, dependía del seed (11 en `main` con `--seed 1`). Ahora un `around`
+  restaura la configuración original (`spec/unit/configuration_spec.rb:14-22`);
+  medido con broker local: 311 examples, 0 failures, 0 pending en los seeds 1, 2 y 3.
 
 ### g. Link a incidente → test de regresión
 

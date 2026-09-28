@@ -1,6 +1,6 @@
 # Comportamiento — bug_bunny
 
-> meta: artefacto `comportamiento` · RFC-007 (cadencia incremental default / completo on-demand) · generado dev-enrich 1.3.0 (backfill on-demand) · anclado a `94de2b4` · cobertura: completa (6 flujos) · verificado por humano 2026-05-18 (base) · 2026-05-26 (refresco scoped: contrato de error wrapping post-#49)
+> meta: artefacto `comportamiento` · RFC-007 (cadencia incremental default / completo on-demand) · generado dev-enrich 1.3.0 (backfill on-demand) · anclado a `94de2b4` · cobertura: completa (6 flujos) · verificado por humano 2026-05-18 (base) · 2026-05-26 (refresco scoped: contrato de error wrapping post-#49) · 2026-09-28 (incremento: flujo `drain`, #64)
 
 ## 1. Resumen
 
@@ -14,6 +14,7 @@ Flujos de ejecución de la gema. Generado en **modo completo on-demand** (RFC-00
 | Fire-and-forget | **documentado** | `producer.rb:47-51,146-161` |
 | Confirmed + basic.return bridge | **documentado** | `producer.rb:72-93,299-333`, `session.rb:204-250` |
 | Consumer subscribe loop + reconnect + health | **documentado** | `consumer.rb:66-127,340-361` |
+| Consumer drain (drenar y salir) | **documentado** | `consumer.rb:141-160,222-234`, `drain_tracker.rb:27-47` |
 | Error handling / RemoteError | **documentado** | `consumer.rb:320-329`, `remote_error.rb`, `raise_error.rb:32-65` |
 | Client middleware stack (onion) | **documentado** | `middleware/stack.rb:43-47`, `base.rb:35-43` |
 
@@ -117,6 +118,33 @@ sequenceDiagram
     Note over C: max_reconnect_attempts alcanzado → raise (fatal) · ensure → shutdown
 ```
 Contexto: `consumer.rb:66-127` (retry L106-124), `consumer.rb:340-361` (health). **Honestidad:** health check es thread aparte (TimerTask); no es parte del manejo de error del loop — se acoplan sólo vía cierre de session. Marcado, no fingido como un único flujo.
+
+### Flujo: Consumer drain (drenar y salir)
+Consume hasta que la cola queda quieta y retorna la cantidad procesada: el modo para correr un consumidor **como job** (#64). A diferencia del loop de `subscribe`, **no** arranca health check ni reintenta la conexión.
+
+```mermaid
+sequenceDiagram
+    participant J as Job (llamador)
+    participant C as Consumer
+    participant T as DrainTracker
+    participant BR as RabbitMQ
+    J->>C: Consumer.drain(connection:, queue_name:, …)
+    C->>BR: exchange/queue declare · bind · message_count
+    alt message_count == 0
+        C-->>J: 0 (sin esperar) · ensure → shutdown
+    else hay mensajes
+        C->>BR: subscribe(manual_ack, block:false) — respeta channel_prefetch
+        loop por entrega (work pool de Bunny)
+            BR->>C: deliver → T.track { middlewares → process_message → ack/reject }
+        end
+        loop cada drain_poll_interval
+            C->>T: idle?(drain_idle_timeout) — nada en proceso y sin actividad en la ventana
+        end
+        C->>BR: cancel · espera a que T no esté busy
+        C-->>J: T.processed · ensure → shutdown
+    end
+```
+Contexto: `consumer.rb:141-160` (`drain`), `consumer.rb:222-234` (`consume_until_idle`), `drain_tracker.rb:27-47`. **Mensajes que llegan mientras drena:** entran en esta vuelta si llegan antes de que venza la ventana; los posteriores quedan para la próxima corrida. Un mensaje entregado en el instante del `cancel` puede no ack-earse y **vuelve a la cola** (at-least-once). El conteo devuelto incluye los rechazados. **Distinto de `subscribe(block: false)`:** ese modo retorna al instante y el `ensure shutdown` cierra el canal, así que no consume nada (medido en #64).
 
 ### Flujo: Error handling / RemoteError
 Excepción no manejada en controller → serializada (clase/mensaje/backtrace[0..25]) → reply 500 → reconstruida client-side por `Middleware::RaiseError`.

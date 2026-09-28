@@ -6,7 +6,8 @@
 > `lib/bug_bunny/consumer.rb`,
 > `lib/generators/bug_bunny/install/templates/initializer.rb` · fecha 2026-06-30
 > · cobertura: §a-§e/§i (estructura) + §f/§g/§h (enrich, anclado a YARD) completas;
-> §j n/a.
+> §j n/a. Incremento 2026-09-28 (#64): `drain_idle_timeout`/`drain_poll_interval`,
+> anclados a `configuration.rb:37-38,99-105,273-275` y `consumer.rb:222-234`.
 
 ## 1. Resumen
 
@@ -57,6 +58,8 @@ Origen `code-default` salvo nota. Consumidor = `configuration.rb` (default en
 | `rpc_timeout` | Integer | no (1..3600) | `10` | code-default | `:203` | no |
 | `health_check_interval` | Integer | no | `60` | code-default | `:204` | no |
 | `health_check_file` | String/nil | no | `nil` (desactivado) | code-default | `:207` | no |
+| `drain_idle_timeout` | Integer (s) | no (1..3600) | `5` | code-default | `:274` | no |
+| `drain_poll_interval` | Numeric (s) | no (0.01..10) | `0.1` | code-default | `:275` | no |
 | `controller_namespace` | String | no | `'BugBunny::Controllers'` | code-default | `:210` | no |
 | `log_tags` | Array | no | `[:uuid]` | code-default | `:212` | no |
 | `exchange_options` | Hash | no | `{}` | code-default | `:215` | no |
@@ -119,6 +122,7 @@ del código.
 | Resiliencia (`automatically_recover`/`network_recovery_interval`/`max_reconnect_attempts`/`max_reconnect_interval`) | resiliencia | `max_reconnect_attempts` agotado → el Consumer re-levanta y muere (`consumer.rb:110-112`) | reintentos con **backoff exponencial** `network_recovery_interval * 2^(n-1)` cap `max_reconnect_interval` (`consumer.rb:115-118`) | sobrevivir caídas transitorias del broker sin perder el worker |
 | QoS (`channel_prefetch`) | rendimiento | alto → un worker lento acapara mensajes; `1` → menor throughput | controla unacked in-flight (backpressure) | balancea fairness vs throughput (default `1` = fair round-robin) |
 | Health (`health_check_interval`/`health_check_file`) | observabilidad | `health_check_file` no escribible → el touch falla (degradación de visibilidad, no del flujo) | **escribe (touch) un archivo** en cada health check OK; `nil` desactiva | probe para orquestadores (K8s/Swarm) |
+| Drain (`drain_idle_timeout`/`drain_poll_interval`) | latencia | `drain_idle_timeout` muy bajo → un productor lento deja mensajes para la próxima corrida (no se pierden); muy alto → el job tarda más en terminar tras vaciar la cola | ninguno: sólo acota cuánto espera `Consumer#drain` (`consumer.rb:231`) | correr un consumidor como job que termina (#64) |
 | Callbacks (`on_return`/`on_rpc_reply`/`rpc_reply_headers`) | extensibilidad | una excepción en `on_return` se captura pero **degrada visibilidad** (YARD `configuration.rb:147`) | corren en hilos sensibles (ver §h) | propagar trace-context / alertar unroutable |
 | Confirms (`nack_raise`/`return_raise`) | integridad de entrega | `false` → NACK/return solo se logea, la llamada retorna `202` (modo legacy, posible pérdida silenciosa) | habilitan el raise de `PublishNacked`/`PublishUnroutable` | elegir entre fail-fast vs best-effort en publish confirmado |
 | Routing (`controller_namespace`) | seguridad | clase resuelta no subclase de `BugBunny::Controller` → el worker responde **403** + reject (guard anti-RCE, `consumer.rb:222-228`) | acota qué clases son enrutables | superficie de control de RCE |

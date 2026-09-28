@@ -11,9 +11,27 @@ consumer = BugBunny::Consumer.subscribe(
   exchange_type: 'topic',
   exchange_opts: { durable: true },
   queue_opts: { auto_delete: false },
-  block: true   # Si false, retorna inmediatamente
+  block: true   # false retorna al instante y cierra el canal: no consume nada (#64)
 )
 ```
+
+## Drain (drenar y salir)
+
+Para correr un consumidor **como job**: consume hasta que la cola queda quieta y retorna cuántos mensajes procesó (incluye los rechazados). Con la cola vacía retorna `0` sin esperar.
+
+```ruby
+processed_count = BugBunny::Consumer.drain(
+  connection: bunny_session,
+  queue_name: 'my_app_queue',
+  exchange_name: 'my_exchange',
+  routing_key: 'users.*'
+)
+```
+
+- Respeta `channel_prefetch`, igual que `subscribe`.
+- Termina tras `drain_idle_timeout` segundos (default `5`) sin entregas y sin nada en proceso; lo chequea cada `drain_poll_interval` (default `0.1`).
+- Un mensaje que llega dentro de esa ventana entra en esta vuelta; los posteriores, en la próxima corrida. Uno entregado justo en el `cancel` puede volver a la cola (at-least-once).
+- **No** arranca health check ni reintenta la conexión: si falla, lo reintenta el framework del job.
 
 ## Flujo de Procesamiento
 
