@@ -1,6 +1,6 @@
 # Comportamiento — bug_bunny
 
-> meta: artefacto `comportamiento` · RFC-007 (cadencia incremental default / completo on-demand) · generado dev-enrich 1.3.0 (backfill on-demand) · anclado a `797d3f1` (rama de #65; re-anclar al SHA del squash al mergear #65) · cobertura: completa (7 flujos) · verificado por humano 2026-05-18 (base) · 2026-05-26 (refresco scoped: contrato de error wrapping post-#49) — incremento 2026-09-28 (#64, flujo `drain` + re-mapeo de `file:line`): escrito por el agente, **sin verificación humana todavía**
+> meta: artefacto `comportamiento` · RFC-007 (cadencia incremental default / completo on-demand) · generado dev-enrich 1.3.0 (backfill on-demand) · anclado a `6f68967` (rama de #65; re-anclar al SHA del squash al mergear #65) · cobertura: completa (7 flujos) · verificado por humano 2026-05-18 (base) · 2026-05-26 (refresco scoped: contrato de error wrapping post-#49) — incremento 2026-09-28 (#64, flujo `drain` + re-mapeo de `file:line`): escrito por el agente, **sin verificación humana todavía**
 
 ## 1. Resumen
 
@@ -18,7 +18,7 @@ Flujos de ejecución de la gema. Generado en **modo completo on-demand** (RFC-00
 | Error handling / RemoteError | **documentado** | `consumer.rb:473-482`, `remote_error.rb`, `raise_error.rb:32-65` |
 | Client middleware stack (onion) | **documentado** | `middleware/stack.rb:43-47`, `base.rb:35-43` |
 
-Cobertura completa a `797d3f1`. Acreta incremental en cada PR que toque un flujo (default RFC-007). Ausencia futura ≠ inexistencia.
+Cobertura completa a `6f68967`. Acreta incremental en cada PR que toque un flujo (default RFC-007). Ausencia futura ≠ inexistencia.
 
 ## 2. Cuerpo
 

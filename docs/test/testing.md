@@ -1,7 +1,7 @@
 # Test — bug_bunny
 
 > meta: artefacto test · RFC-013 · generado `arch-structure` (§a-§d) +
-> `arch-enrich` (§e-§h) · anclado a `797d3f1` (rama de #65; re-anclar al SHA del squash al mergear #65; el ancla anterior `7bf1da7` no era ancestro de `main`), `Rakefile`, `bug_bunny.gemspec`,
+> `arch-enrich` (§e-§h) · anclado a `6f68967` (rama de #65; re-anclar al SHA del squash al mergear #65; el ancla anterior `7bf1da7` no era ancestro de `main`), `Rakefile`, `bug_bunny.gemspec`,
 > `spec/spec_helper.rb`, `spec/support/integration_helper.rb`,
 > `.github/workflows/main.yml`, `CHANGELOG.md` · fecha 2026-07-22 · cobertura:
 > §a-§d (estructura) + §e-§h (enrich, anclado a specs/CHANGELOG) completas.
