@@ -70,15 +70,15 @@ catálogo `docs/errors/errors.md` (RFC-020), no lo redefine.
 | aspecto | comportamiento (anclado) |
 |---|---|
 | recuperación de conexión | `automatically_recover = true` (default): Bunny recupera canales/suscripciones tras corte TCP (`configuration.rb:62-63`). |
-| retry del Consumer | `Consumer#subscribe` reintenta en cualquier `StandardError` con **backoff exponencial** `network_recovery_interval * 2^(n-1)` cap `max_reconnect_interval`, hasta `max_reconnect_attempts` (`nil` = ∞) (`consumer.rb:89-107`). |
-| ack | `manual_ack: true` (`consumer.rb:86`) → entrega **at-least-once**: si el worker cae tras procesar pero antes del ack, el mensaje se re-entrega. **El handler debe ser idempotente.** |
+| retry del Consumer | `Consumer#subscribe` reintenta en cualquier `StandardError` con **backoff exponencial** `network_recovery_interval * 2^(n-1)` cap `max_reconnect_interval`, hasta `max_reconnect_attempts` (`nil` = ∞) (`consumer.rb:90-108`). |
+| ack | `manual_ack: true` (`consumer.rb:87`) → entrega **at-least-once**: si el worker cae tras procesar pero antes del ack, el mensaje se re-entrega. **El handler debe ser idempotente.** |
 | retry de publish | **no automático** — un publish fallido levanta `CommunicationError`/`PublishNacked`; reintentarlo puede **duplicar** salvo dedup aguas abajo. |
 | RPC | `request` espera reply hasta `rpc_timeout`; el retry de un RPC mutante requiere idempotencia (correlación por `correlation_id`). |
 
 ### e. Degradación (si RabbitMQ cae)
 
 - **Al conectar:** `create_connection` levanta `CommunicationError` (`bug_bunny.rb:95`); no hay fallback ni cola local — el caller decide (circuit-break/alertar).
-- **Consumer:** entra al loop de reconexión con backoff; por default (`max_reconnect_attempts = nil`) **reintenta indefinidamente**, logueando `consumer.connection_error` con `retry_in_s` (`consumer.rb:103-105`). Si se fija un máximo y se agota → `consumer.reconnect_exhausted` y re-raise (el worker muere).
+- **Consumer:** entra al loop de reconexión con backoff; por default (`max_reconnect_attempts = nil`) **reintenta indefinidamente**, logueando `consumer.connection_error` con `retry_in_s` (`consumer.rb:104-106`). Si se fija un máximo y se agota → `consumer.reconnect_exhausted` y re-raise (el worker muere).
 - **Publisher:** cada publish/RPC sobre conexión caída levanta `CommunicationError` (envuelto en `client.rb:168`); **sin buffering** — el mensaje no sale.
 - **Sin circuit-breaker propio:** la gema no trae breaker ni outbox; la resiliencia aguas arriba (reintentar el comando, encolar, alertar) es responsabilidad del consumidor.
 

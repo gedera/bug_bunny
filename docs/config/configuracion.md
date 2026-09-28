@@ -7,7 +7,7 @@
 > `lib/generators/bug_bunny/install/templates/initializer.rb` · fecha 2026-06-30
 > · cobertura: §a-§e/§i (estructura) + §f/§g/§h (enrich, anclado a YARD) completas;
 > §j n/a. Incremento 2026-09-28 (#64): `drain_idle_timeout`/`drain_poll_interval`,
-> anclados a `configuration.rb:37-38,99-105,273-275` y `consumer.rb:227-246`; todas las
+> anclados a `configuration.rb:37-38,99-105,273-275` y `consumer.rb:271-290`; todas las
 > citas `file:line` re-mapeadas al árbol de `797d3f1` (el refactor de #64 las corrió).
 
 ## 1. Resumen
@@ -122,13 +122,13 @@ del código.
 | Conexión (`host`/`port`/`username`/`password`/`vhost`) | conectividad | valor inválido/vacío → `ConfigurationError` en `validate!`; credencial/host errados → `CommunicationError` al conectar (`bug_bunny.rb:95`) | abre socket TCP al broker | identidad y destino del broker; `vhost` aísla ambientes |
 | Timeouts (`connection_timeout`/`read_timeout`/`write_timeout`/`heartbeat`/`continuation_timeout`) | resiliencia/latencia | muy bajo → cortes espurios bajo carga; muy alto → detección de fallo lenta | — | tuning de la conexión Bunny; `heartbeat` detecta conexiones zombi |
 | `rpc_timeout` | latencia | el worker remoto no responde a tiempo → `RequestTimeout` (`producer.rb:124,214`) | bloquea el hilo llamante hasta el timeout | techo de espera de un RPC síncrono |
-| Resiliencia (`automatically_recover`/`network_recovery_interval`/`max_reconnect_attempts`/`max_reconnect_interval`) | resiliencia | `max_reconnect_attempts` agotado → el Consumer re-levanta y muere (`consumer.rb:93-95`) | reintentos con **backoff exponencial** `network_recovery_interval * 2^(n-1)` cap `max_reconnect_interval` (`consumer.rb:98-101`) | sobrevivir caídas transitorias del broker sin perder el worker |
+| Resiliencia (`automatically_recover`/`network_recovery_interval`/`max_reconnect_attempts`/`max_reconnect_interval`) | resiliencia | `max_reconnect_attempts` agotado → el Consumer re-levanta y muere (`consumer.rb:94-96`) | reintentos con **backoff exponencial** `network_recovery_interval * 2^(n-1)` cap `max_reconnect_interval` (`consumer.rb:99-102`) | sobrevivir caídas transitorias del broker sin perder el worker |
 | QoS (`channel_prefetch`) | rendimiento | alto → un worker lento acapara mensajes; `1` → menor throughput | controla unacked in-flight (backpressure) | balancea fairness vs throughput (default `1` = fair round-robin) |
 | Health (`health_check_interval`/`health_check_file`) | observabilidad | `health_check_file` no escribible → el touch falla (degradación de visibilidad, no del flujo) | **escribe (touch) un archivo** en cada health check OK; `nil` desactiva | probe para orquestadores (K8s/Swarm) |
-| Drain (`drain_idle_timeout`/`drain_poll_interval`) | latencia | `drain_idle_timeout` muy bajo → un productor lento deja mensajes para la próxima corrida (no se pierden); muy alto → el job tarda más en terminar tras vaciar la cola | ninguno: sólo acota cuánto espera `Consumer#drain` (`consumer.rb:241`) | correr un consumidor como job que termina (#64) |
+| Drain (`drain_idle_timeout`/`drain_poll_interval`) | latencia | `drain_idle_timeout` muy bajo → un productor lento deja mensajes para la próxima corrida (no se pierden); muy alto → el job tarda más en terminar tras vaciar la cola | ninguno: sólo acota cuánto espera `Consumer#drain` (`consumer.rb:285`) | correr un consumidor como job que termina (#64) |
 | Callbacks (`on_return`/`on_rpc_reply`/`rpc_reply_headers`) | extensibilidad | una excepción en `on_return` se captura pero **degrada visibilidad** (YARD `configuration.rb:157`) | corren en hilos sensibles (ver §h) | propagar trace-context / alertar unroutable |
 | Confirms (`nack_raise`/`return_raise`) | integridad de entrega | `false` → NACK/return solo se logea, la llamada retorna `202` (modo legacy, posible pérdida silenciosa) | habilitan el raise de `PublishNacked`/`PublishUnroutable` | elegir entre fail-fast vs best-effort en publish confirmado |
-| Routing (`controller_namespace`) | seguridad | clase resuelta no subclase de `BugBunny::Controller` → el worker responde **403** + reject (guard anti-RCE, `consumer.rb:331-337`) | acota qué clases son enrutables | superficie de control de RCE |
+| Routing (`controller_namespace`) | seguridad | clase resuelta no subclase de `BugBunny::Controller` → el worker responde **403** + reject (guard anti-RCE, `consumer.rb:375-381`) | acota qué clases son enrutables | superficie de control de RCE |
 | Logging (`logger`/`bunny_logger`/`log_tags`) | observabilidad | — | salida a `$stdout` por default | trazabilidad estructurada |
 | Infra (`exchange_options`/`queue_options`) | infraestructura | options incompatibles con el broker → `PreconditionFailed` (vía `CommunicationError`) | defaults globales mergeados por recurso | declaración AMQP por default |
 
@@ -148,7 +148,7 @@ del código.
 | `on_return` | **hilo interno del consumidor de Bunny** (`configuration.rb:157`) | debe ser rápido y no lanzar; BugBunny captura, pero degrada visibilidad |
 | `on_rpc_reply` | **hilo llamante** tras recibir el reply RPC (`configuration.rb:142`) | hidrata trace-context en el publisher |
 | `rpc_reply_headers` | hilo del consumer, justo antes del `basic_publish` del reply (`configuration.rb:135`) | debe retornar un Hash de headers |
-| reconexión del Consumer | hilo del `subscribe` loop (`consumer.rb:86,105`) | `sleep wait` bloquea ese hilo durante el backoff |
+| reconexión del Consumer | hilo del `subscribe` loop (`consumer.rb:87,106`) | `sleep wait` bloquea ese hilo durante el backoff |
 
 ### j. Inyección a gemas configuradas
 

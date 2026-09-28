@@ -85,7 +85,7 @@ operaciones de RFC-003 (`docs/api/`, hoy pendiente — ver §4), no las redefine
 | Cliente RPC | otro ≥400 | `ClientError` | 4xx no mapeado |
 | Productor (publish `:confirmed`) | n/a (AMQP) | `PublishNacked` / `PublishUnroutable` | NACK / return del broker — no es status HTTP |
 | Transporte (frontera gem) | n/a (AMQP) | `CommunicationError` | fallo de red/broker, envuelve `Bunny::Exception` |
-| **Worker (dispatch)** | **403** | — (no excepción; responde 403 + reject) | guard anti-RCE: clase enrutada no subclase de `BugBunny::Controller` (`consumer.rb:331-337`) |
+| **Worker (dispatch)** | **403** | — (no excepción; responde 403 + reject) | guard anti-RCE: clase enrutada no subclase de `BugBunny::Controller` (`consumer.rb:375-381`) |
 
 ### c. Política por error
 
@@ -133,7 +133,7 @@ ante una excepción no mapeada por `rescue_from`:
 ```
 
 - El envelope `bug_bunny_exception` lo arma `RemoteError.serialize` (`remote_error.rb:29`);
-  también lo agrega `Consumer` cuando `status == 500 && exception` (`consumer.rb:434`).
+  también lo agrega `Consumer` cuando `status == 500 && exception` (`consumer.rb:478`).
   Es lo que el cliente reconstruye como `RemoteError` (`raise_error.rb:61-64`).
 - `render status:, json:` (`controller.rb:242`) deja el shape del body de error de
   dominio a criterio del worker — la gema no lo impone.
@@ -168,7 +168,7 @@ parsea el body, devuelve `parsed['errors']` por convención o el cuerpo completo
 ## 3. Inferencias
 
 - **Guard anti-RCE = 403, no excepción.** El control de seguridad que valida la
-  herencia de la clase enrutada vive en `consumer.rb:331-337`: si la clase
+  herencia de la clase enrutada vive en `consumer.rb:375-381`: si la clase
   resuelta no es subclase de `BugBunny::Controller`, el worker loguea
   `consumer.security_violation`, responde **403 'Forbidden'** (`handle_fatal_error`)
   y rechaza el mensaje sin requeue — **no levanta una excepción dedicada**. La ex
