@@ -175,6 +175,12 @@ module BugBunny
 
     # Declara exchange y cola, los enlaza y loguea las opciones efectivas.
     #
+    # @param queue_name [String] Nombre de la cola.
+    # @param exchange_name [String] Nombre del exchange.
+    # @param routing_key [String] Patrón de enrutamiento del binding.
+    # @param exchange_type [String] Tipo de exchange.
+    # @param exchange_opts [Hash] Opciones del exchange para esta llamada.
+    # @param queue_opts [Hash] Opciones de la cola para esta llamada.
     # @return [Bunny::Queue] La cola declarada y enlazada.
     def declare_infrastructure(queue_name:, exchange_name:, routing_key:, exchange_type:, exchange_opts:, queue_opts:)
       exchange = session.exchange(name: exchange_name, type: exchange_type, opts: exchange_opts)
@@ -197,6 +203,9 @@ module BugBunny
 
     # Pasa una entrega por los middlewares y el logger con tags, y la procesa.
     #
+    # @param delivery_info [Bunny::DeliveryInfo, Bunny::GetResponse] Metadatos de entrega.
+    # @param properties [Bunny::MessageProperties] Headers y propiedades AMQP.
+    # @param body [String] El payload crudo del mensaje.
     # @return [void]
     def handle_delivery(delivery_info, properties, body)
       trace_id = properties.correlation_id
@@ -218,6 +227,7 @@ module BugBunny
     # Se suscribe sin bloquear y espera a que la cola quede quieta `drain_idle_timeout`
     # segundos sin ningún mensaje en proceso; después cancela la suscripción.
     #
+    # @param queue [Bunny::Queue] La cola ya declarada y enlazada.
     # @return [Integer] Cantidad de mensajes procesados.
     def consume_until_idle(queue)
       idle_timeout = BugBunny.configuration.drain_idle_timeout

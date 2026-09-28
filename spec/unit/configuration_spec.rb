@@ -11,7 +11,15 @@ RSpec.describe BugBunny::Configuration do
     end
   end
 
-  after { BugBunny.configuration = BugBunny::Configuration.new }
+  # Restaura la configuración de spec_helper (host, credenciales) y no una con defaults:
+  # si no, los specs de integración que corren después se conectan como `guest` y se
+  # saltean como "RabbitMQ no disponible" en vez de correr.
+  around do |example|
+    original_configuration = BugBunny.configuration
+    example.run
+  ensure
+    BugBunny.configuration = original_configuration
+  end
 
   describe 'defaults' do
     it 'pasan validate! sin ninguna configuración adicional' do
@@ -121,6 +129,24 @@ RSpec.describe BugBunny::Configuration do
     it 'levanta ConfigurationError si supera 10000' do
       expect { configure_with(channel_prefetch: 10_001) }
         .to raise_error(BugBunny::ConfigurationError, /channel_prefetch must be in/)
+    end
+  end
+
+  describe 'drain_idle_timeout' do
+    it 'levanta ConfigurationError si es 0' do
+      expect { configure_with(drain_idle_timeout: 0) }
+        .to raise_error(BugBunny::ConfigurationError, /drain_idle_timeout must be in/)
+    end
+  end
+
+  describe 'drain_poll_interval' do
+    it 'acepta fracciones de segundo' do
+      expect { configure_with(drain_poll_interval: 0.05) }.not_to raise_error
+    end
+
+    it 'levanta ConfigurationError si es 0' do
+      expect { configure_with(drain_poll_interval: 0) }
+        .to raise_error(BugBunny::ConfigurationError, /drain_poll_interval must be in/)
     end
   end
 
