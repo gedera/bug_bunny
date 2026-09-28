@@ -63,7 +63,7 @@ message, details } }`), parsealo en el boundary del servicio desde
 
 ### Guard anti-RCE (403, no es excepción)
 **Causa:** Un mensaje intenta ejecutar un controlador que no hereda de `BugBunny::Controller`.
-**Cuándo:** El consumer resuelve la clase (`constantize`) pero falla `controller_class < BugBunny::Controller` (`consumer.rb:222-228`).
+**Cuándo:** El consumer resuelve la clase (`constantize`) pero falla `controller_class < BugBunny::Controller` (`consumer.rb:331-337`).
 **Comportamiento:** El worker **no levanta una excepción** — loguea `event=consumer.security_violation`, responde **403 Forbidden** al caller RPC y rechaza el mensaje sin requeue.
 **Resolución:** Verificar que el controlador herede de `BugBunny::Controller` y que `config.controller_namespace` sea correcto.
 

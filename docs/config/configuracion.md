@@ -1,13 +1,14 @@
 # Configuración — bug_bunny
 
 > meta: artefacto configuración · RFC-012 · generado `arch-structure` (inventario
-> §a-§e/§i) + `arch-enrich` (§f/§g/§h/§j) · anclado a `24ea397`,
+> §a-§e/§i) + `arch-enrich` (§f/§g/§h/§j) · anclado a `797d3f1` (rama de #65; re-anclar al SHA del squash al mergear #65),
 > `lib/bug_bunny/configuration.rb`, `lib/bug_bunny.rb`, `lib/bug_bunny/railtie.rb`,
 > `lib/bug_bunny/consumer.rb`,
 > `lib/generators/bug_bunny/install/templates/initializer.rb` · fecha 2026-06-30
 > · cobertura: §a-§e/§i (estructura) + §f/§g/§h (enrich, anclado a YARD) completas;
 > §j n/a. Incremento 2026-09-28 (#64): `drain_idle_timeout`/`drain_poll_interval`,
-> anclados a `configuration.rb:37-38,99-105,273-275` y `consumer.rb:222-234`.
+> anclados a `configuration.rb:37-38,99-105,273-275` y `consumer.rb:227-246`; todas las
+> citas `file:line` re-mapeadas al árbol de `797d3f1` (el refactor de #64 las corrió).
 
 ## 1. Resumen
 
@@ -21,13 +22,15 @@ en `lib/`**; el `ENV.fetch` vive en el **template** que sugiere al consumidor
 
 ### a. Hecho verificable
 
-- **Total opciones (`Configuration`):** 29 (attr_accessor/reader).
-- **Validadas requeridas (`VALIDATIONS`, `configuration.rb:25-37`):** 5 (`host`,
+- **Total opciones (`Configuration`):** 32 (31 `attr_accessor` + 1 `attr_reader`; medido
+  2026-09-28 — el `29` anterior ya estaba desfasado del código antes de #64).
+- **Validadas requeridas (`VALIDATIONS`, `configuration.rb:25-39`):** 5 (`host`,
   `port`, `username`, `password`, `vhost` — `required: true`; igual tienen
   default, `validate!` exige no-vacío).
-- **Con default:** 29 (todas; defaults en `initialize`/`init_callback_defaults`).
-- **Con rango validado:** 7 (`port`, `heartbeat`, `connection_timeout`,
-  `read_timeout`, `write_timeout`, `rpc_timeout`, `channel_prefetch`).
+- **Con default:** 32 (todas; defaults en `initialize`/`init_callback_defaults`/`init_drain_defaults`).
+- **Con rango validado:** 9 (`port`, `heartbeat`, `connection_timeout`,
+  `read_timeout`, `write_timeout`, `rpc_timeout`, `channel_prefetch`,
+  `drain_idle_timeout`, `drain_poll_interval`).
 - **Secretas (por nombre):** 1 (`password`).
 - **ENV leídas por la gema en `lib/`:** 0 (config 100% por code-default + bloque).
 
@@ -38,38 +41,38 @@ Origen `code-default` salvo nota. Consumidor = `configuration.rb` (default en
 
 | nombre | tipo | requerida | default | origen | consumidor | secret? |
 |---|---|---|---|---|---|---|
-| `host` | String | sí (validate!) | `'127.0.0.1'` | code-default | `configuration.rb:182` | no |
-| `port` | Integer | sí (validate!, 1..65535) | `5672` | code-default | `:183` | no |
-| `username` | String | sí (validate!) | `'guest'` | code-default | `:184` | no |
-| `password` | String | sí (validate!) | `'guest'` | code-default | `:185` | **sí** |
-| `vhost` | String | sí (validate!) | `'/'` | code-default | `:186` | no |
-| `logger` | Logger | no | `Logger.new($stdout)` INFO | code-default | `:188` | no |
-| `bunny_logger` | Logger | no | `Logger.new($stdout)` WARN | code-default | `:191` | no |
-| `automatically_recover` | Boolean | no | `true` | code-default | `:193` | no |
-| `network_recovery_interval` | Integer | no | `5` | code-default | `:194` | no |
-| `max_reconnect_attempts` | Integer/nil | no | `nil` (reintenta ∞) | code-default | `:195` | no |
-| `max_reconnect_interval` | Integer | no | `60` | code-default | `:196` | no |
-| `connection_timeout` | Integer | no (1..300) | `10` | code-default | `:197` | no |
-| `read_timeout` | Integer | no (1..300) | `30` | code-default | `:198` | no |
-| `write_timeout` | Integer | no (1..300) | `30` | code-default | `:199` | no |
-| `heartbeat` | Integer | no (0..3600) | `15` | code-default | `:200` | no |
-| `continuation_timeout` | Integer (ms) | no | `15000` | code-default | `:201` | no |
-| `channel_prefetch` | Integer | no (1..10000) | `1` | code-default | `:202` | no |
-| `rpc_timeout` | Integer | no (1..3600) | `10` | code-default | `:203` | no |
-| `health_check_interval` | Integer | no | `60` | code-default | `:204` | no |
-| `health_check_file` | String/nil | no | `nil` (desactivado) | code-default | `:207` | no |
+| `host` | String | sí (validate!) | `'127.0.0.1'` | code-default | `configuration.rb:192` | no |
+| `port` | Integer | sí (validate!, 1..65535) | `5672` | code-default | `:193` | no |
+| `username` | String | sí (validate!) | `'guest'` | code-default | `:194` | no |
+| `password` | String | sí (validate!) | `'guest'` | code-default | `:195` | **sí** |
+| `vhost` | String | sí (validate!) | `'/'` | code-default | `:196` | no |
+| `logger` | Logger | no | `Logger.new($stdout)` INFO | code-default | `:198` | no |
+| `bunny_logger` | Logger | no | `Logger.new($stdout)` WARN | code-default | `:201` | no |
+| `automatically_recover` | Boolean | no | `true` | code-default | `:203` | no |
+| `network_recovery_interval` | Integer | no | `5` | code-default | `:204` | no |
+| `max_reconnect_attempts` | Integer/nil | no | `nil` (reintenta ∞) | code-default | `:205` | no |
+| `max_reconnect_interval` | Integer | no | `60` | code-default | `:206` | no |
+| `connection_timeout` | Integer | no (1..300) | `10` | code-default | `:207` | no |
+| `read_timeout` | Integer | no (1..300) | `30` | code-default | `:208` | no |
+| `write_timeout` | Integer | no (1..300) | `30` | code-default | `:209` | no |
+| `heartbeat` | Integer | no (0..3600) | `15` | code-default | `:210` | no |
+| `continuation_timeout` | Integer (ms) | no | `15000` | code-default | `:211` | no |
+| `channel_prefetch` | Integer | no (1..10000) | `1` | code-default | `:212` | no |
+| `rpc_timeout` | Integer | no (1..3600) | `10` | code-default | `:213` | no |
+| `health_check_interval` | Integer | no | `60` | code-default | `:214` | no |
+| `health_check_file` | String/nil | no | `nil` (desactivado) | code-default | `:217` | no |
 | `drain_idle_timeout` | Integer (s) | no (1..3600) | `5` | code-default | `:274` | no |
 | `drain_poll_interval` | Numeric (s) | no (0.01..10) | `0.1` | code-default | `:275` | no |
-| `controller_namespace` | String | no | `'BugBunny::Controllers'` | code-default | `:210` | no |
-| `log_tags` | Array | no | `[:uuid]` | code-default | `:212` | no |
-| `exchange_options` | Hash | no | `{}` | code-default | `:215` | no |
-| `queue_options` | Hash | no | `{}` | code-default | `:216` | no |
-| `consumer_middlewares` | Stack (attr_reader) | no | `Stack.new` | code-default | `:218` | no |
-| `rpc_reply_headers` | Proc/nil | no | `nil` | code-default | `:251` | no |
-| `on_rpc_reply` | Proc/nil | no | `nil` | code-default | `:252` | no |
-| `on_return` | Proc/nil | no | `nil` | code-default | `:253` | no |
-| `nack_raise` | Boolean | no | `true` | code-default | `:254` | no |
-| `return_raise` | Boolean | no | `true` | code-default | `:255` | no |
+| `controller_namespace` | String | no | `'BugBunny::Controllers'` | code-default | `:220` | no |
+| `log_tags` | Array | no | `[:uuid]` | code-default | `:222` | no |
+| `exchange_options` | Hash | no | `{}` | code-default | `:225` | no |
+| `queue_options` | Hash | no | `{}` | code-default | `:226` | no |
+| `consumer_middlewares` | Stack (attr_reader) | no | `Stack.new` | code-default | `:228` | no |
+| `rpc_reply_headers` | Proc/nil | no | `nil` | code-default | `:262` | no |
+| `on_rpc_reply` | Proc/nil | no | `nil` | code-default | `:263` | no |
+| `on_return` | Proc/nil | no | `nil` | code-default | `:264` | no |
+| `nack_raise` | Boolean | no | `true` | code-default | `:265` | no |
+| `return_raise` | Boolean | no | `true` | code-default | `:266` | no |
 
 > **Override por request:** `nack_raise` y `return_raise` se sobreescriben por
 > llamada con `nack_raise:` / `return_raise:` en `Client#publish` (scope-override
@@ -90,7 +93,7 @@ El install template (`initializer.rb`) **sugiere al consumidor** wirear 4 ENV
 ### d. Derivaciones simples
 
 - `url` ← `"amqp://#{username}:#{password}@#{host}:#{port}/#{vhost}"`
-  (`configuration.rb:225`).
+  (`configuration.rb:236`).
 - `create_connection(**options)` ← `merge_connection_options(options)` sobre la
   config global; las options explícitas pisan los defaults (`bug_bunny.rb:88`).
 
@@ -119,22 +122,22 @@ del código.
 | Conexión (`host`/`port`/`username`/`password`/`vhost`) | conectividad | valor inválido/vacío → `ConfigurationError` en `validate!`; credencial/host errados → `CommunicationError` al conectar (`bug_bunny.rb:95`) | abre socket TCP al broker | identidad y destino del broker; `vhost` aísla ambientes |
 | Timeouts (`connection_timeout`/`read_timeout`/`write_timeout`/`heartbeat`/`continuation_timeout`) | resiliencia/latencia | muy bajo → cortes espurios bajo carga; muy alto → detección de fallo lenta | — | tuning de la conexión Bunny; `heartbeat` detecta conexiones zombi |
 | `rpc_timeout` | latencia | el worker remoto no responde a tiempo → `RequestTimeout` (`producer.rb:124,214`) | bloquea el hilo llamante hasta el timeout | techo de espera de un RPC síncrono |
-| Resiliencia (`automatically_recover`/`network_recovery_interval`/`max_reconnect_attempts`/`max_reconnect_interval`) | resiliencia | `max_reconnect_attempts` agotado → el Consumer re-levanta y muere (`consumer.rb:110-112`) | reintentos con **backoff exponencial** `network_recovery_interval * 2^(n-1)` cap `max_reconnect_interval` (`consumer.rb:115-118`) | sobrevivir caídas transitorias del broker sin perder el worker |
+| Resiliencia (`automatically_recover`/`network_recovery_interval`/`max_reconnect_attempts`/`max_reconnect_interval`) | resiliencia | `max_reconnect_attempts` agotado → el Consumer re-levanta y muere (`consumer.rb:93-95`) | reintentos con **backoff exponencial** `network_recovery_interval * 2^(n-1)` cap `max_reconnect_interval` (`consumer.rb:98-101`) | sobrevivir caídas transitorias del broker sin perder el worker |
 | QoS (`channel_prefetch`) | rendimiento | alto → un worker lento acapara mensajes; `1` → menor throughput | controla unacked in-flight (backpressure) | balancea fairness vs throughput (default `1` = fair round-robin) |
 | Health (`health_check_interval`/`health_check_file`) | observabilidad | `health_check_file` no escribible → el touch falla (degradación de visibilidad, no del flujo) | **escribe (touch) un archivo** en cada health check OK; `nil` desactiva | probe para orquestadores (K8s/Swarm) |
-| Drain (`drain_idle_timeout`/`drain_poll_interval`) | latencia | `drain_idle_timeout` muy bajo → un productor lento deja mensajes para la próxima corrida (no se pierden); muy alto → el job tarda más en terminar tras vaciar la cola | ninguno: sólo acota cuánto espera `Consumer#drain` (`consumer.rb:231`) | correr un consumidor como job que termina (#64) |
-| Callbacks (`on_return`/`on_rpc_reply`/`rpc_reply_headers`) | extensibilidad | una excepción en `on_return` se captura pero **degrada visibilidad** (YARD `configuration.rb:147`) | corren en hilos sensibles (ver §h) | propagar trace-context / alertar unroutable |
+| Drain (`drain_idle_timeout`/`drain_poll_interval`) | latencia | `drain_idle_timeout` muy bajo → un productor lento deja mensajes para la próxima corrida (no se pierden); muy alto → el job tarda más en terminar tras vaciar la cola | ninguno: sólo acota cuánto espera `Consumer#drain` (`consumer.rb:241`) | correr un consumidor como job que termina (#64) |
+| Callbacks (`on_return`/`on_rpc_reply`/`rpc_reply_headers`) | extensibilidad | una excepción en `on_return` se captura pero **degrada visibilidad** (YARD `configuration.rb:157`) | corren en hilos sensibles (ver §h) | propagar trace-context / alertar unroutable |
 | Confirms (`nack_raise`/`return_raise`) | integridad de entrega | `false` → NACK/return solo se logea, la llamada retorna `202` (modo legacy, posible pérdida silenciosa) | habilitan el raise de `PublishNacked`/`PublishUnroutable` | elegir entre fail-fast vs best-effort en publish confirmado |
-| Routing (`controller_namespace`) | seguridad | clase resuelta no subclase de `BugBunny::Controller` → el worker responde **403** + reject (guard anti-RCE, `consumer.rb:222-228`) | acota qué clases son enrutables | superficie de control de RCE |
+| Routing (`controller_namespace`) | seguridad | clase resuelta no subclase de `BugBunny::Controller` → el worker responde **403** + reject (guard anti-RCE, `consumer.rb:331-337`) | acota qué clases son enrutables | superficie de control de RCE |
 | Logging (`logger`/`bunny_logger`/`log_tags`) | observabilidad | — | salida a `$stdout` por default | trazabilidad estructurada |
 | Infra (`exchange_options`/`queue_options`) | infraestructura | options incompatibles con el broker → `PreconditionFailed` (vía `CommunicationError`) | defaults globales mergeados por recurso | declaración AMQP por default |
 
 ### g. Ramificadores intra-config
 
 - `health_check_file = nil` (default) **desactiva** el touchfile aunque
-  `health_check_interval` siga corriendo (`configuration.rb:99-101,207`).
+  `health_check_interval` siga corriendo (`configuration.rb:109-111,217`).
 - `return_raise` es **inerte cuando `mandatory: false`** — sin `mandatory` el
-  broker nunca retorna, así que el flag no tiene efecto (`configuration.rb:171`).
+  broker nunca retorna, así que el flag no tiene efecto (`configuration.rb:181`).
 - `nack_raise`/`return_raise` se sobreescriben **por request** (`Client#publish`),
   ganando sobre el valor global (scope-override).
 
@@ -142,10 +145,10 @@ del código.
 
 | opción | hilo de ejecución | restricción |
 |---|---|---|
-| `on_return` | **hilo interno del consumidor de Bunny** (`configuration.rb:147`) | debe ser rápido y no lanzar; BugBunny captura, pero degrada visibilidad |
-| `on_rpc_reply` | **hilo llamante** tras recibir el reply RPC (`configuration.rb:132`) | hidrata trace-context en el publisher |
-| `rpc_reply_headers` | hilo del consumer, justo antes del `basic_publish` del reply (`configuration.rb:125`) | debe retornar un Hash de headers |
-| reconexión del Consumer | hilo del `subscribe` loop (`consumer.rb:90,122`) | `sleep wait` bloquea ese hilo durante el backoff |
+| `on_return` | **hilo interno del consumidor de Bunny** (`configuration.rb:157`) | debe ser rápido y no lanzar; BugBunny captura, pero degrada visibilidad |
+| `on_rpc_reply` | **hilo llamante** tras recibir el reply RPC (`configuration.rb:142`) | hidrata trace-context en el publisher |
+| `rpc_reply_headers` | hilo del consumer, justo antes del `basic_publish` del reply (`configuration.rb:135`) | debe retornar un Hash de headers |
+| reconexión del Consumer | hilo del `subscribe` loop (`consumer.rb:86,105`) | `sleep wait` bloquea ese hilo durante el backoff |
 
 ### j. Inyección a gemas configuradas
 
