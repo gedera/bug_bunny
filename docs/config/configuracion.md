@@ -1,14 +1,14 @@
 # Configuración — bug_bunny
 
 > meta: artefacto configuración · RFC-012 · generado `arch-structure` (inventario
-> §a-§e/§i) + `arch-enrich` (§f/§g/§h/§j) · anclado a `6f68967` (rama de #65; re-anclar al SHA del squash al mergear #65),
+> §a-§e/§i) + `arch-enrich` (§f/§g/§h/§j) · anclado a `35b075a` (squash de #65 en `main`),
 > `lib/bug_bunny/configuration.rb`, `lib/bug_bunny.rb`, `lib/bug_bunny/railtie.rb`,
 > `lib/bug_bunny/consumer.rb`,
 > `lib/generators/bug_bunny/install/templates/initializer.rb` · fecha 2026-06-30
 > · cobertura: §a-§e/§i (estructura) + §f/§g/§h (enrich, anclado a YARD) completas;
 > §j n/a. Incremento 2026-09-28 (#64): `drain_idle_timeout`/`drain_poll_interval`,
 > anclados a `configuration.rb:37-38,99-105,273-275` y `consumer.rb:271-290`; todas las
-> citas `file:line` re-mapeadas al árbol de `6f68967` (el refactor de #64 las corrió).
+> citas `file:line` re-mapeadas al árbol de `35b075a` (el refactor de #64 las corrió).
 
 ## 1. Resumen
 

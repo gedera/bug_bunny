@@ -19,7 +19,9 @@ Gema Ruby: capa de routing RESTful sobre AMQP/RabbitMQ. Microservicios se comuni
 
 ## Contrato resumido (piso mínimo)
 
-> Resume el contrato de **`bug_bunny` 5.1.1** (anclado a `v5.1.1`). Suficiente para el uso típico sin abrir el detalle; el detalle version-locked está en el **Índice de artefactos** de abajo. Antipatrones/API completa: más abajo (embebido interim, ver Cobertura y fronteras).
+> Resume el contrato de **`bug_bunny` 5.2.0** (anclado a `v5.2.0`). Suficiente para el uso típico sin abrir el detalle; el detalle version-locked está en el **Índice de artefactos** de abajo. Antipatrones/API completa: más abajo (embebido interim, ver Cobertura y fronteras).
+>
+> **Si venís de 5.1.x, un cambio de conducta (5.2.0):** una entrega cuyo middleware —o `handle_fatal_error`— levanta **antes del ack** ahora se **rechaza sin requeue** (evento `consumer.delivery_failed`), en `subscribe` y en `drain`. Antes quedaba sin ack ni reject y trababa el consumidor. Si un middleware levantaba a propósito para que el mensaje se reintentara, ahora el mensaje se pierde: el reintento es tuyo. Detalle en [`docs/behavior/behavior.md`](../docs/behavior/behavior.md).
 >
 > **Si venís de 4.x, dos breaking a mirar antes de subir:** `5.0.0` eliminó la constante pública `BugBunny::SecurityError` (un `rescue BugBunny::SecurityError` que sobreviva revienta con `NameError` y **enmascara la excepción original**) y `4.18.0` cambió el wrapping `Bunny::Exception` → `CommunicationError`. Detalle en `CHANGELOG.md`.
 
@@ -29,7 +31,7 @@ Gema Ruby: capa de routing RESTful sobre AMQP/RabbitMQ. Microservicios se comuni
 |---|---|
 | `BugBunny::Client` | `client.request(url, method: :get)` (RPC sync) · `client.publish(url, body:)` (fire-and-forget, 202) · `client.publish(url, confirmed: true, mandatory: true)` (publisher confirms) |
 | `BugBunny::Resource` | ORM tipo AR: `self.exchange=` / `self.resource_name=` / `connection_pool=`; `find/where/create/save/destroy` |
-| `BugBunny::Consumer` | `BugBunny::Consumer.subscribe(connection: BugBunny.create_connection, queue_name:, exchange_name:, routing_key:)` (loop bloqueante) |
+| `BugBunny::Consumer` | `BugBunny::Consumer.subscribe(connection:, queue_name:, exchange_name:, routing_key:)` (loop bloqueante) · `BugBunny::Consumer.drain(...)` (mismos args; consume hasta que la cola queda quieta y retorna cuántos procesó — para correrlo como job, 5.2.0) |
 | `BugBunny::Controller` | `before/around/after_action`, `rescue_from`, `render status:, json:` |
 | `BugBunny.routes.draw` | `resources :x` · `namespace` · `member`/`collection` |
 | `BugBunny.configure` | `host/port/username/password` · `rpc_timeout` (default 10) · `nack_raise`/`return_raise` (default `true`) · `on_return` |
@@ -56,11 +58,12 @@ client.publish('events', body: { type: 'x' })   # => { 'status' => 202 }
 - `confirmed:true + mandatory:true` con `return_raise` (default `true`) → `PublishUnroutable` si no rutea.
 - `BugBunny::Consumer.subscribe` requiere `connection:`. No correr el Consumer en threads de Puma (loop bloqueante).
 - `exchange_options: { durable: true }` debe matchear la declaración del consumer, o `Bunny::PreconditionFailed`.
+- **`drain` (5.2.0):** la conexión es **de quien llama** — `drain` cierra su canal, no la conexión; si la creás por corrida, cerrala (`ensure connection.close`) o cada corrida deja una abierta. Con un flujo sostenido más rápido que `drain_idle_timeout` **no retorna**: acotalo desde el job. Detalle en [`skill/references/consumer.md`](references/consumer.md) y [`docs/behavior/behavior.md`](../docs/behavior/behavior.md).
 - **Errores de transporte (4.18+):** TCP fail, conn rota, canal cerrado → siempre `BugBunny::CommunicationError`. No rescatar `Bunny::TCPConnectionFailed`/`ConnectionClosedError` directo — quedó atrás de la frontera. La original sigue accesible vía `.cause`.
 
 ## Índice de artefactos (fuente de verdad)
 
-El detalle vive en `docs/<capa>/` (modelo `dev-*`); esta skill **indexa y resume**, no duplica. Links relativos = version-locked (mismo tag del release, `v5.1.1`; `gemspec.files` incluye `docs/**`, así que estos archivos viajan dentro del `.gem` que ya tenés instalado).
+El detalle vive en `docs/<capa>/` (modelo `dev-*`); esta skill **indexa y resume**, no duplica. Links relativos = version-locked (mismo tag del release, `v5.2.0`; `gemspec.files` incluye `docs/**`, así que estos archivos viajan dentro del `.gem` que ya tenés instalado).
 
 | Capa | Artefacto | Estado |
 |---|---|---|
@@ -251,6 +254,10 @@ BugBunny.configure do |config|
   # Health check
   config.health_check_interval = 60
   config.health_check_file = 'tmp/bb_health'
+
+  # Consumer.drain (5.2.0): segundos sin entregas para dar la cola por vacía, y cada cuánto se chequea
+  config.drain_idle_timeout  = 5
+  config.drain_poll_interval = 0.1
 
   # Routing
   config.controller_namespace = 'BugBunny::Controllers'
