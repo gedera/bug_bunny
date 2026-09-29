@@ -21,9 +21,9 @@ out-of-repo).
 
 ### a. Hecho verificable
 
-- **Convención de versión:** SemVer `vX.X.X`. Actual: **5.1.1**.
-- **Source of truth:** tag remoto (`v5.1.1`) + **triple mirror**
-  `lib/bug_bunny/version.rb` (`VERSION = '5.1.1'`) ← `bug_bunny.gemspec:7`
+- **Convención de versión:** SemVer `vX.X.X`. Actual: **5.2.0**.
+- **Source of truth:** tag remoto (`v5.2.0`) + **triple mirror**
+  `lib/bug_bunny/version.rb` (`VERSION = '5.2.0'`) ← `bug_bunny.gemspec:7`
   (`spec.version = BugBunny::VERSION`).
 - **Changelog canónico:** `CHANGELOG.md` único.
 - **Patrón de trigger:** `gema-tag` (patrón 1).
@@ -34,7 +34,7 @@ out-of-repo).
 
 - **Convención:** SemVer `vX.X.X` (**con `v`** — distinto al servicio).
 - **Source of truth:** tag remoto canónico (`git tag --sort=-v:refname` →
-  `v5.1.1`).
+  `v5.2.0`).
 - **Mirror:** `lib/bug_bunny/version.rb` (`VERSION`), leído por
   `bug_bunny.gemspec:7` (`spec.version = BugBunny::VERSION`).
   `required_ruby_version >= 2.6.0` (`bug_bunny.gemspec:17`).
@@ -85,9 +85,11 @@ procedimiento per-repo porque no vive acá. Una versión yankeada se anotaría e
   `>= 5.1.0, < 5.2.0`, así que un minor **no entra** sin editar el `Gemfile`.
   Consecuencia operativa: un fix publicado como **patch** lo toman con
   `bundle update bug_bunny`; uno publicado como **minor** requiere tocar el pin
-  en cada consumidor. Estado hoy: `box_manager_service` y `box_radius_manager`
-  en `~> 5.1.0`; `box_acs_manager` y `box_cluster_manager` todavía en
-  `~> 4.19.0` (bumps pendientes). Un cambio de contrato del gem (ej. el
+  en cada consumidor. Estado medido el 2026-09-29 (Gemfiles de los clones del
+  workspace): `box_manager_service` en `~> 5.1.1`; `box_acs_manager`,
+  `box_cluster_manager` y `box_radius_manager` en `~> 5.1.0` — o sea que
+  **5.2.0 no le entra a ninguno** sin tocar el pin. *(El estado anterior decía
+  `box_acs_manager`/`box_cluster_manager` en `~> 4.19.0`: ya no es así.)* Un cambio de contrato del gem (ej. el
   behavior-change de `4.18.0` — `Bunny::Exception` → `CommunicationError`, o la
   eliminación de `BugBunny::SecurityError` en `5.0.0`) obliga a los consumidores
   a migrar; el `CHANGELOG.md` lo documenta como breaking note. **Orden de

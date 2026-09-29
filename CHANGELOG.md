@@ -1,5 +1,20 @@
 # Changelog
 
+## [5.2.0] - 2026-09-29
+
+### Nuevas funcionalidades
+- **`Consumer.drain` / `Consumer#drain` — consumir hasta vaciar la cola y retornar (#65):** el modo para correr un consumidor **como job** (Sidekiq, un Job de k8s) en vez de como proceso eterno. Se suscribe respetando `channel_prefetch` y retorna cuando pasan `drain_idle_timeout` segundos sin entregas y sin nada en proceso; con la cola vacía retorna `0` al instante. Devuelve cuántos mensajes procesó (incluye los rechazados: también salieron de la cola). Un mensaje que llega dentro de la ventana se procesa en esa vuelta; los posteriores, en la próxima. No tiene loop de reconexión ni health check (el reintento es del framework del job). **La conexión es del llamador:** `drain` cierra su canal, no la conexión — si la creás por corrida, cerrala (`ensure connection.close`), o cada corrida deja una abierta. **Con un flujo sostenido más rápido que `drain_idle_timeout`, no retorna:** acotalo desde el job. — @gedera
+- **`drain_idle_timeout` (default `5`) y `drain_poll_interval` (default `0.1`) en `Configuration`**, validados en `validate!`. — @gedera
+
+### ⚠️ Cambio de conducta — `subscribe` y `drain`
+- **Una entrega cuyo middleware —o `handle_fatal_error`— levanta antes del ack ahora se rechaza sin requeue** y se loguea `consumer.delivery_failed` (#65). Antes quedaba **sin ack ni reject**: con `channel_prefetch = 1` ocupaba el único lugar de prefetch y el consumidor dejaba de recibir, sin error. Es lo mismo que `process_message` ya hacía con sus propios errores. Si el error llega **después** del ack, sólo se loguea (rechazar un tag ya confirmado cierra el canal). **A mirar si consumís:** si un middleware tuyo levantaba a propósito para que el mensaje se reintentara, ahora el mensaje **se pierde** — el reintento tiene que ser tuyo. — @gedera
+
+### Documentación
+- `subscribe(block: false)` **no** es un modo "drenar": retorna al instante y el `ensure shutdown` cierra el canal, así que no consume nada (medido en #65). Queda documentado en el README; no se cambia en este release. — @gedera
+
+### Tests
+- `configuration_spec` restaura la configuración original en vez de dejar una con defaults: los specs de integración que corrían después se conectaban como `guest` y quedaban *pending* como "RabbitMQ no disponible" aun con broker, según el seed (#65). — @gedera
+
 ## [5.1.1] - 2026-07-31
 
 ### Correcciones
