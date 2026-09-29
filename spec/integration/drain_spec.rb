@@ -140,6 +140,29 @@ RSpec.describe 'Consumer.drain', :integration do
     BugBunny.configure { |config| config.channel_prefetch = 1 }
   end
 
+  # Review de #65: la guarda `unless settled` de `settle_failed_delivery`. Si el error
+  # llega DESPUÉS del ack, rechazar el tag ya confirmado hace que el broker cierre el
+  # canal; sin la guarda, drain terminaba en Timeout::Error con mensajes en la cola.
+  it 'un middleware que levanta después del ack no rechaza la entrega ya resuelta' do
+    after_ack = Class.new(BugBunny::ConsumerMiddleware::Base) do
+      def call(*args)
+        @app.call(*args)
+        raise 'después del ack'
+      end
+    end
+    BugBunny.consumer_middlewares.use after_ack
+    BugBunny.configure { |config| config.channel_prefetch = 1 }
+    3.times { publish_ping }
+    sleep 0.3
+
+    expect(drain).to eq(3)
+    expect(messages_in_queue).to eq(0)
+    expect(DrainSpec::PingController.handled_count.value).to eq(3)
+  ensure
+    BugBunny.configuration.instance_variable_set(:@consumer_middlewares, BugBunny::ConsumerMiddleware::Stack.new)
+    BugBunny.configure { |config| config.channel_prefetch = 1 }
+  end
+
   it 'procesa en la misma vuelta un mensaje que llega dentro de la ventana de inactividad' do
     publish_ping
     sleep 0.3

@@ -117,10 +117,10 @@ sequenceDiagram
     Note over C: rescue StandardError → attempt++ · backoff min(nri*2^(n-1), max) · sleep · retry (redeclara)
     Note over C: max_reconnect_attempts alcanzado → raise (fatal) · ensure → shutdown
 ```
-Contexto: `consumer.rb:76-111` (retry L106-124), `consumer.rb:493-514` (health). **Honestidad:** health check es thread aparte (TimerTask); no es parte del manejo de error del loop — se acoplan sólo vía cierre de session. Marcado, no fingido como un único flujo.
+Contexto: `consumer.rb:76-111` (retry L90-108), `consumer.rb:493-514` (health). **Honestidad:** health check es thread aparte (TimerTask); no es parte del manejo de error del loop — se acoplan sólo vía cierre de session. Marcado, no fingido como un único flujo.
 
 ### Flujo: Consumer drain (drenar y salir)
-Consume hasta que la cola queda quieta y retorna la cantidad procesada: el modo para correr un consumidor **como job** (#64). A diferencia del loop de `subscribe`, **no** arranca health check ni reintenta la conexión.
+Consume hasta que la cola queda quieta y retorna la cantidad procesada: el modo para correr un consumidor **como job** (#64). A diferencia del loop de `subscribe`, **no** tiene loop de reconexión ni health check (Bunny sí recupera la conexión por su cuenta con `automatically_recover`).
 
 ```mermaid
 sequenceDiagram
@@ -195,7 +195,7 @@ Contexto: `middleware/stack.rb:31-47` (build L43-47, `reverse.inject`), `base.rb
 |---|---|---|
 | Secuencias y `file:line` extraídos por el LLM del código a `a5cdb10`; 2ª pasada LLM corrigió 3 discrepancias (flujo middleware invertido, timeout RPC `producer.rb:124`, timeout confirmed `producer.rb:214-215`) | confirmed | **verificado por humano 2026-05-18** (invariante RFC-001 §3.3 satisfecho) |
 | Orden wire `basic.return → basic.ack` garantizado por AMQP; `RETURN_RACE_WINDOW_S` cubre GVL | declared (código) / inferred (garantía AMQP) | confirmar lectura de `producer.rb:299-308` + spec AMQP |
-| Health check acoplado flojo al loop vía cierre de session | inferred | confirmar `consumer.rb:493-514` vs `106-124` |
+| Health check acoplado flojo al loop vía cierre de session | inferred | confirmar `consumer.rb:493-514` vs `90-108` |
 | Frontera de error del Client: cualquier `Bunny::Exception` durante `@pool.with` (try_create o in-flight) → `BugBunny::CommunicationError` con `.cause` preservada (`client.rb:155-167`). `Producer#confirmed` rescate estrechado a `Bunny::Exception` (`producer.rb:87-90`) — no traga bugs Ruby. `BugBunny.create_connection` también envuelve (`bug_bunny.rb:96-99`). | declared (código post-#49) | confirmar lectura de `client.rb:155-167`, `producer.rb:87-90`, `bug_bunny.rb:96-99` + specs `communication_error_wrapping_spec.rb` |
 
 ## 4. Cobertura y fronteras
