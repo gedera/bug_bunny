@@ -66,6 +66,28 @@ BugBunny::Consumer.subscribe(
 )
 ```
 
+To run a consumer **as a job** (Sidekiq, a k8s Job) instead of a long-lived process, use `drain`: it consumes until the queue goes quiet and returns how many messages it processed. With an empty queue it returns `0` right away.
+
+```ruby
+connection = BugBunny.create_connection
+begin
+  processed_count = BugBunny::Consumer.drain(
+    connection:    connection,
+    queue_name:    'inventory_queue',
+    exchange_name: 'inventory',
+    routing_key:   'nodes'
+  )
+ensure
+  connection.close # drain closes its channel, not the connection: the connection is yours
+end
+```
+
+- **The connection belongs to the caller.** `drain` closes its channel when it returns, not the connection, because it may be shared (a pool, the publisher's). If you create one per job run, close it — otherwise every run leaks a connection. Reusing the process connection works too.
+- **A delivery that fails leaves the queue.** If a middleware raises before the ack, the message is rejected without requeue (same as `process_message` errors), so it does not block the prefetch.
+- **With a sustained flow, `drain` does not return.** If messages arrive faster than `drain_idle_timeout`, the idle window never closes. Bound it from outside (the Sidekiq job timeout, `activeDeadlineSeconds` in k8s).
+
+> `subscribe(block: false)` is **not** this mode: it returns immediately and closes the channel, so it consumes nothing.
+
 ### Service A — Producer
 
 ```ruby
@@ -145,6 +167,11 @@ BugBunny.configure do |config|
 
   # Health check file for Kubernetes / Docker Swarm liveness probes
   config.health_check_file = '/tmp/bug_bunny_health'
+
+  # Consumer.drain — seconds without deliveries before the queue counts as empty (default: 5),
+  # and how often that is checked (default: 0.1)
+  config.drain_idle_timeout  = 5
+  config.drain_poll_interval = 0.1
 
   # Publisher Confirms — fail-loud defaults (both flags default to true).
   # Set to false to restore legacy log-only behavior.

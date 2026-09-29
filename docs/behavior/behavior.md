@@ -1,6 +1,6 @@
 # Comportamiento — bug_bunny
 
-> meta: artefacto `comportamiento` · RFC-007 (cadencia incremental default / completo on-demand) · generado dev-enrich 1.3.0 (backfill on-demand) · anclado a `94de2b4` · cobertura: completa (6 flujos) · verificado por humano 2026-05-18 (base) · 2026-05-26 (refresco scoped: contrato de error wrapping post-#49)
+> meta: artefacto `comportamiento` · RFC-007 (cadencia incremental default / completo on-demand) · generado dev-enrich 1.3.0 (backfill on-demand) · anclado a `6f68967` (rama de #65; re-anclar al SHA del squash al mergear #65) · cobertura: completa (7 flujos) · verificado por humano 2026-05-18 (base) · 2026-05-26 (refresco scoped: contrato de error wrapping post-#49) — incremento 2026-09-28 (#64, flujo `drain` + re-mapeo de `file:line`): escrito por el agente, **sin verificación humana todavía**
 
 ## 1. Resumen
 
@@ -10,14 +10,15 @@ Flujos de ejecución de la gema. Generado en **modo completo on-demand** (RFC-00
 
 | Flujo | Estado | Anclaje principal |
 |---|---|---|
-| RPC síncrono | **documentado** | `producer.rb:103-134`, `consumer.rb:152-293` |
+| RPC síncrono | **documentado** | `producer.rb:103-134`, `consumer.rb:305-446` |
 | Fire-and-forget | **documentado** | `producer.rb:47-51,146-161` |
 | Confirmed + basic.return bridge | **documentado** | `producer.rb:72-93,299-333`, `session.rb:204-250` |
-| Consumer subscribe loop + reconnect + health | **documentado** | `consumer.rb:66-127,340-361` |
-| Error handling / RemoteError | **documentado** | `consumer.rb:320-329`, `remote_error.rb`, `raise_error.rb:32-65` |
+| Consumer subscribe loop + reconnect + health | **documentado** | `consumer.rb:76-111,493-514` |
+| Consumer drain (drenar y salir) | **documentado** | `consumer.rb:158-176,271-290`, `drain_tracker.rb:28-47` |
+| Error handling / RemoteError | **documentado** | `consumer.rb:473-482`, `remote_error.rb`, `raise_error.rb:32-65` |
 | Client middleware stack (onion) | **documentado** | `middleware/stack.rb:43-47`, `base.rb:35-43` |
 
-Cobertura completa a `a5cdb10`. Acreta incremental en cada PR que toque un flujo (default RFC-007). Ausencia futura ≠ inexistencia.
+Cobertura completa a `6f68967`. Acreta incremental en cada PR que toque un flujo (default RFC-007). Ausencia futura ≠ inexistencia.
 
 ## 2. Cuerpo
 
@@ -50,7 +51,7 @@ sequenceDiagram
     P-->>CL: response hidratada
     Note over P: bloqueo L122 · timeout → RequestTimeout L124
 ```
-Contexto: `client.rb:97-101` → `producer.rb:103-134` (bloqueo L122) → reply listener `producer.rb:405-424` → `consumer.rb:247,272-293`.
+Contexto: `client.rb:97-101` → `producer.rb:103-134` (bloqueo L122) → reply listener `producer.rb:405-424` → `consumer.rb:400,425-446`.
 
 ### Flujo: Fire-and-forget
 Publica y retorna `{ 'status' => 202 }` sin esperar broker ni consumer.
@@ -116,7 +117,34 @@ sequenceDiagram
     Note over C: rescue StandardError → attempt++ · backoff min(nri*2^(n-1), max) · sleep · retry (redeclara)
     Note over C: max_reconnect_attempts alcanzado → raise (fatal) · ensure → shutdown
 ```
-Contexto: `consumer.rb:66-127` (retry L106-124), `consumer.rb:340-361` (health). **Honestidad:** health check es thread aparte (TimerTask); no es parte del manejo de error del loop — se acoplan sólo vía cierre de session. Marcado, no fingido como un único flujo.
+Contexto: `consumer.rb:76-111` (retry L90-108), `consumer.rb:493-514` (health). **Honestidad:** health check es thread aparte (TimerTask); no es parte del manejo de error del loop — se acoplan sólo vía cierre de session. Marcado, no fingido como un único flujo.
+
+### Flujo: Consumer drain (drenar y salir)
+Consume hasta que la cola queda quieta y retorna la cantidad procesada: el modo para correr un consumidor **como job** (#64). A diferencia del loop de `subscribe`, **no** tiene loop de reconexión ni health check (Bunny sí recupera la conexión por su cuenta con `automatically_recover`).
+
+```mermaid
+sequenceDiagram
+    participant J as Job (llamador)
+    participant C as Consumer
+    participant T as DrainTracker
+    participant BR as RabbitMQ
+    J->>C: Consumer.drain(connection:, queue_name:, …)
+    C->>BR: exchange/queue declare · bind · message_count
+    alt message_count == 0
+        C-->>J: 0 (sin esperar) · ensure → shutdown
+    else hay mensajes
+        C->>BR: subscribe(manual_ack, block:false) — respeta channel_prefetch
+        loop por entrega (work pool de Bunny)
+            BR->>C: deliver → T.track { middlewares → process_message → ack/reject }
+        end
+        loop cada drain_poll_interval
+            C->>T: idle?(drain_idle_timeout) — nada en proceso y sin actividad en la ventana
+        end
+        C->>BR: cancel · espera a que T no esté busy
+        C-->>J: T.processed · ensure → shutdown
+    end
+```
+Contexto: `consumer.rb:158-176` (`drain`), `consumer.rb:271-290` (`consume_until_idle`), `drain_tracker.rb:28-47`. **Mensajes que llegan mientras drena:** entran en esta vuelta si llegan antes de que venza la ventana; los posteriores quedan para la próxima corrida. Una entrega ya recibida al cancelar se procesa antes de volver (Bunny drena su work pool al cancelar — leído de la fuente de Bunny 2.24.0, no medido); si igual no se ack-eara, **vuelve a la cola** (at-least-once). El conteo devuelto incluye los rechazados. **Una entrega que falla fuera del rescue de `process_message`** (un middleware, `handle_fatal_error`) se rechaza sin requeue en `handle_delivery` y se loguea `consumer.delivery_failed`; antes quedaba sin ack, trababa el prefetch y `drain` volvía "con éxito" con la cola llena (medido en el review de #65). **Con un flujo sostenido no retorna:** si los mensajes llegan más seguido que `drain_idle_timeout` la ventana no vence — la duración la decide el productor; se acota desde afuera (timeout del job). **La conexión es del llamador:** `drain` cierra el canal, no la conexión. **Distinto de `subscribe(block: false)`:** ese modo retorna al instante y el `ensure shutdown` cierra el canal, así que no consume nada (medido en #64).
 
 ### Flujo: Error handling / RemoteError
 Excepción no manejada en controller → serializada (clase/mensaje/backtrace[0..25]) → reply 500 → reconstruida client-side por `Middleware::RaiseError`.
@@ -137,7 +165,7 @@ sequenceDiagram
     RE->>RE: status 500..599 + bug_bunny_exception
     RE-->>CL: raise BugBunny::RemoteError(class,message,backtrace)
 ```
-Contexto: `controller.rb:200-234`, `consumer.rb:320-329`, `remote_error.rb:29-48`, `raise_error.rb:32-65`. **Honestidad:** backtrace truncado a 25 líneas en serialize; si el controller nunca llega a responder, el cliente expira por timeout en vez de recibir el error (no hay path de error garantizado).
+Contexto: `controller.rb:200-234`, `consumer.rb:473-482`, `remote_error.rb:29-48`, `raise_error.rb:32-65`. **Honestidad:** backtrace truncado a 25 líneas en serialize; si el controller nunca llega a responder, el cliente expira por timeout en vez de recibir el error (no hay path de error garantizado).
 
 ### Flujo: Client middleware stack (onion)
 `Stack#build` hace `@middlewares.reverse.inject(final_action)` → el **primer `use` queda como el más externo** (corre `on_request` primero, `on_complete` último). Documentado en `stack.rb:37-39`; sigue la convención Rack/Faraday (primer registrado = capa externa).
@@ -167,7 +195,7 @@ Contexto: `middleware/stack.rb:31-47` (build L43-47, `reverse.inject`), `base.rb
 |---|---|---|
 | Secuencias y `file:line` extraídos por el LLM del código a `a5cdb10`; 2ª pasada LLM corrigió 3 discrepancias (flujo middleware invertido, timeout RPC `producer.rb:124`, timeout confirmed `producer.rb:214-215`) | confirmed | **verificado por humano 2026-05-18** (invariante RFC-001 §3.3 satisfecho) |
 | Orden wire `basic.return → basic.ack` garantizado por AMQP; `RETURN_RACE_WINDOW_S` cubre GVL | declared (código) / inferred (garantía AMQP) | confirmar lectura de `producer.rb:299-308` + spec AMQP |
-| Health check acoplado flojo al loop vía cierre de session | inferred | confirmar `consumer.rb:340-361` vs `106-124` |
+| Health check acoplado flojo al loop vía cierre de session | inferred | confirmar `consumer.rb:493-514` vs `90-108` |
 | Frontera de error del Client: cualquier `Bunny::Exception` durante `@pool.with` (try_create o in-flight) → `BugBunny::CommunicationError` con `.cause` preservada (`client.rb:155-167`). `Producer#confirmed` rescate estrechado a `Bunny::Exception` (`producer.rb:87-90`) — no traga bugs Ruby. `BugBunny.create_connection` también envuelve (`bug_bunny.rb:96-99`). | declared (código post-#49) | confirmar lectura de `client.rb:155-167`, `producer.rb:87-90`, `bug_bunny.rb:96-99` + specs `communication_error_wrapping_spec.rb` |
 
 ## 4. Cobertura y fronteras

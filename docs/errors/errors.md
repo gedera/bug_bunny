@@ -46,7 +46,7 @@ Jerarquía (todas bajo `BugBunny::Error < ::StandardError`):
 |---|---|---|
 | `Error` | `::StandardError` | base — no se levanta directa salvo `resource.rb:122` (pool ausente) |
 | `CommunicationError` | `Error` | `bug_bunny.rb:96`, `session.rb:177,285`, `producer.rb:90`, `client.rb:168` — envuelve cualquier `Bunny::Exception` en la frontera del gem; original en `.cause` |
-| `ConfigurationError` | `Error` | `configuration.rb:262,269,277` — validación al final de `BugBunny.configure` |
+| `ConfigurationError` | `Error` | `configuration.rb:282,289,297` — validación al final de `BugBunny.configure` |
 | `PublishNacked` | `Error` | `producer.rb:235` — NACK del broker en modo `:confirmed`. Attrs: `path`, `nacked_count`. Opt-out `nack_raise: false` |
 | `PublishUnroutable` | `Error` | `producer.rb:325` — `basic.return` con `mandatory: true`. Attrs: `path`, `exchange`, `routing_key`, `reply_code`, `reply_text`, `correlation_id`. Opt-out `return_raise: false` |
 | `ClientError` | `Error` | `raise_error.rb:170` — 4xx no mapeado explícito |
@@ -85,7 +85,7 @@ operaciones de RFC-003 (`docs/api/`, hoy pendiente — ver §4), no las redefine
 | Cliente RPC | otro ≥400 | `ClientError` | 4xx no mapeado |
 | Productor (publish `:confirmed`) | n/a (AMQP) | `PublishNacked` / `PublishUnroutable` | NACK / return del broker — no es status HTTP |
 | Transporte (frontera gem) | n/a (AMQP) | `CommunicationError` | fallo de red/broker, envuelve `Bunny::Exception` |
-| **Worker (dispatch)** | **403** | — (no excepción; responde 403 + reject) | guard anti-RCE: clase enrutada no subclase de `BugBunny::Controller` (`consumer.rb:222-228`) |
+| **Worker (dispatch)** | **403** | — (no excepción; responde 403 + reject) | guard anti-RCE: clase enrutada no subclase de `BugBunny::Controller` (`consumer.rb:375-381`) |
 
 ### c. Política por error
 
@@ -133,7 +133,7 @@ ante una excepción no mapeada por `rescue_from`:
 ```
 
 - El envelope `bug_bunny_exception` lo arma `RemoteError.serialize` (`remote_error.rb:29`);
-  también lo agrega `Consumer` cuando `status == 500 && exception` (`consumer.rb:325`).
+  también lo agrega `Consumer` cuando `status == 500 && exception` (`consumer.rb:478`).
   Es lo que el cliente reconstruye como `RemoteError` (`raise_error.rb:61-64`).
 - `render status:, json:` (`controller.rb:242`) deja el shape del body de error de
   dominio a criterio del worker — la gema no lo impone.
@@ -168,7 +168,7 @@ parsea el body, devuelve `parsed['errors']` por convención o el cuerpo completo
 ## 3. Inferencias
 
 - **Guard anti-RCE = 403, no excepción.** El control de seguridad que valida la
-  herencia de la clase enrutada vive en `consumer.rb:222-228`: si la clase
+  herencia de la clase enrutada vive en `consumer.rb:375-381`: si la clase
   resuelta no es subclase de `BugBunny::Controller`, el worker loguea
   `consumer.security_violation`, responde **403 'Forbidden'** (`handle_fatal_error`)
   y rechaza el mensaje sin requeue — **no levanta una excepción dedicada**. La ex

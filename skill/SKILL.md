@@ -428,7 +428,7 @@ Limitación de RSpec: `instance_double` valida que el método exista pero **no**
 
 ### Guard anti-RCE (403, no es excepción)
 **Causa:** El mensaje intenta ejecutar un controlador que no hereda de `BugBunny::Controller`.
-**Comportamiento:** El worker responde **403 Forbidden** + reject + log `event=consumer.security_violation` (`consumer.rb:222-228`); no levanta una excepción dedicada.
+**Comportamiento:** El worker responde **403 Forbidden** + reject + log `event=consumer.security_violation` (`consumer.rb:375-381`); no levanta una excepción dedicada.
 **Resolución:** Verificar la jerarquía de controladores y que `config.controller_namespace` coincida.
 
 ### BugBunny::RouteNotFoundError (404)

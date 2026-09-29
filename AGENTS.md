@@ -12,7 +12,7 @@ proyecto y convenciones de equipo, ver `CLAUDE.md`. Para la entrada humana, ver
 
 | capa | artefacto | estado | qué responde |
 |---|---|---|---|
-| Comportamiento | `docs/behavior/behavior.md` | completo (6 flujos) | secuencias de publish/RPC/consume/confirms, contrato de error-wrapping |
+| Comportamiento | `docs/behavior/behavior.md` | completo (7 flujos) | secuencias de publish/RPC/consume/confirms, contrato de error-wrapping |
 | Glosario | `docs/glossary/glossary.md` | parcial (acreta por PR) | término de negocio → binding físico en `lib/` |
 | Errores | `docs/errors/errors.md` | completo (§a/b/d estructura + §c política inferida) | jerarquía de excepciones públicas, mapeo `status→excepción`, shape del payload, política retry |
 | Configuración | `docs/config/configuracion.md` | completo (estructura + enrich §f/g/h) | opciones de `Configuration`, defaults, failure-mode/threading, inyecciones del `Railtie`, ENV sugeridas |

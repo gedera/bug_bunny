@@ -21,7 +21,7 @@ module BugBunny
     # Claves soportadas:
     # - `:type`     — clase que debe responder `is_a?`
     # - `:required` — si `true`, nil o string vacío lanzan ConfigurationError
-    # - `:range`    — rango válido de valores (solo para Integer)
+    # - `:range`    — rango válido de valores (solo para numéricos)
     VALIDATIONS = {
       host: { type: String, required: true },
       port: { type: Integer, required: true, range: 1..65_535 },
@@ -33,7 +33,9 @@ module BugBunny
       read_timeout: { type: Integer, range: 1..300 },
       write_timeout: { type: Integer, range: 1..300 },
       rpc_timeout: { type: Integer, range: 1..3_600 },
-      channel_prefetch: { type: Integer, range: 1..10_000 }
+      channel_prefetch: { type: Integer, range: 1..10_000 },
+      drain_idle_timeout: { type: Integer, range: 1..3_600 },
+      drain_poll_interval: { type: Numeric, range: 0.01..10 }
     }.freeze
 
     # @return [String] Host o IP del servidor RabbitMQ (ej: 'localhost').
@@ -93,6 +95,14 @@ module BugBunny
 
     # @return [Integer] Intervalo en segundos para verificar la salud de la cola.
     attr_accessor :health_check_interval
+
+    # @return [Integer] Segundos sin entregas tras los cuales {BugBunny::Consumer#drain}
+    #   da la cola por vacía y retorna (default: 5).
+    attr_accessor :drain_idle_timeout
+
+    # @return [Numeric] Cada cuántos segundos {BugBunny::Consumer#drain} revisa si se
+    #   cumplió la ventana de inactividad (default: 0.1).
+    attr_accessor :drain_poll_interval
 
     # @return [String, nil] Ruta del archivo que se actualizará (touch) en cada health check exitoso.
     #   Ideal para sondas (probes) de orquestadores como Docker Swarm o Kubernetes.
@@ -217,6 +227,7 @@ module BugBunny
 
       @consumer_middlewares = ConsumerMiddleware::Stack.new
       init_callback_defaults
+      init_drain_defaults
     end
 
     # Construye la URL de conexión AMQP basada en los atributos configurados.
@@ -253,6 +264,15 @@ module BugBunny
       @on_return = nil
       @nack_raise = true
       @return_raise = true
+    end
+
+    # Defaults de {BugBunny::Consumer#drain}.
+    # Extraído de {#initialize} para mantener el ABC size dentro de los límites.
+    #
+    # @return [void]
+    def init_drain_defaults
+      @drain_idle_timeout = 5
+      @drain_poll_interval = 0.1
     end
 
     def validate_required!(attr, value, rules)

@@ -11,9 +11,35 @@ consumer = BugBunny::Consumer.subscribe(
   exchange_type: 'topic',
   exchange_opts: { durable: true },
   queue_opts: { auto_delete: false },
-  block: true   # Si false, retorna inmediatamente
+  block: true   # false retorna al instante y cierra el canal: no consume nada (#64)
 )
 ```
+
+## Drain (drenar y salir)
+
+Para correr un consumidor **como job**: consume hasta que la cola queda quieta y retorna cuántos mensajes procesó (incluye los rechazados). Con la cola vacía retorna `0` sin esperar.
+
+```ruby
+connection = BugBunny.create_connection
+begin
+  processed_count = BugBunny::Consumer.drain(
+    connection: connection,
+    queue_name: 'my_app_queue',
+    exchange_name: 'my_exchange',
+    routing_key: 'users.*'
+  )
+ensure
+  connection.close # drain cierra su canal, no la conexión: la conexión es de quien llama
+end
+```
+
+- Respeta `channel_prefetch`, igual que `subscribe`.
+- Termina tras `drain_idle_timeout` segundos (default `5`) sin entregas y sin nada en proceso; lo chequea cada `drain_poll_interval` (default `0.1`).
+- Un mensaje que llega dentro de esa ventana entra en esta vuelta; los posteriores, en la próxima corrida. Una entrega ya recibida al cancelar se procesa antes de volver; si igual no se ack-eara, vuelve a la cola (at-least-once).
+- **Con un flujo sostenido no retorna**: si los mensajes llegan más seguido que `drain_idle_timeout`, la ventana nunca vence. Acotalo desde afuera (timeout del job).
+- **Una entrega que falla sale de la cola**: si un middleware levanta antes del ack, se rechaza sin requeue y no traba el prefetch.
+- **La conexión es de quien llama**: `drain` cierra su canal, no la conexión. Si la creaste para la corrida, cerrala (si no, cada corrida deja una abierta).
+- **No** tiene loop de reconexión ni health check: si falla, lo reintenta el framework del job (Bunny sí recupera la conexión por su cuenta con `automatically_recover`).
 
 ## Flujo de Procesamiento
 
